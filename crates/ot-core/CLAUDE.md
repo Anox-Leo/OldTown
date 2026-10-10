@@ -1,7 +1,8 @@
 # ot-core
 
-Cœur client réutilisé par la CLI, l'appli Android (via `ot-ffi`, étape 3) et
-l'appli desktop Tauri (étape 4) : identité, connexion au relais,
+Cœur client réutilisé par la CLI et l'appli Android (via `ot-ffi`, étape 3) ;
+l'extension Chrome (étape 4) en reprend la logique en TypeScript, avec la
+crypto de `ot-crypto` en WebAssembly (note 0017) : identité, connexion au relais,
 authentification, reconnexion avec backoff, file d'envoi, dédoublonnage ;
 à partir de l'étape 2, chiffrement, roster et appairage (en s'appuyant sur
 `ot-crypto`).

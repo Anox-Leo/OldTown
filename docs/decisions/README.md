@@ -19,3 +19,11 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0009](0009-une-session-par-appareil.md) | Une session par appareil : conséquences pour la CLI | 1 | Acceptée |
 | [0010](0010-depot-public-mit.md) | Monorepo, licence MIT, publication après l'étape 2 | 1 | Publication remplacée par 0011 |
 | [0011](0011-publication-fin-de-projet.md) | Publication à la fin du projet | 1 | Acceptée |
+| [0012](0012-organisation-du-travail.md) | Organisation du travail et ordre des jalons (D1 à D4) | 2 | Ordre des jalons remplacé par 0017 |
+| [0013](0013-appairage-code-puis-qr-inverse.md) | Appairage : code long à l'étape 2, QR inversé à l'étape 3 (D5) | 2 | Acceptée |
+| [0014](0014-chiffrement-etape-2.md) | Chiffrement de l'étape 2 : bibliothèque, clé de groupe, bascule (D6 à D11) | 2 | Acceptée |
+| [0015](0015-wss-tailscale-cert.md) | `wss` dès l'étape 3, avec un certificat `tailscale cert` (D13) | 3 | Acceptée |
+| [0016](0016-android-service-tuile-qr.md) | Android : service `specialUse`, pas de tuile, zxing-cpp (D14, D15, D18) | 3 | Acceptée |
+| [0017](0017-extension-chrome-sans-appli-desktop.md) | Pas d'appli desktop : extension Chrome autonome à l'étape 4 (D12, D16, D17, D19, D21) | 4 | Acceptée |
+| [0018](0018-fichiers-historique-revocation.md) | Fichiers reçus, historique local, révocation (D20, D22, D23) | 5, 8 | Acceptée |
+| [0019](0019-presse-papiers-manuel.md) | Presse-papiers : envoi manuel, écriture à la réception (D24) | 6 | Acceptée |

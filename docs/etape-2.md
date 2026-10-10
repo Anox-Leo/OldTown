@@ -7,8 +7,7 @@ laptop.
 
 Références : jalon « 2. Chiffrement et appairage » de la
 [conception](design.md), [revue après l'étape 1](revue-etapes-0-1.md),
-décisions ouvertes D5 à D11 de [`decisions-a-prendre.md`](decisions-a-prendre.md)
-(ce plan applique leurs recommandations).
+notes 0013 (code d'appairage) et 0014 (choix crypto et bascule).
 
 ## Objectif et périmètre
 
@@ -34,7 +33,7 @@ aux messages suivants.
 
 - QR code et coffres de clés de l'OS (étapes 3 et 4 : ce sont les applis qui
   les apportent). La CLI garde ses clés dans des fichiers `0600`.
-- `wss` (liste avant publication), révocation côté relais sans SSH (étape 8).
+- `wss` (étape 3, note 0015), révocation côté relais sans SSH (étape 8).
 - Fichiers (étape 5) : leur clé voyagera dans un message chiffré de cette étape.
 
 ## Principes
@@ -59,7 +58,7 @@ aux messages suivants.
 | Roster | Chaque membre, `roster.json` | Pour chaque membre : `device_id`, nom, clés Ed25519 et X25519 publiques, époque d'ajout |
 | Secret d'appairage `S`, 16 octets | Code d'appairage, mémoire du parrain | Authentifier et chiffrer l'échange d'appairage |
 
-Bibliothèques (RustCrypto, D6) : `chacha20poly1305` (XChaCha20-Poly1305),
+Bibliothèques (RustCrypto, note 0014) : `chacha20poly1305` (XChaCha20-Poly1305),
 `x25519-dalek`, `hkdf` + `sha2`, `ed25519-dalek` (déjà là). Aléa par
 `getrandom`. Toutes les clés secrètes sont dans des types qui s'effacent à la
 destruction (`zeroize`).
@@ -165,7 +164,7 @@ ferme la connexion comme `auth_failed`), `name_taken`.
 | `pairings` | `token_hash` BLOB PK (SHA-256), `sponsor_id` FK, `created_at`, `expires_at`, `used_at` NULL, `device_id` NULL FK | Purgée avec les messages ; jamais le jeton en clair |
 
 Nouvelle sous-commande d'administration : `ot-server messages purge --all`
-(bascule, D11). Nouveaux compteurs : `pairings_created`, `pairings_redeemed`,
+(bascule, note 0014). Nouveaux compteurs : `pairings_created`, `pairings_redeemed`,
 `pairings_rejected`.
 
 **Client (CLI)**, dans le dossier `--home` : `exchange.key` (`0600`),
@@ -222,7 +221,8 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
 - [ ] **T4. Appairage côté relais.**
   Fichiers : `crates/ot-proto/src/frame.rs`, `tests/golden/pair_*.json`,
   `crates/ot-server/migrations/0002_pairings.sql`, `src/store.rs`,
-  `src/session.rs`, `src/metrics.rs`, `docs/decisions/0012-trames-appairage.md`.
+  `src/session.rs`, `src/metrics.rs`, note de décision sur les trames
+  d'appairage (`docs/decisions/NNNN-trames-appairage.md`, prochain numéro libre).
   Faire : les quatre trames et deux codes d'erreur ; table `pairings` ;
   `pair_create` en session authentifiée ; `pair_redeem` dans la phase
   d'authentification (vérifie signature, jeton, unicité du nom), crée
@@ -230,7 +230,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Tests : jeton valide ; expiré ; déjà utilisé ; inconnu ; signature fausse ;
   nom déjà pris ; `pair_create` avant `auth` refusé ; aucun jeton en clair en
   base ni dans les logs.
-  Fini quand : la note 0012 existe et les golden sont à jour.
+  Fini quand : la note sur les trames existe et les golden sont à jour.
 
 - [ ] **T5. Commandes de groupe et d'appairage dans la CLI.**
   Fichiers : `crates/ot-cli/src/main.rs`, `files.rs`.
@@ -273,13 +273,14 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Fichiers : `crates/ot-core`, `crates/ot-cli`, `crates/ot-proto/src/envelope.rs`.
   Faire : supprimer l'envoi en clair des clients (`Envelope::new_plain` ne
   sert plus qu'aux tests) ; un client sans groupe refuse d'envoyer et dit
-  pourquoi. Le relais reste inchangé (D10).
+  pourquoi. Le relais reste inchangé (note 0014).
   Tests : un test E2E lit la base du relais et vérifie qu'aucun `body` envoyé
   n'y apparaît.
 
 - [ ] **T10. Bascule de l'installation réelle.**
   Fichiers : `README.md`, `SECURITY.md`, `docs/etape-2.md` (état).
-  Faire : mettre à jour le relais ; `ot-server messages purge --all` ;
+  Faire : mettre à jour le relais ; `ot-server messages purge --all` (suivi d'un
+  `VACUUM`, note 0014) ;
   `ot group init` sur le premier appareil ; révoquer et réappairer les autres.
   Mettre à jour le modèle de menace de `SECURITY.md` et cocher sa première
   ligne. Retirer l'avertissement « contenu en clair » du README.

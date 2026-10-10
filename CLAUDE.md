@@ -80,8 +80,8 @@ cargo deny check
 ```
 
 Plus, selon les dossiers touchés : `./gradlew lint test assembleDebug` dans
-`apps/android` (étape 3), `npm run lint && npm test` dans `apps/desktop` et
-`apps/extension` (étapes 4 et 7). Une commande qui ne passe pas se signale avec
+`apps/android` (étape 3), `npm run lint && npm test` dans `apps/extension`
+(étape 4). Une commande qui ne passe pas se signale avec
 sa sortie ; jamais de test désactivé pour passer.
 
 ## Compte rendu attendu

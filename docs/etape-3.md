@@ -2,14 +2,13 @@
 
 L'étape 3 livre l'appli Android : partager un texte ou un lien depuis n'importe
 quelle appli vers mes autres appareils, recevoir une notification avec
-« Copier » et « Ouvrir », envoyer le presse-papiers depuis une tuile, et
-appairer le téléphone en scannant un QR code.
+« Copier » et « Ouvrir », et appairer en scannant un QR code : le téléphone
+rejoint le groupe, puis parraine les autres appareils.
 
 Références : jalon « 3. Android : partage » de la [conception](design.md),
 [revue après l'étape 1](revue-etapes-0-1.md), note 0009 (un seul processus
-tient la connexion), décisions D13 à D18 de
-[`decisions-a-prendre.md`](decisions-a-prendre.md) (ce plan applique leurs
-recommandations).
+tient la connexion), 0013 (QR dans les deux sens), 0015 (`wss`), 0016
+(service, pas de tuile, zxing-cpp).
 
 **Prérequis** : étape 2 terminée (chiffrement, roster, appairage par code,
 trait `Keyring`).
@@ -31,9 +30,10 @@ batterie.
 - Service de premier plan qui tient l'unique connexion de l'appareil.
 - Cible de partage (texte, lien), raccourcis Direct Share par appareil.
 - Notifications de réception avec actions, marquage des contenus sensibles.
-- Tuile Quick Settings « Envoyer le presse-papiers » (D15).
-- Appairage par QR (scanner un code affiché par `ot pair new --qr`, ou
-  afficher un QR pour parrainer un autre appareil).
+- Relais en `wss`, certificat `tailscale cert` (note 0015).
+- Appairage par QR dans les deux sens (note 0013) : le téléphone rejoint en
+  scannant le code affiché par `ot pair new --qr`, puis parraine les autres
+  appareils en scannant le QR qu'ils affichent (QR inversé).
 - Clés protégées par le Keystore Android.
 
 **Exclus**
@@ -49,8 +49,7 @@ batterie.
 
 ```text
 ┌──────────────── Appli Android (un seul processus) ────────────────┐
-│ ShareActivity ─┐                                                   │
-│ TileActivity  ─┼──▶ RelayService (premier plan) ──▶ ot-ffi ──▶ ot-core ──▶ relais
+│ ShareActivity ─┬──▶ RelayService (premier plan) ──▶ ot-ffi ──▶ ot-core ──▶ relais
 │ MainActivity  ─┘        │                                          │
 │                         └──▶ Notifications, presse-papiers         │
 │ SecretStore (Kotlin, Keystore AES-GCM) ◀── appelé par ot-core      │
@@ -58,7 +57,7 @@ batterie.
 ```
 
 - **Un seul propriétaire de la connexion** : `RelayService`. Les activités
-  (partage, tuile, écran principal) lui parlent par un service lié ou un
+  (partage, écran principal) lui parlent par un service lié ou un
   `Intent` ; elles n'ouvrent jamais de connexion (note 0009).
 - **Tout le protocole et la crypto restent en Rust.** Kotlin ne voit que des
   types simples : `Content`, `Received`, `Device`, `Event`.
@@ -67,10 +66,9 @@ batterie.
   exportable du Keystore Android et rangés dans le stockage privé de l'appli.
   Le Keystore ne tient pas directement les clés Ed25519/X25519 : le cœur Rust
   doit pouvoir s'en servir.
-- **Réseau** : la connexion part du code Rust (sockets natives), donc la
-  politique « trafic en clair interdit » d'Android, qui ne s'applique qu'aux
-  piles réseau Java, ne bloque pas `ws://`. La configuration réseau de l'appli
-  interdit quand même le clair pour tout le code Java (D13).
+- **Réseau** : `wss` vers le relais (note 0015), TLS fait par `rustls` dans
+  le code Rust. La configuration réseau de l'appli interdit le clair pour tout
+  le code Java.
 
 ## Pont Rust : crate `ot-ffi`
 
@@ -89,15 +87,15 @@ batterie.
 - Cibles : `aarch64-linux-android` (téléphone), `x86_64-linux-android`
   (émulateur). `cargo-ndk` est appelé par une tâche Gradle ; les liaisons
   Kotlin sont générées par `uniffi-bindgen` au build, jamais versionnées.
-- `ot-ffi` ne sert qu'à Android (et à iOS un jour) : l'appli desktop Tauri
-  appelle `ot-core` directement en Rust.
+- `ot-ffi` ne sert qu'à Android (et à iOS un jour) : l'extension Chrome
+  (étape 4) passe par `ot-wasm`.
 
 ## Détails Android
 
 | Sujet | Choix | Remarque |
 | --- | --- | --- |
 | Versions | `minSdk 33` (Android 13), `targetSdk` = dernière version stable | Un seul téléphone : pas de compatibilité ancienne à porter |
-| Service | `foregroundServiceType="specialUse"` avec la propriété de justification (D14) | `dataSync` est limité à 6 h par jour à partir d'Android 15 ; à revérifier au démarrage de l'étape sur la doc Android |
+| Service | `foregroundServiceType="specialUse"` avec la propriété de justification (note 0016) | `dataSync` est limité à 6 h par jour à partir d'Android 15. Au démarrage de l'étape, vérifier sur la doc Android si `remoteMessaging` conviendrait (ni limite de durée, ni restriction au boot) et noter le résultat |
 | Démarrage | Au lancement de l'appli et au boot (`BOOT_COMPLETED`) | Vérifier que le type retenu peut démarrer depuis le boot sur la version cible |
 | Batterie | Demander l'exemption d'optimisation (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) | Autorisé hors Play Store |
 | Réseau | `ConnectivityManager.NetworkCallback` → `reconnect_now()` | Passage Wi-Fi ↔ 4G |
@@ -106,9 +104,8 @@ batterie.
 | Contenu sensible | `ClipDescription.EXTRA_IS_SENSITIVE` quand le contenu est marqué sensible | Le marquage arrive vraiment avec l'étape 6 ; prévoir le champ |
 | Partage | `ShareActivity` transparente pour `ACTION_SEND` `text/plain` ; choix du destinataire en feuille du bas | Les autres types MIME sont acceptés mais répondent « fichiers : étape 5 » |
 | Direct Share | Un raccourci dynamique par appareil du roster (`ShortcutManagerCompat`) | Mis à jour à chaque `GroupChanged` |
-| Tuile | `TileService` qui ouvre une activité transparente ; elle lit le presse-papiers quand elle a le focus, envoie, se ferme | Android 14+ : `startActivityAndCollapse(PendingIntent)` |
-| QR | Lecture par zxing-cpp (Apache 2.0, sans Google Play Services) via CameraX ; saisie du code en secours (D18) | ML Kit écarté : dépendance Google |
-| QR (contenu) | `oldtown://pair?s=<url du relais>&c=<code ot1-…>` | Même code que l'étape 2 |
+| QR | Lecture par zxing-cpp (Apache 2.0, sans Google Play Services) via CameraX ; saisie du code en secours (note 0016) | ML Kit écarté : dépendance Google |
+| QR (contenu) | Rejoindre : `oldtown://pair?s=<url du relais>&c=<code ot1-…>` ; parrainer : QR inversé affiché par le nouvel appareil (nom, clés publiques, secret, signature) | Même code que l'étape 2 ; format du QR inversé figé par T9 (note 0013) |
 | Dédoublonnage | Les `msg_id` vus sont persistés dans le stockage privé | Remplit `ClientConfig.seen` au démarrage |
 | Signature de l'APK | Clé personnelle hors dépôt (`private/`), installation par `adb install` | Jamais de keystore versionné |
 
@@ -164,18 +161,40 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   membre), envoi par le service, confirmation brève ; raccourcis par appareil.
   Tests : test instrumenté d'un `Intent` `ACTION_SEND`.
 
-- [ ] **T8. Tuile « Envoyer le presse-papiers ».**
-  Faire : `TileService` + activité transparente ; si le presse-papiers est
-  vide ou non textuel, message clair.
-  Tests : essai manuel sur le téléphone (Android 13) et l'émulateur récent.
+- [ ] **T8. `wss` sur le relais et dans `ot-core`** (note 0015 ; à faire
+  avant T5).
+  Fichiers : `crates/ot-server/src/main.rs`, `src/lib.rs`,
+  `crates/ot-core/src/client.rs`, `deploy/` (minuterie de renouvellement),
+  `README.md`, `SECURITY.md`.
+  Faire : TLS optionnel côté relais (`rustls`, chemins du certificat et de la
+  clé en configuration, rechargement du certificat renouvelé sans
+  redémarrage) ; `wss://` côté `ot-core` et CLI, vérification par les
+  autorités de Mozilla (`webpki-roots`) ; minuterie systemd qui lance
+  `tailscale cert` (installée par moi avec `sudo`). Aucun nom de machine
+  dans le dépôt : exemples en `relais`.
+  Tests : connexion `wss` avec un certificat de test ; certificat invalide
+  refusé ; rechargement du certificat ; `ws://` toujours possible sans
+  configuration TLS.
 
-- [ ] **T9. Appairage par QR.**
-  Fichiers : `crates/ot-cli/src/main.rs` (option `--qr` qui affiche le QR en
-  terminal), `apps/android/.../pairing/`.
-  Faire : écran d'accueil « Rejoindre » (scanner ou coller le code) ; écran
-  « Ajouter un appareil » qui affiche un QR et attend la demande ; écran
+- [ ] **T9. Appairage par QR, dans les deux sens** (note 0013).
+  Fichiers : `crates/ot-proto/src/frame.rs`, `tests/golden/`,
+  `crates/ot-server/src/session.rs`, `src/store.rs`, `crates/ot-crypto/`
+  (vecteurs), `crates/ot-core/src/pairing.rs`, `crates/ot-cli/src/main.rs`
+  (options `--qr` de `ot pair new` et `ot pair join`, QR en terminal),
+  `apps/android/.../pairing/`, note de décision sur le format.
+  Faire : rejoindre en scannant `oldtown://pair` (ou en collant le code) ;
+  parrainer par QR inversé : le nouvel appareil affiche nom, clés publiques,
+  secret `S` et signature ; le téléphone scanne, fait enregistrer l'appareil
+  par sa session authentifiée (nouvelle trame), puis lui envoie clé de groupe
+  et roster authentifiés par `S` et scellés pour sa clé X25519 ; le nouvel
+  appareil réessaie `auth` jusqu'à être enregistré (10 min au plus). Écran
   « Groupe » (membres, empreintes, rotation).
-  Tests : analyse de l'URI `oldtown://pair` (cas valides et invalides).
+  Tests : analyse de l'URI `oldtown://pair` et du QR inversé (cas valides et
+  invalides) ; E2E : le téléphone simulé parraine une CLI par QR inversé ; un
+  relais qui altère l'envoi ou enregistre une autre clé fait échouer
+  l'appairage ; vecteurs figés pour le nouvel envoi.
+  Fini quand : un PC rejoint le groupe en affichant un QR scanné par le
+  téléphone, sans rien taper.
 
 - [ ] **T10. Réglages et état.**
   Faire : nom de l'appareil, URL du relais, état de connexion avec aide
@@ -191,8 +210,9 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
 | --- | --- | --- |
 | Partager un lien depuis Chrome | Arrive sur le Mac en moins de 2 s | Essai réel |
 | Texte reçu, téléphone verrouillé | Notification ; Copier remplit le presse-papiers | Essai réel |
-| Tuile | Le presse-papiers du téléphone part vers tous les autres | Essai réel |
+| `wss` | Le téléphone se connecte en TLS ; un certificat invalide est refusé | Test + essai réel |
 | Appairage par QR | Le téléphone rejoint le groupe sans SSH ni saisie | Essai réel |
+| QR inversé | Un PC rejoint en affichant un QR scanné par le téléphone ; relais qui triche → échec | E2E + essai réel |
 | Nuit entière en veille | Aucun message perdu ; consommation acceptable (noter le pourcentage) | Essai réel, résultat noté ici |
 | Reboot du téléphone | Le service repart seul | Essai réel |
 | Wi-Fi → 4G | Reconnexion en moins de 10 s | Essai réel |

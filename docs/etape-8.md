@@ -6,23 +6,26 @@ permanente, révocation sans SSH, sauvegardes, et la liste de `SECURITY.md`
 entièrement cochée avant de rendre le dépôt public (note 0011).
 
 Références : jalon « 8. Confort et durcissement » de la
-[conception](design.md), [`SECURITY.md`](../SECURITY.md), décisions D8, D22 et
-D23 de [`decisions-a-prendre.md`](decisions-a-prendre.md).
+[conception](design.md), [`SECURITY.md`](../SECURITY.md), notes 0014
+(rotation), 0015 (`wss`) et 0018 (historique, révocation).
 
-**Niveau de détail** : plan de cadrage (D2). Les blocs ci-dessous sont
+**Niveau de détail** : plan de cadrage (note 0012). Les blocs ci-dessous sont
 indépendants : chacun peut devenir une sous-étape (8a, 8b…) avec son propre
 plan détaillé au moment de le lancer.
 
 ## 8a. Historique chiffré et recherche
 
-- Base locale dans `ot-core` (module `history`), partagée par les applis :
-  SQLite chiffré en entier (SQLCipher, D22), clé dans le coffre de l'OS ;
-  recherche plein texte (FTS5) possible puisque toute la base est chiffrée.
+- Base locale (note 0018) : SQLite simple sur Android (module `history` de
+  `ot-core`), IndexedDB dans l'extension ; chaque contenu est chiffré un par
+  un par `ot-crypto` (`ot-wasm` dans l'extension), sous une clé gardée comme
+  les autres secrets. Recherche en déchiffrant l'historique en mémoire.
+  Décider au démarrage si les métadonnées (date, type, expéditeur) sont
+  chiffrées aussi.
 - Rétention réglable (par défaut 90 jours), contenus `sensitive` jamais
   enregistrés, effacement complet en un geste.
-- Écrans « Historique » sur Android et desktop, recherche, renvoi d'un élément.
+- Écrans « Historique » sur Android et dans l'extension, recherche, renvoi d'un élément.
 - Critère de fin : retrouver un lien reçu il y a un mois en tapant un mot ;
-  la base copiée sur une autre machine est illisible.
+  les contenus de la base copiée sur une autre machine sont illisibles.
 
 ## 8b. Réveil par UnifiedPush et ntfy
 
@@ -38,9 +41,8 @@ plan détaillé au moment de le lancer.
 
 ## 8c. Révocation sans SSH
 
-- Trame authentifiée `revoke_device` ; qui peut révoquer qui est à trancher
-  (D23 : par défaut tout membre, journalisé, avec notification aux autres
-  appareils).
+- Trame authentifiée `revoke_device` ; tout membre peut révoquer, l'action
+  est journalisée et notifiée aux autres appareils (note 0018).
 - La révocation enchaîne la rotation de la clé de groupe (étape 2, T8).
 - Critère de fin : depuis le téléphone, révoquer le PC ; le PC est refusé à sa
   prochaine connexion et ne lit plus rien.
@@ -60,7 +62,10 @@ plan détaillé au moment de le lancer.
 - Évaluer Headscale sur un petit VPS pour remplacer le serveur de
   coordination de Tailscale ; garder Tailscale si l'évaluation n'apporte
   rien de concret.
-- Option `wss` pour un relais hors tailnet (ligne de `SECURITY.md`).
+- Ou se passer de Tailscale : relais joignable par la box, en `wss` avec un
+  nom de domaine et un certificat propres (note 0015), ce qui permet aussi
+  l'extension sur un ordinateur sans Tailscale. Préalables : les limites du
+  relais de 8f, et une revue de l'exposition à Internet.
 
 ## 8f. Avant publication
 
@@ -68,7 +73,8 @@ La liste de `SECURITY.md`, dans l'ordre :
 
 - [ ] Limiter les connexions non authentifiées et freiner les échecs
       d'authentification et d'appairage sur le relais.
-- [ ] Option `wss` et avertissement dans le README.
+- [ ] Avertissement dans le README sur l'exposition du relais hors tailnet
+      (`wss` est en place depuis l'étape 3).
 - [ ] Relecture externe de `ot-crypto` et des formats chiffrés.
 - [ ] Recherche de données personnelles dans tout l'historique git.
 - [ ] Documentation traduite en anglais et rendue générique.

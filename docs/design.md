@@ -1,6 +1,6 @@
 # OldTown : conception et mise en place
 
-**Recommandation : construire ton propre système autour d'un serveur relais sur le laptop Ubuntu, qui ne voit que des données chiffrées de bout en bout, et d'un cœur partagé en Rust (protocole et chiffrement) réutilisé par l'appli Android, l'appli desktop et l'extension navigateur.** Le laptop suffit largement comme serveur ; Tailscale le rend joignable de partout sans ouvrir de port, et un VPS n'est utile que plus tard.
+**Recommandation : construire ton propre système autour d'un serveur relais sur le laptop Ubuntu, qui ne voit que des données chiffrées de bout en bout, et d'un cœur partagé en Rust (protocole et chiffrement) réutilisé par l'appli Android et l'extension Chrome (en WebAssembly).** Le laptop suffit largement comme serveur ; Tailscale le rend joignable de partout sans ouvrir de port, et un VPS n'est utile que plus tard.
 
 Le vrai travail est côté clients : chaque OS a ses propres règles sur le presse-papiers et le partage. La feuille de route avance par jalons utilisables, du simple envoi de texte au presse-papiers live.
 
@@ -29,11 +29,10 @@ Un cœur Rust unique évite d'écrire trois fois le protocole et le chiffrement,
 | Cœur partagé | Rust : crypto (RustCrypto, crate `ot-crypto`), protocole, file d'envoi, cache local SQLite | Tout ce qui ne dépend pas de l'OS | Kotlin Multiplatform |
 | Serveur relais | Rust (axum + tokio) ou Go, SQLite, blobs sur disque | Authentifier les appareils, router les messages, stocker les fichiers chiffrés avec durée de vie | — |
 | Appli Android | Kotlin + Jetpack Compose, cœur via UniFFI | Cible de partage, tuile, notifications, réception | — |
-| Appli desktop | Tauri 2 (Rust + interface web), une base pour Windows et macOS | Icône de barre de menu, surveillance du presse-papiers, glisser-déposer, historique | Swift natif sur Mac si l'intégration Tauri ne suffit pas |
-| Extension navigateur | WebExtension (Chrome et Firefox) | Envoyer la page, un lien ou la sélection depuis le menu contextuel | — |
+| Extension Chrome | Manifest V3, interface Angular, crypto `ot-crypto` en WebAssembly, protocole en TypeScript | Client des ordinateurs : tient sa propre connexion, envoie la page, un lien, la sélection ou le presse-papiers, reçoit en notification | Appli desktop Tauri, écartée (note 0017) |
 | Notifications Android | WebSocket dans un service de premier plan, puis [UnifiedPush](https://unifiedpush.org/users/distributors/) avec ntfy auto-hébergé | Réveiller le téléphone sans passer par Google | Firebase (FCM), à éviter ici |
 
-L'extension ne garde aucune clé : par native messaging, elle parle à un petit hôte local qui relaie vers l'appli desktop par une socket locale ; l'appli chiffre et envoie. L'hôte n'ouvre jamais sa propre connexion au relais (une seule session par appareil, note 0009).
+Il n'y a pas d'appli desktop (note 0017) : l'extension Chrome est un appareil à part entière, autonome, installable sur n'importe quel ordinateur qui a Chrome, y compris un ordinateur professionnel, dans l'esprit de Pushbullet. Son service worker est l'unique propriétaire de la connexion (note 0009) ; ses clés sont chiffrées dans le profil Chrome.
 
 ## Contraintes par plateforme
 
@@ -44,7 +43,7 @@ Android est la seule plateforme où le presse-papiers ne peut pas être lu autom
 | Android 13 | Cible de partage (`ACTION_SEND`, `SEND_MULTIPLE`), raccourcis Direct Share par appareil | Notification avec actions Copier et Ouvrir, écriture dans le presse-papiers | Lecture interdite en arrière-plan depuis Android 10 : tuile Quick Settings qui ouvre une activité transparente le temps de lire | Marquer les contenus sensibles (`EXTRA_IS_SENSITIVE`, Android 13) pour masquer l'aperçu ; optimisation batterie à désactiver pour l'appli |
 | macOS (M3) | Extension de partage, menu Services, glisser sur l'icône de barre de menu | Notification, écriture dans `NSPasteboard` | Pas d'événement de changement : sonder `changeCount` toutes les 0,5 s environ | Ignorer les types `org.nspasteboard.ConcealedType` (mots de passe) ; vérifier les nouvelles alertes de confidentialité du presse-papiers sur ta version de macOS |
 | Windows 10 | Entrée « Envoyer vers » ou menu contextuel, glisser sur l'icône | Notification toast, écriture dans le presse-papiers | Événement natif `AddClipboardFormatListener` | Ignorer les formats `ExcludeClipboardContentFromMonitorProcessing` posés par les gestionnaires de mots de passe |
-| Navigateur | Menu contextuel (page, lien, sélection, image) | Popup avec les derniers éléments reçus | Via l'appli desktop | Pas de clé dans l'extension |
+| Ordinateurs (extension Chrome) | Menu contextuel (page, lien, sélection, image), popup, raccourci | Notification Chrome, popup avec les derniers éléments reçus | Envoi sur un geste, écriture à la réception (note 0019) | Réception seulement quand Chrome tourne ; service worker arrêté après 30 s d'inactivité |
 | Ubuntu (si le laptop sert aussi de client) | GSConnect montre la voie : extension GNOME Shell | Notification | Sous GNOME Wayland, une appli ordinaire ne peut pas surveiller le presse-papiers en arrière-plan (à confirmer sur ta version) : passer par une extension GNOME ou une session X11 | Le serveur seul n'en a pas besoin |
 
 Pour éviter les boucles, chaque élément porte un identifiant : un client qui écrit un contenu reçu ne le renvoie pas quand il le détecte.
@@ -54,7 +53,7 @@ Pour éviter les boucles, chaque élément porte un identifiant : un client qui 
 Le serveur authentifie des appareils et transporte des enveloppes opaques ; seuls tes appareils détiennent les clés qui les ouvrent.
 
 1. **Identité d'appareil** : chaque appareil génère une paire de clés Ed25519 (signature) et X25519 (échange), stockées dans le coffre de l'OS (Android Keystore, Trousseau macOS, DPAPI Windows).
-2. **Appairage par code, puis QR** : un appareil déjà membre obtient du relais un jeton à usage unique et affiche un code (jeton + secret que le relais ne voit jamais) ; le nouvel appareil s'enregistre avec le jeton, puis reçoit la clé de groupe dans un échange chiffré sous le secret. Code copié-collé entre CLI à l'étape 2, QR à partir de l'étape 3 (détail : [étape 2](etape-2.md)).
+2. **Appairage par code, puis QR** : un appareil déjà membre obtient du relais un jeton à usage unique et affiche un code (jeton + secret que le relais ne voit jamais) ; le nouvel appareil s'enregistre avec le jeton, puis reçoit la clé de groupe dans un échange chiffré sous le secret. Code copié-collé entre CLI à l'étape 2 ; à partir de l'étape 3, QR dans les deux sens : le téléphone scanne le code pour rejoindre, puis scanne le QR affiché par chaque nouvel appareil pour le parrainer (QR inversé, note 0013 ; détail : [étape 2](etape-2.md), [étape 3](etape-3.md)).
 3. **Authentification au serveur** : défi signé avec la clé Ed25519, pas de mot de passe ; connexion WebSocket persistante en TLS par-dessus le VPN.
 4. **Messages** : texte et liens chiffrés avec XChaCha20-Poly1305 sous la clé de groupe, signés par l'expéditeur ; le serveur ne voit que destinataire, taille et date.
 5. **Fichiers** : découpés en morceaux chiffrés en flux (construction STREAM de RustCrypto), envoyés en HTTP avec reprise ; le message n'emporte que la référence et la clé du fichier.
@@ -95,11 +94,10 @@ Chaque jalon donne un outil utilisable au quotidien, ce qui te permet d'ajuster 
 | --- | --- | --- |
 | [1. Fondations](etape-1.md) (terminé) | Tailscale, serveur relais minimal (WebSocket + SQLite), CLI de test, cœur Rust avec tests | Envoyer un texte d'un terminal à un autre |
 | [2. Chiffrement et appairage](etape-2.md) | Clés d'échange, clé de groupe et rotation, appairage par code, relais aveugle | Le serveur ne voit plus rien en clair |
-| [3. Android : partage](etape-3.md) | Appli Kotlin, cible de partage, notifications, service de premier plan, appairage QR, tuile « envoyer le presse-papiers » | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
-| [4. Desktop : Windows, Mac, Ubuntu](etape-4.md) | Appli Tauri en barre de menu, envoi et réception, glisser-déposer, socket locale | Échanger avec le téléphone depuis les deux ordinateurs |
+| [3. Android : partage](etape-3.md) | Appli Kotlin, cible de partage, notifications, service de premier plan, appairage QR dans les deux sens, `wss` | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
+| [4. Extension Chrome](etape-4.md) | Extension autonome : crypto en WebAssembly, protocole en TypeScript, menus contextuels, popup, notifications | Échanger avec le téléphone depuis n'importe quel ordinateur qui a Chrome |
 | [5. Fichiers](etape-5.md) | Envoi par morceaux chiffrés, reprise, durée de vie sur le serveur | Envoyer des documents et des photos volumineux |
-| [6. Presse-papiers live](etape-6.md) | Surveillance sur Windows et Mac, anti-boucle, filtre mots de passe | Copier sur un ordinateur, coller sur l'autre ou sur le téléphone |
-| [7. Extension navigateur](etape-7.md) | WebExtension, native messaging vers l'appli desktop par un hôte local | Envoyer la page ou la sélection en un clic |
+| [6. Presse-papiers](etape-6.md) | Contenu `clip`, images, écriture à la réception, marquage sensible ; jamais de surveillance automatique | Envoyer et recevoir le presse-papiers en un geste |
 | [8. Confort et durcissement](etape-8.md) | Historique chiffré et recherche, UnifiedPush avec ntfy, révocation sans SSH, sauvegardes, Headscale, publication | Un système autonome, sans dépendance externe |
 
 Dès les jalons 1 à 3, OldTown remplace déjà l'usage principal de Pushbullet.

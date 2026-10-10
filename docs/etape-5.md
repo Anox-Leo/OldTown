@@ -6,13 +6,13 @@ n'emporte que la référence du fichier et sa clé ; le relais stocke des
 morceaux opaques pour une durée limitée.
 
 Références : jalon « 5. Fichiers » de la [conception](design.md), note 0009
-(un transfert n'ouvre pas de session), décisions D6 et D20 de
-[`decisions-a-prendre.md`](decisions-a-prendre.md).
+(un transfert n'ouvre pas de session), 0014 (RustCrypto), 0017 (extension
+Chrome autonome) et 0018 (téléchargement des fichiers reçus).
 
-**Niveau de détail** : plan de cadrage (D2). Au démarrage, relire contre le
+**Niveau de détail** : plan de cadrage (note 0012). Au démarrage, relire contre le
 code, compléter les tâches et noter les écarts dans `decisions/`.
 
-**Prérequis** : étapes 2 à 4 (chiffrement, applis Android et desktop).
+**Prérequis** : étapes 2 à 4 (chiffrement, appli Android, extension Chrome).
 
 ## Objectif et périmètre
 
@@ -22,8 +22,9 @@ s'était arrêté et le fichier arrive intact dans le dossier Téléchargements.
 
 **Inclus** : API HTTP de dépôt et de retrait par morceaux, chiffrement en flux,
 reprise dans les deux sens, durée de vie et quotas sur le relais, envoi et
-réception dans la CLI, Android (partage d'images et de fichiers) et desktop
-(glisser-déposer de fichiers).
+réception dans la CLI, Android (partage d'images et de fichiers) et
+l'extension Chrome (choix d'un fichier dans la popup, « envoyer l'image » au
+clic droit, téléchargement des fichiers reçus).
 
 **Exclus** : synchronisation de dossiers (Syncthing le fait), aperçus côté
 relais (il ne voit rien), transfert direct d'appareil à appareil en réseau
@@ -71,7 +72,8 @@ destinataire ne voit jamais de fichier incomplet.
 
 **Clients** : état des transferts persisté (reprise après redémarrage de
 l'appli) ; téléchargement automatique sous un seuil, à la demande au-delà
-(D20) ; sur Android, téléchargement dans `Download/OldTown` via MediaStore,
+(note 0018 : automatique sous 20 Mo, et sur Wi-Fi seulement pour le
+téléphone) ; sur Android, téléchargement dans `Download/OldTown` via MediaStore,
 avec WorkManager pour les longs transferts.
 
 ## Découpage en tâches
@@ -85,8 +87,11 @@ avec WorkManager pour les longs transferts.
 - [ ] **T4. CLI** : `ot send --file <chemin>`, `ot listen --download-dir`.
 - [ ] **T5. Android** : partage d'images et de fichiers (`SEND`,
   `SEND_MULTIPLE`), notification de progression, téléchargement.
-- [ ] **T6. Desktop** : glisser-déposer de fichiers, progression, ouverture du
-  dossier.
+- [ ] **T6. Extension Chrome** : dépôt et retrait par morceaux en TypeScript
+  (chiffrement par `ot-wasm`, requêtes HTTP signées), choix d'un fichier dans
+  la popup, « envoyer l'image » au clic droit, téléchargement des fichiers
+  reçus par `chrome.downloads`, progression. Le service worker doit rester en
+  vie pendant un long transfert.
 - [ ] **T7. Tests de bout en bout et essai réel** : gros fichier, coupure,
   redémarrage du relais pendant le dépôt, quota plein, expiration.
 
