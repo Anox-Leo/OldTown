@@ -44,3 +44,12 @@ signale-le dans ton compte rendu.
 | D17 | Organisation du monorepo | `crates/` (Rust), `apps/android`, `apps/desktop`, `apps/extension`, un workflow CI par dossier | Un dépôt par appli | `etape-3.md`, `etape-4.md`, `etape-7.md` |
 | D18 | Lecture du QR sur Android | zxing-cpp (Apache 2.0) avec CameraX, saisie du code en secours | ML Kit (dépendance Google) | `etape-3.md` T9 |
 | D19 | Interface de l'appli desktop | Angular, déjà maîtrisé | Svelte ou TypeScript sans framework, plus léger | `etape-4.md` |
+
+## Étapes 5 à 8
+
+| # | Question | ★ Recommandation | Alternative | Impacte |
+| --- | --- | --- | --- | --- |
+| D20 | Téléchargement des fichiers reçus | Automatique sous 20 Mo (et sur Wi-Fi seulement pour le téléphone), à la demande au-delà ; blobs gardés 48 h sur le relais | Toujours automatique ; ou toujours à la demande | `etape-5.md` |
+| D21 | Navigateurs visés par l'extension | Chrome (mode développeur) et Firefox (signature Mozilla « unlisted ») | Un seul navigateur ; Firefox Developer Edition sans signature | `etape-7.md` |
+| D22 | Base de l'historique local | SQLCipher (base entière chiffrée, recherche FTS5) | SQLite simple avec contenus chiffrés un par un (pas de recherche plein texte) | `etape-8.md` 8a |
+| D23 | Qui peut révoquer un appareil sans SSH | Tout membre, journalisé et notifié aux autres | Seulement des appareils marqués « administrateurs » ; ou confirmation par un second appareil | `etape-8.md` 8c |
