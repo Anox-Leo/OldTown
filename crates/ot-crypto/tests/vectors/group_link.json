@@ -1,0 +1,26 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "group",
+    "epoch": 7,
+    "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+  },
+  "body": {
+    "kind": "link",
+    "body": "https://example.org/"
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0",
+      "dev_01J9Z3P0A2B4C6D8E0F2G4H6J8"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "AQAAAAdGR0hJSktMTU5PUFFSU1RVVldYWVpbXF2okUlOE68ubIe9CZqh7wWIO2wCZXbqj7iKI2qo2p2RoTW8A34gB9apohcjWIK8SR8FBqwzN9poPYZDY2fiEz0ENO16v5c20dd16Mw6Lc09Fju+1kM17QSBQEepVi418utIbb3+RXhmdT0jKawGDbHz2Ug9eGEFHpme3TYzAw=="
+    }
+  }
+}

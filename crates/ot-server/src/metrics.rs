@@ -12,6 +12,9 @@ pub struct Metrics {
     pub messages_acked: AtomicU64,
     pub purged_acked: AtomicU64,
     pub purged_expired: AtomicU64,
+    pub pairings_created: AtomicU64,
+    pub pairings_redeemed: AtomicU64,
+    pub pairings_rejected: AtomicU64,
 }
 
 impl Metrics {
@@ -71,6 +74,16 @@ impl Metrics {
             &[
                 ("{reason=\"acked\"}", get(&self.purged_acked)),
                 ("{reason=\"expired\"}", get(&self.purged_expired)),
+            ],
+        );
+        metric(
+            "ot_pairings_total",
+            "counter",
+            "Jetons d'appairage : créés, utilisés, refusés.",
+            &[
+                ("{result=\"created\"}", get(&self.pairings_created)),
+                ("{result=\"redeemed\"}", get(&self.pairings_redeemed)),
+                ("{result=\"rejected\"}", get(&self.pairings_rejected)),
             ],
         );
         out

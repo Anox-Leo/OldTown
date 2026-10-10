@@ -4,9 +4,13 @@ Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
 (`init`, `send`, `listen`, `devices` ; `group` et `pair` à l'étape 2).
 
 - Mince couche au-dessus de `ot-core` : pas de logique de protocole ici.
-- Fichiers locaux dans `files.rs` (`config.toml`, `device.key` en `0600`,
-  `seen.json`) ; dossier choisi par `--home` ou `OT_HOME`, sinon celui de
-  l'OS. Tout nouveau secret est créé en `0600`.
+- Fichiers locaux dans `files.rs` (`config.toml`, `device.key`,
+  `seen.json`, et le `Keyring` sur fichiers : `exchange.key`, `group.json`,
+  `roster.json`, `quarantine.json`, tous en `0600`) ; dossier choisi par
+  `--home` ou `OT_HOME`, sinon celui de l'OS. Tout nouveau secret est créé en
+  `0600` et passe par des tampons `Zeroizing`.
+- Les destinataires (`--to`, `--exclude`) se résolvent dans le roster, jamais
+  dans la liste du relais.
 - Chaque commande ponctuelle ouvre une session et coupe brièvement un
   `ot listen` de la même identité (note 0009). Sur un ordinateur qui a aussi
   l'extension Chrome, la CLI est un appareil distinct (note 0017).

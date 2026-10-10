@@ -27,3 +27,5 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0017](0017-extension-chrome-sans-appli-desktop.md) | Pas d'appli desktop : extension Chrome autonome à l'étape 4 (D12, D16, D17, D19, D21) | 4 | Acceptée |
 | [0018](0018-fichiers-historique-revocation.md) | Fichiers reçus, historique local, révocation (D20, D22, D23) | 5, 8 | Acceptée |
 | [0019](0019-presse-papiers-manuel.md) | Presse-papiers : envoi manuel, écriture à la réception (D24) | 6 | Acceptée |
+| [0020](0020-trames-appairage.md) | Trames d'appairage côté relais | 2 | Acceptée |
+| [0021](0021-format-chiffre-et-roster.md) | Format chiffré, roster versionné et cœur client | 2 | Acceptée |

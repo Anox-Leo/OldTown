@@ -1,0 +1,23 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "group",
+    "epoch": 1,
+    "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+  },
+  "body": {
+    "kind": "text",
+    "body": "bonjour"
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "AQAAAAFGR0hJSktMTU5PUFFSU1RVVldYWVpbXF3XF8yQc4EtlV26vKQIEUWc4wTvTfldYQDORZ5ZrIg/pkJFR+AM8DbZeBnNZlvOCN86TjCI5tLSSammDG/gtLQDNO16v5c20dd18MAsMs09Fju+1kM17QSLW12zSmFo//O63l1fVUScFjAETAWIrAct"
+    }
+  }
+}

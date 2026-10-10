@@ -1,4 +1,5 @@
-//! T10 : scénarios de bout en bout, serveur dans le processus et clients ot-core.
+//! Étape 1, T10 : scénarios de bout en bout, serveur dans le processus et
+//! clients ot-core (membres d'un même groupe depuis l'étape 2).
 
 mod common;
 
@@ -14,6 +15,7 @@ async fn setup(config: Config) -> (TestServer, TestDevice, TestDevice) {
     let store = Store::in_memory().await.unwrap();
     let a = add_device(&store, "windows").await;
     let b = add_device(&store, "mac").await;
+    make_group(&[&a, &b]);
     (TestServer::start(store, config).await, a, b)
 }
 
@@ -31,7 +33,7 @@ async fn both_online_under_a_second() {
     assert!(start.elapsed() < Duration::from_secs(1), "{:?}", start.elapsed());
     assert_eq!(m.msg_id, accepted.msg_id);
     assert_eq!(m.from, a.id);
-    assert_eq!(m.content, Some(Content::text("bonjour")));
+    assert_eq!(m.content, Content::text("bonjour"));
 }
 
 #[tokio::test]
@@ -46,7 +48,7 @@ async fn offline_recipient_gets_messages_in_order() {
     let (_cb, mut eb) = b.client(&server.url());
     assert_eq!(wait_connected(&mut eb).await, 5);
     for i in 0..5 {
-        assert_eq!(next_message(&mut eb).await.content, Some(Content::text(format!("m{i}"))));
+        assert_eq!(next_message(&mut eb).await.content, Content::text(format!("m{i}")));
     }
 }
 
@@ -55,6 +57,7 @@ async fn sends_queued_while_offline_go_out_on_connect() {
     let store = Store::in_memory().await.unwrap();
     let a = add_device(&store, "windows").await;
     let b = add_device(&store, "mac").await;
+    make_group(&[&a, &b]);
     // Réserve un port, puis démarre le client avant le serveur.
     let addr = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let (ca, _ea) = a.client(&format!("ws://{addr}"));
@@ -65,7 +68,7 @@ async fn sends_queued_while_offline_go_out_on_connect() {
     let server = TestServer::start_on(addr, store, test_config()).await;
     tokio::time::timeout(STEP, send).await.unwrap().unwrap().unwrap();
     let (_cb, mut eb) = b.client(&server.url());
-    assert_eq!(next_message(&mut eb).await.content, Some(Content::text("en file")));
+    assert_eq!(next_message(&mut eb).await.content, Content::text("en file"));
 }
 
 #[tokio::test]
@@ -103,7 +106,7 @@ async fn redelivered_without_prior_display_is_shown_once() {
     raw.close().await;
 
     let (_cb, mut eb) = b.client(&server.url());
-    assert_eq!(next_message(&mut eb).await.content, Some(Content::text("x")));
+    assert_eq!(next_message(&mut eb).await.content, Content::text("x"));
     no_message(&mut eb, Duration::from_millis(300)).await;
 }
 
@@ -126,6 +129,7 @@ async fn pending_messages_survive_server_restart() {
     let store = open_store(&path).await;
     let a = add_device(&store, "windows").await;
     let b = add_device(&store, "mac").await;
+    make_group(&[&a, &b]);
     let server = TestServer::start(store, test_config()).await;
     let addr = server.addr;
 
@@ -142,8 +146,8 @@ async fn pending_messages_survive_server_restart() {
 
     let (_cb, mut eb) = b.client(&server.url());
     assert_eq!(wait_connected(&mut eb).await, 2);
-    assert_eq!(next_message(&mut eb).await.content, Some(Content::text("avant")));
-    assert_eq!(next_message(&mut eb).await.content, Some(Content::text("après")));
+    assert_eq!(next_message(&mut eb).await.content, Content::text("avant"));
+    assert_eq!(next_message(&mut eb).await.content, Content::text("après"));
 }
 
 #[tokio::test]
@@ -155,6 +159,7 @@ async fn listener_reconnects_after_network_cut() {
     let store = open_store(&path).await;
     let a = add_device(&store, "windows").await;
     let b = add_device(&store, "mac").await;
+    make_group(&[&a, &b]);
     let server = TestServer::start(store, test_config()).await;
     let addr = server.addr;
     let (_cb, mut eb) = b.client(&server.url());
@@ -169,7 +174,7 @@ async fn listener_reconnects_after_network_cut() {
     let (ca, mut ea) = a.client(&server.url());
     wait_connected(&mut ea).await;
     within(ca.send(&Content::text("de retour"), vec![])).await.unwrap();
-    assert_eq!(next_message(&mut eb).await.content, Some(Content::text("de retour")));
+    assert_eq!(next_message(&mut eb).await.content, Content::text("de retour"));
 }
 
 #[tokio::test]
@@ -221,4 +226,23 @@ async fn list_devices_from_client() {
     let names: Vec<_> = devices.iter().map(|d| (d.name.as_str(), d.online)).collect();
     assert_eq!(names, [("windows", true), ("mac", false)]);
     let _ = b;
+}
+
+#[tokio::test]
+async fn shutdown_keeps_frames_already_sent() {
+    let (server, a, b) = setup(test_config()).await;
+    let (ca, mut ea) = a.client(&server.url());
+    wait_connected(&mut ea).await;
+    let (cb, mut eb) = b.client(&server.url());
+    wait_connected(&mut eb).await;
+    for i in 0..20 {
+        // B acquitte puis s'arrête aussitôt : l'acquittement ne doit pas se
+        // perdre dans la fermeture.
+        within(ca.send(&Content::text(format!("m{i}")), vec![])).await.unwrap();
+    }
+    for _ in 0..20 {
+        next_message(&mut eb).await;
+    }
+    cb.shutdown().await;
+    assert_eq!(server.relay.store().pending_count(&b.id, now_ms()).await.unwrap(), 0);
 }

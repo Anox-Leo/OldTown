@@ -23,7 +23,7 @@ use crate::metrics::Metrics;
 use crate::registry::Registry;
 use crate::store::{PurgeStats, Store};
 
-pub use crate::auth::verify as verify_auth;
+pub use crate::auth::{token_hash, verify as verify_auth};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -35,6 +35,8 @@ pub struct Config {
     pub ping_interval: Duration,
     /// Délai pour répondre au défi.
     pub auth_timeout: Duration,
+    /// Durée de validité d'un jeton d'appairage.
+    pub pairing_ttl: Duration,
 }
 
 impl Default for Config {
@@ -44,6 +46,7 @@ impl Default for Config {
             purge_interval: Duration::from_secs(10 * 60),
             ping_interval: Duration::from_secs(30),
             auth_timeout: Duration::from_secs(30),
+            pairing_ttl: Duration::from_secs(10 * 60),
         }
     }
 }
@@ -94,7 +97,12 @@ impl Relay {
         m.purged_acked.fetch_add(stats.acked, std::sync::atomic::Ordering::Relaxed);
         m.purged_expired.fetch_add(stats.expired, std::sync::atomic::Ordering::Relaxed);
         if stats != PurgeStats::default() {
-            tracing::info!(acked = stats.acked, expired = stats.expired, "purge");
+            tracing::info!(
+                acked = stats.acked,
+                expired = stats.expired,
+                pairings = stats.pairings,
+                "purge"
+            );
         }
         Ok(stats)
     }

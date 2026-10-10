@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use ot_crypto::PairingCode;
 use ot_proto::{
     Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid, WS_PATH,
 };
@@ -13,48 +15,75 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use crate::keyring::Keyring;
+use crate::secure::{Effect, GroupInfo, Secure};
 use crate::{Dedup, Identity};
 
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// Délai maximal pour la poignée de main et l'authentification.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Attente maximale de la réponse du relais à la fermeture.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Sans aucune trame du serveur (qui pinge toutes les 30 s) pendant ce délai,
 /// la connexion est considérée morte.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// URL du relais, ex. `ws://relais:7878` (`http://` est accepté).
     pub server_url: String,
     pub device_id: DeviceId,
     pub identity: Identity,
+    /// Clés de groupe, roster et clé d'échange de l'appareil.
+    pub keyring: Arc<dyn Keyring>,
     /// `msg_id` déjà vus lors d'une exécution précédente.
     pub seen: Vec<Ulid>,
     pub backoff: Backoff,
 }
 
 impl ClientConfig {
-    pub fn new(server_url: impl Into<String>, device_id: DeviceId, identity: Identity) -> Self {
+    pub fn new(
+        server_url: impl Into<String>,
+        device_id: DeviceId,
+        identity: Identity,
+        keyring: Arc<dyn Keyring>,
+    ) -> Self {
         Self {
             server_url: server_url.into(),
             device_id,
             identity,
+            keyring,
             seen: Vec::new(),
             backoff: Backoff::default(),
         }
     }
 
     fn ws_url(&self) -> String {
-        let base = self.server_url.trim_end_matches('/');
-        let base = match base.split_once("://") {
-            Some(("http", rest)) => format!("ws://{rest}"),
-            Some(("https", rest)) => format!("wss://{rest}"),
-            Some(_) => base.to_owned(),
-            None => format!("ws://{base}"),
-        };
-        format!("{base}{WS_PATH}")
+        ws_url(&self.server_url)
     }
+}
+
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("server_url", &self.server_url)
+            .field("device_id", &self.device_id)
+            .field("identity", &self.identity)
+            .finish_non_exhaustive()
+    }
+}
+
+/// URL de l'endpoint WebSocket à partir de l'URL du relais.
+pub(crate) fn ws_url(server_url: &str) -> String {
+    let base = server_url.trim_end_matches('/');
+    let base = match base.split_once("://") {
+        Some(("http", rest)) => format!("ws://{rest}"),
+        Some(("https", rest)) => format!("wss://{rest}"),
+        Some(_) => base.to_owned(),
+        None => format!("ws://{base}"),
+    };
+    format!("{base}{WS_PATH}")
 }
 
 /// Reconnexion : délai exponentiel plafonné, avec gigue (entre la moitié et
@@ -82,15 +111,15 @@ impl Backoff {
     }
 }
 
-/// Message reçu et pas encore vu.
+/// Message reçu, déchiffré, d'un membre du roster dont la signature est
+/// vérifiée, et pas encore vu.
 #[derive(Debug, Clone)]
 pub struct Received {
     pub seq: i64,
     pub msg_id: Ulid,
     pub from: DeviceId,
     pub created_at: OffsetDateTime,
-    /// Contenu en clair ; `None` s'il est chiffré ou illisible.
-    pub content: Option<Content>,
+    pub content: Content,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +138,35 @@ pub enum Event {
         message: String,
     },
     Message(Received),
+    /// Message rejeté (en clair, expéditeur hors roster, signature fausse,
+    /// déchiffrement impossible…) ; il est quand même acquitté.
+    Rejected {
+        msg_id: Ulid,
+        from: DeviceId,
+        reason: String,
+    },
+    /// Clés de groupe ou roster modifiés ; `epoch` est l'époque courante.
+    GroupChanged {
+        epoch: u32,
+    },
+    /// Parrain : l'appareil a rejoint le groupe.
+    PairingCompleted {
+        device_id: DeviceId,
+        name: String,
+    },
+    /// Le keyring n'a pas pu lire ou enregistrer l'état du groupe.
+    KeyringError {
+        message: String,
+    },
+}
+
+/// Code d'appairage à transmettre au nouvel appareil.
+#[derive(Debug, Clone)]
+pub struct PairingInvitation {
+    /// Code `ot1-…` : il contient le secret, à ne transmettre que par un
+    /// canal de confiance.
+    pub code: String,
+    pub expires_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,11 +181,36 @@ pub enum ClientError {
     Rejected { code: ErrorCode, message: String },
     #[error("client arrêté")]
     Closed,
+    /// Pas de clé de groupe : le clair est refusé.
+    #[error(
+        "cet appareil n'a pas de groupe : `ot group init` sur le premier appareil, `ot pair join` sur les autres"
+    )]
+    NoGroup,
+    #[error("{0} n'est pas membre du groupe")]
+    NotMember(DeviceId),
+    #[error("chiffrement : {0}")]
+    Crypto(String),
+    #[error("appairage : {0}")]
+    Pairing(String),
+    #[error("connexion : {0}")]
+    Connection(String),
+    #[error("{0}")]
+    Invalid(String),
 }
 
+type Reply<T> = oneshot::Sender<Result<T, ClientError>>;
+
+/// Rotation : époque adoptée et accusés d'envoi des `group_key`.
+type Rotation = (u32, Vec<oneshot::Receiver<Result<Accepted, ClientError>>>);
+
 enum Command {
-    Send(Envelope, oneshot::Sender<Result<Accepted, ClientError>>),
-    ListDevices(oneshot::Sender<Result<Vec<DeviceInfo>, ClientError>>),
+    Send(Envelope, Reply<Accepted>),
+    SendContent(Content, Vec<DeviceId>, Reply<Accepted>),
+    ListDevices(Reply<Vec<DeviceInfo>>),
+    PairCreate(Reply<PairingInvitation>),
+    PairJoin { code: PairingCode, sponsor: DeviceId, name: String, reply: Reply<Accepted> },
+    Rotate(Vec<DeviceId>, Reply<Rotation>),
+    Group(oneshot::Sender<Option<GroupInfo>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -161,28 +244,70 @@ impl Client {
         &self.device_id
     }
 
-    /// Envoie un contenu (à tous les autres appareils si `to` est vide). Hors
-    /// ligne, l'envoi attend la prochaine connexion.
+    async fn request<T>(&self, cmd: impl FnOnce(Reply<T>) -> Command) -> Result<T, ClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd.send(cmd(tx)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)?
+    }
+
+    /// Chiffre sous la clé de groupe, signe et envoie un contenu (à tous les
+    /// autres appareils si `to` est vide ; sinon à des membres du roster).
+    /// Hors ligne, l'envoi attend la prochaine connexion. Sans groupe, refuse.
     pub async fn send(
         &self,
         content: &Content,
         to: Vec<DeviceId>,
     ) -> Result<Accepted, ClientError> {
-        self.send_envelope(Envelope::new_plain(self.device_id.clone(), to, content)).await
+        self.request(|tx| Command::SendContent(content.clone(), to, tx)).await
     }
 
-    /// Envoie une enveloppe déjà construite. Réutiliser le même `msg_id` est
-    /// sans effet côté serveur.
+    /// Envoie une enveloppe déjà construite, telle quelle. Réutiliser le même
+    /// `msg_id` est sans effet côté serveur.
     pub async fn send_envelope(&self, env: Envelope) -> Result<Accepted, ClientError> {
-        let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::Send(env, tx)).map_err(|_| ClientError::Closed)?;
-        rx.await.map_err(|_| ClientError::Closed)?
+        self.request(|tx| Command::Send(env, tx)).await
     }
 
     pub async fn list_devices(&self) -> Result<Vec<DeviceInfo>, ClientError> {
+        self.request(Command::ListDevices).await
+    }
+
+    /// Parrain : demande un jeton au relais et renvoie le code d'appairage.
+    /// L'appairage se termine par [`Event::PairingCompleted`] si la demande
+    /// arrive avant l'expiration, tant que ce client tourne.
+    pub async fn pair_create(&self) -> Result<PairingInvitation, ClientError> {
+        self.request(Command::PairCreate).await
+    }
+
+    /// Nouvel appareil, après [`crate::redeem_pairing`] : envoie la demande au
+    /// parrain. Le groupe est adopté à l'arrivée de sa réponse
+    /// ([`Event::GroupChanged`]).
+    pub async fn pair_join(
+        &self,
+        code: &str,
+        sponsor: DeviceId,
+        name: &str,
+    ) -> Result<Accepted, ClientError> {
+        let code = PairingCode::parse(code).map_err(|e| ClientError::Pairing(e.to_string()))?;
+        let name = name.to_owned();
+        self.request(|reply| Command::PairJoin { code, sponsor, name, reply }).await
+    }
+
+    /// Tire une nouvelle clé de groupe et l'envoie à chaque membre sauf
+    /// `exclude`, qui ne lira plus les messages suivants. Renvoie la nouvelle
+    /// époque une fois tous les envois acceptés par le relais.
+    pub async fn rotate(&self, exclude: Vec<DeviceId>) -> Result<u32, ClientError> {
+        let (epoch, sends) = self.request(|tx| Command::Rotate(exclude, tx)).await?;
+        for rx in sends {
+            rx.await.map_err(|_| ClientError::Closed)??;
+        }
+        Ok(epoch)
+    }
+
+    /// État du groupe ; `None` sans groupe.
+    pub async fn group(&self) -> Result<Option<GroupInfo>, ClientError> {
         let (tx, rx) = oneshot::channel();
-        self.cmd.send(Command::ListDevices(tx)).map_err(|_| ClientError::Closed)?;
-        rx.await.map_err(|_| ClientError::Closed)?
+        self.cmd.send(Command::Group(tx)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)
     }
 
     /// Ferme la connexion et arrête le client ; les envois en attente échouent.
@@ -202,15 +327,34 @@ enum End {
     Shutdown(Option<oneshot::Sender<()>>),
 }
 
+/// Envoi pas encore accepté par le relais.
+struct Outgoing {
+    env: Envelope,
+    /// `None` pour un message système envoyé par le cœur lui-même.
+    reply: Option<Reply<Accepted>>,
+}
+
+/// Suite d'une commande.
+enum Next {
+    /// Trames à envoyer si la session est ouverte (sinon, en file).
+    Frames(Vec<Frame>),
+    Shutdown(Option<oneshot::Sender<()>>),
+}
+
 struct Worker {
     config: ClientConfig,
     cmd: mpsc::UnboundedReceiver<Command>,
     events: mpsc::Sender<Event>,
     dedup: Dedup,
+    secure: Secure,
+    /// Événements produits au chargement, émis au démarrage.
+    startup: Vec<Event>,
     /// Envois pas encore acceptés, dans l'ordre ; renvoyés à chaque connexion.
-    outbox: Vec<(Envelope, oneshot::Sender<Result<Accepted, ClientError>>)>,
+    outbox: Vec<Outgoing>,
     /// Demandes `list_devices` en attente de réponse, dans l'ordre.
-    device_requests: VecDeque<oneshot::Sender<Result<Vec<DeviceInfo>, ClientError>>>,
+    device_requests: VecDeque<Reply<Vec<DeviceInfo>>>,
+    /// Demandes `pair_create` en attente de réponse, dans l'ordre.
+    pair_requests: VecDeque<Reply<PairingInvitation>>,
 }
 
 impl Worker {
@@ -220,7 +364,19 @@ impl Worker {
         events: mpsc::Sender<Event>,
     ) -> Self {
         let dedup = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, std::mem::take(&mut config.seen));
-        Self { config, cmd, events, dedup, outbox: Vec::new(), device_requests: VecDeque::new() }
+        let (secure, startup) =
+            Secure::load(config.device_id.clone(), config.identity.clone(), config.keyring.clone());
+        Self {
+            config,
+            cmd,
+            events,
+            dedup,
+            secure,
+            startup,
+            outbox: Vec::new(),
+            device_requests: VecDeque::new(),
+            pair_requests: VecDeque::new(),
+        }
     }
 
     async fn emit(&self, event: Event) {
@@ -228,7 +384,98 @@ impl Worker {
         let _ = self.events.send(event).await;
     }
 
+    fn queue(&mut self, env: Envelope, reply: Option<Reply<Accepted>>) -> Next {
+        let frame = Frame::Send { env: env.clone() };
+        self.outbox.push(Outgoing { env, reply });
+        Next::Frames(vec![frame])
+    }
+
+    /// Traite une commande, en ligne ou non.
+    async fn on_command(&mut self, cmd: Option<Command>) -> Next {
+        let Some(cmd) = cmd else {
+            return Next::Shutdown(None);
+        };
+        match cmd {
+            Command::Shutdown(done) => Next::Shutdown(Some(done)),
+            Command::Send(env, tx) => self.queue(env, Some(tx)),
+            Command::SendContent(content, to, tx) => match self.secure.seal_content(&content, to) {
+                Ok(env) => self.queue(env, Some(tx)),
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    Next::Frames(Vec::new())
+                }
+            },
+            Command::ListDevices(tx) => {
+                self.device_requests.push_back(tx);
+                Next::Frames(vec![Frame::ListDevices])
+            }
+            Command::PairCreate(tx) => {
+                if self.secure.info().is_none() {
+                    let _ = tx.send(Err(ClientError::NoGroup));
+                    return Next::Frames(Vec::new());
+                }
+                self.pair_requests.push_back(tx);
+                Next::Frames(vec![Frame::PairCreate])
+            }
+            Command::PairJoin { code, sponsor, name, reply } => {
+                match self.secure.start_join(&code, sponsor, &name) {
+                    Ok(env) => self.queue(env, Some(reply)),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        Next::Frames(Vec::new())
+                    }
+                }
+            }
+            Command::Rotate(exclude, tx) => {
+                match self.secure.rotate(&exclude, OffsetDateTime::now_utc()) {
+                    Ok((epoch, envs, effects)) => {
+                        let mut frames = Vec::new();
+                        let mut sent = Vec::new();
+                        for env in envs {
+                            let (reply, rx) = oneshot::channel();
+                            sent.push(rx);
+                            if let Next::Frames(f) = self.queue(env, Some(reply)) {
+                                frames.extend(f);
+                            }
+                        }
+                        frames.extend(self.effects(effects).await);
+                        let _ = tx.send(Ok((epoch, sent)));
+                        Next::Frames(frames)
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        Next::Frames(Vec::new())
+                    }
+                }
+            }
+            Command::Group(tx) => {
+                let _ = tx.send(self.secure.info());
+                Next::Frames(Vec::new())
+            }
+        }
+    }
+
+    /// Applique les effets du cœur : événements émis, messages mis en file.
+    /// Renvoie les trames à envoyer.
+    async fn effects(&mut self, effects: Vec<Effect>) -> Vec<Frame> {
+        let mut frames = Vec::new();
+        for effect in effects {
+            match effect {
+                Effect::Emit(event) => self.emit(event).await,
+                Effect::Send(env) => {
+                    if let Next::Frames(f) = self.queue(env, None) {
+                        frames.extend(f);
+                    }
+                }
+            }
+        }
+        frames
+    }
+
     async fn run(mut self) {
+        for event in std::mem::take(&mut self.startup) {
+            self.emit(event).await;
+        }
         let mut attempt = 0u32;
         loop {
             let end = match self.connect().await {
@@ -274,21 +521,26 @@ impl Worker {
         loop {
             tokio::select! {
                 () = sleep_until(until) => return None,
-                cmd = self.cmd.recv() => match cmd {
-                    None => return Some(oneshot::channel().0),
-                    Some(Command::Shutdown(done)) => return Some(done),
-                    Some(Command::Send(env, tx)) => self.outbox.push((env, tx)),
-                    Some(Command::ListDevices(tx)) => self.device_requests.push_back(tx),
-                },
+                cmd = self.cmd.recv() => {
+                    // Hors ligne, les trames restent en file jusqu'à la connexion.
+                    if let Next::Shutdown(done) = self.on_command(cmd).await {
+                        return Some(done.unwrap_or_else(|| oneshot::channel().0));
+                    }
+                }
             }
         }
     }
 
     fn fail_all(&mut self) {
-        for (_, tx) in self.outbox.drain(..) {
-            let _ = tx.send(Err(ClientError::Closed));
+        for out in self.outbox.drain(..) {
+            if let Some(tx) = out.reply {
+                let _ = tx.send(Err(ClientError::Closed));
+            }
         }
         for tx in self.device_requests.drain(..) {
+            let _ = tx.send(Err(ClientError::Closed));
+        }
+        for tx in self.pair_requests.drain(..) {
             let _ = tx.send(Err(ClientError::Closed));
         }
     }
@@ -331,7 +583,12 @@ impl Worker {
     async fn session(&mut self, mut ws: Ws) -> End {
         match self.session_inner(&mut ws).await {
             End::Shutdown(done) => {
+                // Poignée de main de fermeture : le relais traite toutes les
+                // trames déjà envoyées (envois, acquittements) avant de
+                // répondre ; quitter plus tôt peut les perdre.
                 let _ = ws.close(None).await;
+                let drain = async { while let Some(Ok(_)) = ws.next().await {} };
+                let _ = timeout(CLOSE_TIMEOUT, drain).await;
                 End::Shutdown(done)
             }
             end => end,
@@ -340,13 +597,12 @@ impl Worker {
 
     async fn session_inner(&mut self, ws: &mut Ws) -> End {
         // Reprise : ce qui n'a pas été accepté repart, dans l'ordre.
-        for (env, _) in &self.outbox {
-            if let Err(end) = send_frame(ws, &Frame::Send { env: env.clone() }).await {
-                return end;
-            }
-        }
-        for _ in &self.device_requests {
-            if let Err(end) = send_frame(ws, &Frame::ListDevices).await {
+        let mut resume: Vec<Frame> =
+            self.outbox.iter().map(|o| Frame::Send { env: o.env.clone() }).collect();
+        resume.extend(self.device_requests.iter().map(|_| Frame::ListDevices));
+        resume.extend(self.pair_requests.iter().map(|_| Frame::PairCreate));
+        for frame in &resume {
+            if let Err(end) = send_frame(ws, frame).await {
                 return end;
             }
         }
@@ -355,24 +611,16 @@ impl Worker {
         loop {
             tokio::select! {
                 () = sleep_until(idle) => return End::Lost("plus de nouvelles du serveur".into()),
-                cmd = self.cmd.recv() => {
-                    let res = match cmd {
-                        None => return End::Shutdown(None),
-                        Some(Command::Shutdown(done)) => return End::Shutdown(Some(done)),
-                        Some(Command::Send(env, tx)) => {
-                            let frame = Frame::Send { env: env.clone() };
-                            self.outbox.push((env, tx));
-                            send_frame(ws, &frame).await
+                cmd = self.cmd.recv() => match self.on_command(cmd).await {
+                    Next::Shutdown(done) => return End::Shutdown(done),
+                    Next::Frames(frames) => {
+                        for frame in &frames {
+                            if let Err(end) = send_frame(ws, frame).await {
+                                return end;
+                            }
                         }
-                        Some(Command::ListDevices(tx)) => {
-                            self.device_requests.push_back(tx);
-                            send_frame(ws, &Frame::ListDevices).await
-                        }
-                    };
-                    if let Err(end) = res {
-                        return end;
                     }
-                }
+                },
                 frame = recv_frame(ws) => {
                     idle = Instant::now() + IDLE_TIMEOUT;
                     let res = match frame {
@@ -391,22 +639,21 @@ impl Worker {
         match frame {
             Frame::Deliver { seq, env } => {
                 if self.dedup.insert(env.msg_id) {
-                    let received = Received {
-                        seq,
-                        msg_id: env.msg_id,
-                        from: env.from,
-                        created_at: env.created_at,
-                        content: env.payload.plain_content(),
-                    };
-                    self.emit(Event::Message(received)).await;
+                    // Déchiffré et remis, mis de côté ou rejeté : dans tous les
+                    // cas acquitté ensuite.
+                    let effects = self.secure.process(seq, env, OffsetDateTime::now_utc());
+                    for frame in self.effects(effects).await {
+                        send_frame(ws, &frame).await?;
+                    }
                 } else {
                     tracing::debug!(seq, msg_id = %env.msg_id, "doublon ignoré");
                 }
                 send_frame(ws, &Frame::Ack { seq }).await?;
             }
             Frame::Accepted { msg_id, seq } => {
-                if let Some(i) = self.outbox.iter().position(|(e, _)| e.msg_id == msg_id) {
-                    let (_, tx) = self.outbox.remove(i);
+                if let Some(i) = self.outbox.iter().position(|o| o.env.msg_id == msg_id)
+                    && let Some(tx) = self.outbox.remove(i).reply
+                {
                     let _ = tx.send(Ok(Accepted { msg_id, seq }));
                 }
             }
@@ -415,19 +662,36 @@ impl Worker {
                     let _ = tx.send(Ok(devices));
                 }
             }
+            Frame::PairCreated { token, expires_at } => {
+                if let Some(tx) = self.pair_requests.pop_front() {
+                    let res = self.secure.sponsor(token, expires_at).map(|code| {
+                        PairingInvitation { code: code.encode().to_string(), expires_at }
+                    });
+                    let _ = tx.send(res);
+                }
+            }
             Frame::Error { code: ErrorCode::AuthFailed, message, .. } => {
                 return Err(End::AuthFailed(message));
             }
             Frame::Error { code, message, reference } => {
                 let pos = reference
                     .as_deref()
-                    .and_then(|r| self.outbox.iter().position(|(e, _)| e.msg_id.to_string() == r));
-                match pos {
-                    Some(i) => {
-                        let (_, tx) = self.outbox.remove(i);
-                        let _ = tx.send(Err(ClientError::Rejected { code, message }));
+                    .and_then(|r| self.outbox.iter().position(|o| o.env.msg_id.to_string() == r));
+                let err = ClientError::Rejected { code, message: message.clone() };
+                match pos.map(|i| self.outbox.remove(i)) {
+                    Some(Outgoing { reply: Some(tx), .. }) => {
+                        let _ = tx.send(Err(err));
                     }
-                    None => tracing::warn!(?code, message, "erreur du serveur"),
+                    Some(Outgoing { env, reply: None }) => {
+                        tracing::warn!(?code, message, msg_id = %env.msg_id, "message système refusé");
+                    }
+                    // Sans référence : seule `pair_create` peut échouer ainsi.
+                    None => match self.pair_requests.pop_front() {
+                        Some(tx) => {
+                            let _ = tx.send(Err(err));
+                        }
+                        None => tracing::warn!(?code, message, "erreur du serveur"),
+                    },
                 }
             }
             other => tracing::debug!(t = other.type_name(), "trame inattendue ignorée"),
@@ -479,7 +743,10 @@ mod tests {
     #[test]
     fn ws_url_forms() {
         let id = DeviceId::generate();
-        let url = |s: &str| ClientConfig::new(s, id.clone(), Identity::generate()).ws_url();
+        let keyring = Arc::new(crate::MemoryKeyring::new());
+        let url = |s: &str| {
+            ClientConfig::new(s, id.clone(), Identity::generate(), keyring.clone()).ws_url()
+        };
         assert_eq!(url("ws://relais:7878"), "ws://relais:7878/v1/ws");
         assert_eq!(url("http://relais:7878/"), "ws://relais:7878/v1/ws");
         assert_eq!(url("relais:7878"), "ws://relais:7878/v1/ws");

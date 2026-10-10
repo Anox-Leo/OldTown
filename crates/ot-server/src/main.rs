@@ -42,6 +42,20 @@ enum Command {
     /// Gère les appareils autorisés.
     #[command(subcommand)]
     Device(DeviceCommand),
+    /// Gère les messages stockés.
+    #[command(subcommand)]
+    Messages(MessagesCommand),
+}
+
+#[derive(Subcommand)]
+enum MessagesCommand {
+    /// Supprime les messages acquittés ou expirés (comme la purge périodique).
+    Purge {
+        /// Supprime tous les messages, livrés ou non, puis compacte la base
+        /// (bascule vers le chiffrement). Arrêter le relais avant.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -69,6 +83,7 @@ async fn main() -> Result<()> {
             serve(cli.db, listen, Config { ttl, purge_interval, ..Config::default() }).await
         }
         Command::Device(cmd) => device(&cli.db, cmd).await,
+        Command::Messages(cmd) => messages(&cli.db, cmd).await,
     }
 }
 
@@ -138,6 +153,25 @@ async fn device(db: &Path, cmd: DeviceCommand) -> Result<()> {
             let d = store.revoke_device(&device, now_ms()).await?;
             println!("{} révoqué", d.id);
             eprintln!("Une session déjà ouverte reste active jusqu'à sa prochaine reconnexion.");
+        }
+    }
+    store.close().await;
+    Ok(())
+}
+
+async fn messages(db: &Path, cmd: MessagesCommand) -> Result<()> {
+    let store = Store::open(db).await.with_context(|| format!("ouverture de {}", db.display()))?;
+    match cmd {
+        MessagesCommand::Purge { all: true } => {
+            let n = store.purge_all_messages().await?;
+            println!("{n} message(s) supprimé(s), base compactée");
+        }
+        MessagesCommand::Purge { all: false } => {
+            let stats = store.purge(now_ms()).await?;
+            println!(
+                "{} acquitté(s), {} expiré(s), {} jeton(s) d'appairage supprimé(s)",
+                stats.acked, stats.expired, stats.pairings
+            );
         }
     }
     store.close().await;

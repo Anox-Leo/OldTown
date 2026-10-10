@@ -5,10 +5,15 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ot_core::{Backoff, Client, ClientConfig, Event, Events, Identity};
+use ot_core::crypto::{GroupKey, Member};
+use ot_core::{
+    Backoff, Client, ClientConfig, Event, Events, GroupKeys, Identity, Keyring, MemoryKeyring,
+    Roster, ensure_exchange_key,
+};
 use ot_proto::{DeviceId, Frame};
 use ot_server::store::Store;
 use ot_server::{Config, Relay};
@@ -67,18 +72,42 @@ impl TestServer {
 
 pub struct TestDevice {
     pub id: DeviceId,
+    pub name: String,
     pub identity: Identity,
+    pub keyring: Arc<MemoryKeyring>,
 }
 
+/// Appareil enregistré sur le relais, sans groupe.
 pub async fn add_device(store: &Store, name: &str) -> TestDevice {
     let identity = Identity::generate();
     let id = store.add_device(name, &identity.public_key(), 0).await.unwrap().id;
-    TestDevice { id, identity }
+    TestDevice { id, name: name.into(), identity, keyring: Arc::new(MemoryKeyring::new()) }
+}
+
+/// Met les appareils dans un même groupe (époque 1), comme après appairage.
+pub fn make_group(devices: &[&TestDevice]) {
+    let members = devices
+        .iter()
+        .map(|d| Member {
+            device_id: d.id.clone(),
+            name: d.name.clone(),
+            sign_key: d.identity.public_key(),
+            exchange_key: ensure_exchange_key(&*d.keyring).unwrap().public_key(),
+            added_epoch: 1,
+        })
+        .collect();
+    let roster = Roster { epoch: 1, version: 1, members };
+    let keys = GroupKeys::new(1, GroupKey::generate());
+    for d in devices {
+        d.keyring.save_group_keys(&keys).unwrap();
+        d.keyring.save_roster(&roster).unwrap();
+    }
 }
 
 impl TestDevice {
     pub fn config(&self, url: &str) -> ClientConfig {
-        let mut c = ClientConfig::new(url, self.id.clone(), self.identity.clone());
+        let keyring: Arc<dyn Keyring> = self.keyring.clone();
+        let mut c = ClientConfig::new(url, self.id.clone(), self.identity.clone(), keyring);
         c.backoff = Backoff { initial: Duration::from_millis(50), max: Duration::from_millis(200) };
         c
     }
@@ -202,4 +231,88 @@ pub async fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
     let code = buf[9..12].parse().unwrap();
     let body = buf.split_once("\r\n\r\n").map(|(_, b)| b.to_owned()).unwrap_or_default();
     (code, body)
+}
+
+/// Attend un événement qui satisfait `pred`, en ignorant les autres.
+pub async fn wait_for(events: &mut Events, pred: impl Fn(&Event) -> bool) -> Event {
+    within(async {
+        loop {
+            let ev = next_event(events).await;
+            if pred(&ev) {
+                return ev;
+            }
+        }
+    })
+    .await
+}
+
+/// Sens d'une trame qui traverse le [`proxy`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dir {
+    ToServer,
+    ToClient,
+}
+
+pub type TamperFn = std::sync::Arc<dyn Fn(Dir, Frame) -> Frame + Send + Sync>;
+
+/// Relais malveillant : un proxy WebSocket devant le vrai relais, qui peut
+/// modifier chaque trame. Renvoie l'URL à donner aux clients.
+pub async fn proxy(upstream: &TestServer, tamper: TamperFn) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let upstream = format!("{}{}", upstream.url(), ot_proto::WS_PATH);
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            let (upstream, tamper) = (upstream.clone(), tamper.clone());
+            tokio::spawn(async move {
+                let Ok(client) = tokio_tungstenite::accept_async(tcp).await else { return };
+                let Ok((server, _)) = tokio_tungstenite::connect_async(&upstream).await else {
+                    return;
+                };
+                let (mut c_tx, mut c_rx) = client.split();
+                let (mut s_tx, mut s_rx) = server.split();
+                let forward = |dir: Dir, msg: Message| match msg {
+                    Message::Text(t) => match Frame::from_json(&t) {
+                        Ok(frame) => Message::text(tamper(dir, frame).to_json()),
+                        Err(_) => Message::Text(t),
+                    },
+                    other => other,
+                };
+                loop {
+                    tokio::select! {
+                        m = c_rx.next() => match m {
+                            Some(Ok(m)) => if s_tx.send(forward(Dir::ToServer, m)).await.is_err() { break },
+                            _ => break,
+                        },
+                        m = s_rx.next() => match m {
+                            Some(Ok(m)) => if c_tx.send(forward(Dir::ToClient, m)).await.is_err() { break },
+                            _ => break,
+                        },
+                    }
+                }
+                let _ = c_tx.close().await;
+                let _ = s_tx.close().await;
+            });
+        }
+    });
+    format!("ws://{addr}")
+}
+
+/// Inverse un bit du chiffré d'une enveloppe envoyée ou livrée.
+pub fn flip_payload(frame: Frame) -> Frame {
+    match frame {
+        Frame::Send { mut env } => {
+            if let Some(b) = env.payload.data.last_mut() {
+                *b ^= 1;
+            }
+            Frame::Send { env }
+        }
+        Frame::Deliver { seq, mut env } => {
+            if let Some(b) = env.payload.data.last_mut() {
+                *b ^= 1;
+            }
+            Frame::Deliver { seq, env }
+        }
+        other => other,
+    }
 }

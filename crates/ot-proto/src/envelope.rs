@@ -59,8 +59,8 @@ impl fmt::Display for DeviceId {
     }
 }
 
-/// Enveloppe d'un message. Seul `payload` sera chiffré à l'étape 2 ; le
-/// serveur ne lit que les champs de routage.
+/// Enveloppe d'un message. `payload` est chiffré par les clients (format
+/// défini par `ot-crypto`) ; le serveur ne lit que les champs de routage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
@@ -136,13 +136,20 @@ impl Payload {
 
 impl Envelope {
     /// Nouvelle enveloppe en clair, horodatée maintenant, avec un `msg_id` neuf.
+    /// Depuis l'étape 2, les clients refusent le clair : ne sert qu'aux tests.
     pub fn new_plain(from: DeviceId, to: Vec<DeviceId>, content: &Content) -> Self {
+        Self::new(from, to, Payload::plain(content))
+    }
+
+    /// Nouvelle enveloppe horodatée maintenant (à la seconde), avec un
+    /// `msg_id` neuf.
+    pub fn new(from: DeviceId, to: Vec<DeviceId>, payload: Payload) -> Self {
         Self {
             msg_id: Ulid::generate(),
             from,
             to,
             created_at: OffsetDateTime::now_utc().replace_nanosecond(0).expect("0 est valide"),
-            payload: Payload::plain(content),
+            payload,
         }
     }
 

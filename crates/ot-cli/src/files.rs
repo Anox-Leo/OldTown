@@ -1,17 +1,26 @@
-//! Fichiers locaux de la CLI : configuration, clé privée et état.
+//! Fichiers locaux de la CLI : configuration, clés et état du groupe.
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use ot_core::{DeviceId, Identity, Ulid};
+use ot_core::{
+    DeviceId, ExchangeKeyPair, GroupKeys, Identity, Keyring, KeyringError, Quarantined, Roster,
+    Ulid,
+};
 use ot_proto::b64;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 const CONFIG: &str = "config.toml";
 const KEY: &str = "device.key";
 const SEEN: &str = "seen.json";
+const EXCHANGE_KEY: &str = "exchange.key";
+const GROUP: &str = "group.json";
+const ROSTER: &str = "roster.json";
+const QUARANTINE: &str = "quarantine.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -60,9 +69,10 @@ impl Home {
 
     pub fn load_key(&self) -> Result<Identity> {
         let path = self.0.join(KEY);
-        let text =
-            fs::read_to_string(&path).with_context(|| format!("lecture de {}", path.display()))?;
-        let Some(seed) = b64::decode_array::<32>(text.trim()) else {
+        let text = Zeroizing::new(
+            fs::read_to_string(&path).with_context(|| format!("lecture de {}", path.display()))?,
+        );
+        let Some(seed) = b64::decode_array::<32>(text.trim()).map(Zeroizing::new) else {
             bail!("{} est corrompu", path.display());
         };
         Ok(Identity::from_bytes(&seed))
@@ -70,7 +80,8 @@ impl Home {
 
     pub fn save_key(&self, identity: &Identity) -> Result<()> {
         fs::create_dir_all(&self.0)?;
-        let text = format!("{}\n", b64::encode(&identity.to_bytes()));
+        let seed = Zeroizing::new(identity.to_bytes());
+        let text = Zeroizing::new(format!("{}\n", b64::encode(&*seed)));
         write_atomic(&self.0.join(KEY), text.as_bytes(), true)
     }
 
@@ -86,6 +97,106 @@ impl Home {
     pub fn save_seen<'a>(&self, seen: impl Iterator<Item = &'a Ulid>) -> Result<()> {
         let ids: Vec<String> = seen.map(Ulid::to_string).collect();
         write_atomic(&self.0.join(SEEN), serde_json::to_string(&ids)?.as_bytes(), false)
+    }
+
+    /// Clés et état du groupe, dans le même dossier.
+    pub fn keyring(&self) -> FileKeyring {
+        FileKeyring(self.0.clone())
+    }
+
+    /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
+    pub fn reset_group(&self) -> Result<()> {
+        for name in [EXCHANGE_KEY, GROUP, ROSTER, QUARANTINE] {
+            match fs::remove_file(self.0.join(name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("suppression de {name}")),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// [`Keyring`] sur fichiers : `exchange.key` et `group.json` en `0600`,
+/// `roster.json` et `quarantine.json` aussi (rien n'y est en clair, mais rien
+/// n'oblige à les montrer).
+pub struct FileKeyring(PathBuf);
+
+impl FileKeyring {
+    fn read(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError> {
+        let path = self.0.join(name);
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(KeyringError(format!("lecture de {} : {e}", path.display()))),
+        }
+    }
+
+    fn read_json<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>, KeyringError> {
+        let Some(bytes) = self.read(name)? else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes).map(Some).map_err(|e| {
+            KeyringError(format!("{} est corrompu : {e}", self.0.join(name).display()))
+        })
+    }
+
+    fn write(&self, name: &str, data: &[u8]) -> Result<(), KeyringError> {
+        fs::create_dir_all(&self.0)
+            .and_then(|()| {
+                write_atomic(&self.0.join(name), data, true).map_err(std::io::Error::other)
+            })
+            .map_err(|e| KeyringError(format!("écriture de {name} : {e:#}")))
+    }
+
+    fn write_json<T: Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<(), KeyringError> {
+        let bytes = serde_json::to_vec_pretty(value)
+            .map_err(|e| KeyringError(format!("sérialisation de {name} : {e}")))?;
+        self.write(name, &Zeroizing::new(bytes))
+    }
+}
+
+impl Keyring for FileKeyring {
+    fn load_exchange_key(&self) -> Result<Option<ExchangeKeyPair>, KeyringError> {
+        let Some(bytes) = self.read(EXCHANGE_KEY)? else {
+            return Ok(None);
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        let secret = Zeroizing::new(
+            b64::decode_array::<32>(text.trim())
+                .ok_or_else(|| KeyringError(format!("{EXCHANGE_KEY} est corrompu")))?,
+        );
+        Ok(Some(ExchangeKeyPair::from_bytes(*secret)))
+    }
+
+    fn save_exchange_key(&self, key: &ExchangeKeyPair) -> Result<(), KeyringError> {
+        let secret = Zeroizing::new(key.to_bytes());
+        let text = Zeroizing::new(format!("{}\n", b64::encode(&*secret)));
+        self.write(EXCHANGE_KEY, text.as_bytes())
+    }
+
+    fn load_group_keys(&self) -> Result<Option<GroupKeys>, KeyringError> {
+        self.read_json(GROUP)
+    }
+
+    fn save_group_keys(&self, keys: &GroupKeys) -> Result<(), KeyringError> {
+        self.write_json(GROUP, keys)
+    }
+
+    fn load_roster(&self) -> Result<Option<Roster>, KeyringError> {
+        self.read_json(ROSTER)
+    }
+
+    fn save_roster(&self, roster: &Roster) -> Result<(), KeyringError> {
+        self.write_json(ROSTER, roster)
+    }
+
+    fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError> {
+        Ok(self.read_json(QUARANTINE)?.unwrap_or_default())
+    }
+
+    fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError> {
+        self.write_json(QUARANTINE, messages)
     }
 }
 
@@ -142,5 +253,54 @@ mod tests {
         let seen = [Ulid::from_parts(1, 2), Ulid::from_parts(3, 4)];
         home.save_seen(seen.iter()).unwrap();
         assert_eq!(home.load_seen(), seen);
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn keyring_files_are_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home(dir.path().join("ot"));
+        let keyring = home.keyring();
+        assert!(keyring.load_exchange_key().unwrap().is_none());
+        assert!(keyring.load_group_keys().unwrap().is_none());
+        assert!(keyring.load_quarantine().unwrap().is_empty());
+
+        let id = DeviceId::generate();
+        let identity = Identity::generate();
+        let info = ot_core::init_group(&keyring, &id, "mac", &identity, false).unwrap();
+        assert_eq!(info.members.len(), 1);
+        let exchange = keyring.load_exchange_key().unwrap().unwrap();
+        assert_eq!(
+            exchange.public_key(),
+            keyring.load_roster().unwrap().unwrap().members[0].exchange_key
+        );
+        assert_eq!(keyring.load_group_keys().unwrap().unwrap().current, 1);
+
+        #[cfg(unix)]
+        for name in [EXCHANGE_KEY, GROUP, ROSTER, QUARANTINE] {
+            assert_eq!(mode(&home.path().join(name)), 0o600, "{name}");
+        }
+
+        // `group init` refuse d'écraser un groupe existant, sauf --force.
+        assert!(ot_core::init_group(&keyring, &id, "mac", &identity, false).is_err());
+        assert!(ot_core::init_group(&keyring, &id, "mac", &identity, true).is_ok());
+
+        home.reset_group().unwrap();
+        assert!(keyring.load_group_keys().unwrap().is_none());
+        assert!(keyring.load_exchange_key().unwrap().is_none());
+    }
+
+    #[test]
+    fn corrupted_group_file_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home(dir.path().to_owned());
+        fs::write(dir.path().join(GROUP), "pas du json").unwrap();
+        let err = home.keyring().load_group_keys().unwrap_err();
+        assert!(err.0.contains("corrompu"), "{err}");
     }
 }
