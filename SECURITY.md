@@ -24,6 +24,8 @@ Ce qui est déjà en place :
 
 ## Avant de rendre le dépôt public
 
+Le dépôt reste privé jusqu'à la fin du projet (décision 0011).
+
 - [ ] Étape 2 livrée : contenu chiffré de bout en bout, relais aveugle.
 - [ ] Limiter les connexions non authentifiées (nombre simultané, délai) et
       freiner les échecs d'authentification.

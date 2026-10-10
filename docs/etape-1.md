@@ -136,7 +136,7 @@ Dix tâches dans l'ordre des dépendances ; à partir de T4, chaque tâche se te
 
 - **Fait** : T1 à T10. 49 tests automatisés verts en CI sur Linux, macOS et Windows ; relais installé en service sur le laptop ; essai réel Windows → Mac réussi (en ligne, lien ciblé, hors ligne, reconnexion sans doublon) ; après un reboot du laptop, le service repart seul et `/healthz` répond.
 - **Constaté pendant l'essai réel** : un autre VPN actif sur le PC empêchait le trafic vers le tailnet ; le service tente parfois une première fois de démarrer avant que l'IP Tailscale soit montée, puis repart 5 s plus tard. Les deux cas sont dans la section « Dépannage » du README.
-- **Écarts** : voir [`decisions/`](decisions/README.md), notes 0001 à 0009. En bref : trames `list_devices`/`devices` ajoutées, premier `auth_failed` fermant, requêtes sqlx non vérifiées à la compilation, compteurs maison, service sous `ot-relay`, sauvegarde des seuls appareils, écritures en `BEGIN IMMEDIATE`, Rust 1.88. Question ouverte : une session par appareil et la CLI (0009).
+- **Écarts** : voir [`decisions/`](decisions/README.md), notes 0001 à 0011. En bref : trames `list_devices`/`devices` ajoutées, premier `auth_failed` fermant, requêtes sqlx non vérifiées à la compilation, compteurs maison, service sous `ot-relay`, sauvegarde des seuls appareils, écritures en `BEGIN IMMEDIATE`, Rust 1.88. Une session par appareil est confirmée, avec deux règles pour les applis (0009) ; publication du dépôt à la fin du projet (0011).
 
 ## Critères de fin
 

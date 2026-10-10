@@ -16,5 +16,6 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0006](0006-sauvegarde-appareils.md) | La sauvegarde ne contient que les appareils | 1 | Acceptée |
 | [0007](0007-sqlite-begin-immediate.md) | Écritures SQLite en `BEGIN IMMEDIATE` | 1 | Acceptée |
 | [0008](0008-rust-1-88.md) | Rust 1.88 minimum | 1 | Acceptée |
-| [0009](0009-une-session-par-appareil.md) | Une session par appareil : conséquences pour la CLI | 1 | Ouverte |
-| [0010](0010-depot-public-mit.md) | Monorepo, licence MIT, publication après l'étape 2 | 1 | Acceptée |
+| [0009](0009-une-session-par-appareil.md) | Une session par appareil : conséquences pour la CLI | 1 | Acceptée |
+| [0010](0010-depot-public-mit.md) | Monorepo, licence MIT, publication après l'étape 2 | 1 | Publication remplacée par 0011 |
+| [0011](0011-publication-fin-de-projet.md) | Publication à la fin du projet | 1 | Acceptée |
