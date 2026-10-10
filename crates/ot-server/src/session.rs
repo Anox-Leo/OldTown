@@ -3,6 +3,7 @@
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use ot_proto::{DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES};
 use std::sync::atomic::Ordering::Relaxed;
+use time::OffsetDateTime;
 use tokio::time::{Instant, timeout_at};
 
 use crate::metrics::Metrics;
@@ -95,6 +96,9 @@ async fn authenticate(inner: &Inner, socket: &mut WebSocket) -> Result<DeviceId,
                 }
                 return Ok(device_id);
             }
+            Ok(Frame::PairRedeem { token, name, public_key, sig }) => {
+                return redeem(inner, socket, &nonce, &token, &name, &public_key, &sig).await;
+            }
             Ok(other) => {
                 let msg = format!("trame {} reçue avant auth", other.type_name());
                 send(socket, &Frame::error(ErrorCode::UnexpectedFrame, msg, None)).await?;
@@ -112,6 +116,77 @@ async fn auth_failed(
     Metrics::inc(&inner.metrics.auth_failures);
     send(socket, &Frame::error(ErrorCode::AuthFailed, message, None)).await?;
     Err(Close("auth_failed"))
+}
+
+/// Taille maximale d'un nom d'appareil, en caractères.
+const MAX_NAME_CHARS: usize = 64;
+
+/// Enregistre un appareil avec un jeton d'appairage, répond `pair_redeemed`
+/// puis ferme : l'appareil se reconnecte ensuite avec `auth`.
+async fn redeem(
+    inner: &Inner,
+    socket: &mut WebSocket,
+    nonce: &[u8; ot_proto::NONCE_LEN],
+    token: &[u8; ot_proto::PAIR_TOKEN_LEN],
+    name: &str,
+    public_key: &[u8; 32],
+    sig: &[u8; 64],
+) -> Result<DeviceId, Close> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.chars().count() > MAX_NAME_CHARS
+        || name.chars().any(char::is_control)
+    {
+        let msg = format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables");
+        return pairing_rejected(inner, socket, ErrorCode::BadFrame, msg).await;
+    }
+    let hash = auth::token_hash(token);
+    if !auth::verify_redeem(public_key, nonce, &hash, sig) {
+        tracing::warn!("appairage : signature invalide");
+        return pairing_rejected(
+            inner,
+            socket,
+            ErrorCode::PairingInvalid,
+            "signature invalide".into(),
+        )
+        .await;
+    }
+    match inner.store.redeem_pairing(&hash, name, public_key, now_ms()).await {
+        Ok(r) => {
+            Metrics::inc(&inner.metrics.pairings_redeemed);
+            tracing::info!(device = %r.device.id, sponsor = %r.sponsor, "appareil appairé");
+            let frame = Frame::PairRedeemed { device_id: r.device.id, sponsor: r.sponsor };
+            send(socket, &frame).await?;
+            Err(Close("appairage terminé"))
+        }
+        Err(StoreError::PairingInvalid) => {
+            let msg = "jeton inconnu, expiré ou déjà utilisé".into();
+            pairing_rejected(inner, socket, ErrorCode::PairingInvalid, msg).await
+        }
+        Err(StoreError::KeyTaken) => {
+            let msg = "clé publique déjà enregistrée".into();
+            pairing_rejected(inner, socket, ErrorCode::PairingInvalid, msg).await
+        }
+        Err(StoreError::NameTaken(name)) => {
+            let msg = format!("le nom {name:?} est déjà pris");
+            pairing_rejected(inner, socket, ErrorCode::NameTaken, msg).await
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "appairage");
+            pairing_rejected(inner, socket, ErrorCode::Internal, "erreur interne".into()).await
+        }
+    }
+}
+
+async fn pairing_rejected(
+    inner: &Inner,
+    socket: &mut WebSocket,
+    code: ErrorCode,
+    message: String,
+) -> Result<DeviceId, Close> {
+    Metrics::inc(&inner.metrics.pairings_rejected);
+    send(socket, &Frame::error(code, message, None)).await?;
+    Err(Close("appairage refusé"))
 }
 
 struct Active<'a> {
@@ -211,6 +286,7 @@ impl Active<'_> {
                 None
             }
             Frame::ListDevices => Some(devices(self.inner).await?),
+            Frame::PairCreate => Some(self.pair_create().await?),
             Frame::Error { code, .. } => {
                 tracing::debug!(device = %self.device, ?code, "erreur signalée par le client");
                 None
@@ -224,6 +300,29 @@ impl Active<'_> {
             Some(frame) => send(&mut self.socket, &frame).await,
             None => Ok(()),
         }
+    }
+
+    /// Tire un jeton d'appairage ; seul son SHA-256 est stocké.
+    async fn pair_create(&mut self) -> Result<Frame, Close> {
+        let token = auth::new_token();
+        let now = now_ms();
+        let ttl = self.inner.config.pairing_ttl.as_millis() as i64;
+        let expires_at = now.saturating_add(ttl);
+        let stored = self
+            .inner
+            .store
+            .create_pairing(&self.device, &auth::token_hash(&token), now, expires_at)
+            .await;
+        if let Err(e) = stored {
+            tracing::error!(error = %e, "création d'un jeton d'appairage");
+            return Ok(Frame::error(ErrorCode::Internal, "erreur interne", None));
+        }
+        Metrics::inc(&self.inner.metrics.pairings_created);
+        tracing::info!(sponsor = %self.device, "jeton d'appairage créé");
+        let expires_at =
+            OffsetDateTime::from_unix_timestamp_nanos(i128::from(expires_at) * 1_000_000)
+                .map_err(|_| Close("horloge invalide"))?;
+        Ok(Frame::PairCreated { token, expires_at })
     }
 
     async fn on_send(&mut self, env: ot_proto::Envelope) -> Result<Option<Frame>, Close> {

@@ -1,0 +1,50 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "pairing",
+    "token": "FBUWFxgZGhscHQ==",
+    "secret": "Hh8gISIjJCUmJygpKissLQ=="
+  },
+  "body": {
+    "kind": "pair_welcome",
+    "keys": [
+      {
+        "epoch": 1,
+        "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+      }
+    ],
+    "roster": {
+      "epoch": 1,
+      "version": 2,
+      "members": [
+        {
+          "device_id": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+          "name": "mac",
+          "sign_key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+          "exchange_key": "VxR2nRFr92Q2rnS8eT0sMK0ZA8WaxSc4BcfiaYtBDDY=",
+          "added_epoch": 1
+        },
+        {
+          "device_id": "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0",
+          "name": "windows",
+          "sign_key": "Q83AI9ItX54QfRoGk0V9NdHRDrfSHHIRkvVvXeQGZdM=",
+          "exchange_key": "yg/0pLeJ/DBjuwaOZIkz+ESp0oTGvX9rossNRAicEAs=",
+          "added_epoch": 1
+        }
+      ]
+    }
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "Anho7ztC134sRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdfyO66GIfpSEBuxepNihJOSbB9w8hpiQDjFhA/75OaQQxoGx2o6P7Yvdy1pDOHgU6OfNnvZBaMfk6q4jnPUS/E/EBpm33z2W9OYBJb3T1wi1ICktGbqQQgDJDjJt13zxzAyDo+IxijBaquQkL6vSMDeJ/98dLyhRvJmN0liEUzJ3851cH600pmu5LoFa8aZB9DL9rZFRV7FS9ViUmZvGrDOhjRsJ2znFKSVr35K8KjgxF/vfb/EQinEJtk9f8VpVP7q+11Vq9YqSZ5SkiFHobuFQA6rn1j40BK1CKz59+g8UHzUCakxhY74qZGBAKDj1UobVCQ/Igvj1m9XVPKmzC3F6qc1tp6C34a+2+BGD3torI4GtwvYxa/7nta/smOOKPRbYvspZ/7FITmD2D1V7hHXvJbEyHREgcA52xnq+nliQzeUCa8GdpCIWE+es/z3OShyzRtBd+cP5k/5cN/a959Fbx0J0D5YbnwTRoLNmZIC3qYD7JGgcb1ZcUF46Q72cQpLmP4QDn1MErF36FcJZDAhw3ngoYHAzSQKFAc3RdBQFgbgYLdnK3jm8OFS02byE7n2Kq9YLzzLI9wEQZcsyboh3yiwQqyPVEJ92nK730wYrmMLVNTlz4nMgiuDDPnxKNwJzVPVy7JRzacKhnwFNtzv4Gn4kHckYBON06VwgiYfPXyw6YJIKz5Uu3jMy8wg2pDEpYZAUxF6JeZiTa1PNHYpX81zoq9x2M3k79Uy0SbdlKqgZ5og3F9Tr4BCI6Nb13A2OYrBeKCTckJz5NfcaQhXgtlySCLR4KTk9hKbb19wiH+5jG23dqrinn"
+    }
+  }
+}

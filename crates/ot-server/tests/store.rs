@@ -99,11 +99,11 @@ async fn purge_acked_and_expired() {
     assert_eq!(store.purge(50).await.unwrap(), PurgeStats::default());
 
     store.ack(s1, &c, 60).await.unwrap();
-    assert_eq!(store.purge(70).await.unwrap(), PurgeStats { acked: 1, expired: 0 });
+    assert_eq!(store.purge(70).await.unwrap(), PurgeStats { acked: 1, ..PurgeStats::default() });
 
     // m3 expire ; un message expiré n'est plus proposé même avant la purge.
     assert_eq!(store.pending(&b, 0, 100, 100).await.unwrap().len(), 1);
-    assert_eq!(store.purge(100).await.unwrap(), PurgeStats { acked: 0, expired: 1 });
+    assert_eq!(store.purge(100).await.unwrap(), PurgeStats { expired: 1, ..PurgeStats::default() });
     assert_eq!(store.pending(&b, 0, 100, 101).await.unwrap()[0].seq, s2);
 
     // Un seq n'est jamais réutilisé après purge.

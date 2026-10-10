@@ -28,6 +28,12 @@ pub const AUTH_DOMAIN: &[u8] = b"ot-auth-v1";
 /// Taille du nonce de défi.
 pub const NONCE_LEN: usize = 32;
 
+/// Préfixe de domaine du message signé par `pair_redeem`.
+pub const PAIR_DOMAIN: &[u8] = b"ot-pair-v1";
+
+/// Taille du jeton d'appairage.
+pub const PAIR_TOKEN_LEN: usize = 10;
+
 /// Chemin de l'endpoint WebSocket.
 pub const WS_PATH: &str = "/v1/ws";
 
@@ -39,4 +45,11 @@ pub fn auth_message(nonce: &[u8; NONCE_LEN], device_id: &DeviceId) -> Vec<u8> {
     msg.extend_from_slice(nonce);
     msg.extend_from_slice(id);
     msg
+}
+
+/// Message signé par un nouvel appareil dans `pair_redeem` :
+/// `"ot-pair-v1" ‖ nonce ‖ sha256(jeton)`. Le relais n'enregistre ainsi que des
+/// clés dont le possesseur est présent.
+pub fn pair_redeem_message(nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> Vec<u8> {
+    [PAIR_DOMAIN, nonce, token_hash].concat()
 }

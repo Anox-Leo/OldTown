@@ -1,6 +1,6 @@
 [package]
 name = "ot-core"
-description = "Cœur client OldTown : connexion, authentification, reconnexion, dédoublonnage"
+description = "Cœur client OldTown : connexion, chiffrement, appairage, reconnexion, dédoublonnage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,11 +12,16 @@ workspace = true
 
 [dependencies]
 ot-proto.workspace = true
+ot-crypto.workspace = true
 ed25519-dalek.workspace = true
 futures-util.workspace = true
+serde.workspace = true
 time.workspace = true
 getrandom.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+time = { workspace = true, features = ["macros"] }

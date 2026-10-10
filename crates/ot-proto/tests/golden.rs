@@ -3,7 +3,7 @@
 
 use ot_proto::{
     Content, DecodeError, DeviceId, DeviceInfo, Encoding, Envelope, ErrorCode, Frame,
-    MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message,
+    MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message, pair_redeem_message,
 };
 use time::macros::datetime;
 
@@ -56,6 +56,24 @@ fn golden_frames() {
             ],
         },
     );
+    check("pair_create", Frame::PairCreate);
+    check(
+        "pair_created",
+        Frame::PairCreated {
+            token: std::array::from_fn(|i| 20 + i as u8),
+            expires_at: datetime!(2026-10-10 08:10:00 UTC),
+        },
+    );
+    check(
+        "pair_redeem",
+        Frame::PairRedeem {
+            token: std::array::from_fn(|i| 20 + i as u8),
+            name: "windows".into(),
+            public_key: [5; 32],
+            sig: [7; 64],
+        },
+    );
+    check("pair_redeemed", Frame::PairRedeemed { device_id: dev(B), sponsor: dev(A) });
     check(
         "error",
         Frame::error(
@@ -109,6 +127,17 @@ fn rejects_malformed_frames() {
 }
 
 #[test]
+fn pairing_error_codes() {
+    for (code, text) in
+        [(ErrorCode::PairingInvalid, "pairing_invalid"), (ErrorCode::NameTaken, "name_taken")]
+    {
+        let json = Frame::error(code, "x", None).to_json();
+        assert!(json.contains(&format!("\"code\":\"{text}\"")), "{json}");
+        assert_eq!(Frame::from_json(&json).unwrap(), Frame::error(code, "x", None));
+    }
+}
+
+#[test]
 fn unknown_error_codes_are_tolerated() {
     let frame = Frame::from_json(r#"{"v":1,"t":"error","code":"futur","message":"x"}"#).unwrap();
     assert_eq!(frame, Frame::error(ErrorCode::Unknown, "x", None));
@@ -130,4 +159,14 @@ fn auth_message_layout() {
     assert_eq!(&msg[..10], b"ot-auth-v1");
     assert_eq!(&msg[10..42], &nonce);
     assert_eq!(&msg[42..], A.as_bytes());
+}
+
+#[test]
+fn pair_redeem_message_layout() {
+    let nonce = [9u8; 32];
+    let hash = [3u8; 32];
+    let msg = pair_redeem_message(&nonce, &hash);
+    assert_eq!(&msg[..10], b"ot-pair-v1");
+    assert_eq!(&msg[10..42], &nonce);
+    assert_eq!(&msg[42..], &hash);
 }

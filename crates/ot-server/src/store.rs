@@ -22,6 +22,8 @@ pub enum StoreError {
     KeyTaken,
     #[error("msg_id déjà utilisé par un autre appareil")]
     MsgIdConflict,
+    #[error("jeton d'appairage inconnu, expiré ou déjà utilisé")]
+    PairingInvalid,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
     #[error(transparent)]
@@ -72,6 +74,16 @@ pub struct PurgeStats {
     pub acked: u64,
     /// Messages arrivés en fin de vie.
     pub expired: u64,
+    /// Jetons d'appairage expirés, utilisés ou non.
+    pub pairings: u64,
+}
+
+/// Appareil créé par un jeton d'appairage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redeemed {
+    pub device: Device,
+    /// Appareil qui a créé le jeton.
+    pub sponsor: DeviceId,
 }
 
 #[derive(Clone)]
@@ -126,35 +138,8 @@ impl Store {
     // --- Appareils ---------------------------------------------------------
 
     pub async fn add_device(&self, name: &str, public_key: &[u8; 32], now: i64) -> Result<Device> {
-        let id = DeviceId::generate();
-        let res = sqlx::query(
-            "INSERT INTO devices (id, name, public_key, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(id.as_str())
-        .bind(name)
-        .bind(&public_key[..])
-        .bind(now)
-        .execute(&self.pool)
-        .await;
-        match res {
-            Ok(_) => {}
-            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
-                return Err(if e.message().contains("public_key") {
-                    StoreError::KeyTaken
-                } else {
-                    StoreError::NameTaken(name.to_owned())
-                });
-            }
-            Err(e) => return Err(e.into()),
-        }
-        Ok(Device {
-            id,
-            name: name.to_owned(),
-            public_key: *public_key,
-            created_at: now,
-            last_seen_at: None,
-            revoked_at: None,
-        })
+        let mut conn = self.pool.acquire().await?;
+        insert_device(&mut conn, name, public_key, now).await
     }
 
     pub async fn device(&self, id: &DeviceId) -> Result<Option<Device>> {
@@ -213,6 +198,63 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    // --- Appairage ----------------------------------------------------------
+
+    /// Enregistre un jeton d'appairage (par son SHA-256) créé par `sponsor`.
+    pub async fn create_pairing(
+        &self,
+        sponsor: &DeviceId,
+        token_hash: &[u8; 32],
+        now: i64,
+        expires_at: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO pairings (token_hash, sponsor_id, created_at, expires_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(&token_hash[..])
+        .bind(sponsor.as_str())
+        .bind(now)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Consomme un jeton valide et crée l'appareil, en une transaction. Un nom
+    /// déjà pris laisse le jeton utilisable.
+    pub async fn redeem_pairing(
+        &self,
+        token_hash: &[u8; 32],
+        name: &str,
+        public_key: &[u8; 32],
+        now: i64,
+    ) -> Result<Redeemed> {
+        let mut tx = self.begin_write().await?;
+        let sponsor: Option<String> = sqlx::query_scalar(
+            "SELECT p.sponsor_id FROM pairings p JOIN devices d ON d.id = p.sponsor_id
+             WHERE p.token_hash = ? AND p.used_at IS NULL AND p.expires_at > ?
+               AND d.revoked_at IS NULL",
+        )
+        .bind(&token_hash[..])
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let sponsor = sponsor.ok_or(StoreError::PairingInvalid)?;
+        let device = insert_device(&mut tx, name, public_key, now).await?;
+        sqlx::query("UPDATE pairings SET used_at = ?, device_id = ? WHERE token_hash = ?")
+            .bind(now)
+            .bind(device.id.as_str())
+            .bind(&token_hash[..])
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let sponsor = sponsor
+            .parse()
+            .map_err(|e: ot_proto::InvalidDeviceId| sqlx::Error::Decode(e.into()))?;
+        Ok(Redeemed { device, sponsor })
     }
 
     // --- Messages ----------------------------------------------------------
@@ -374,13 +416,66 @@ impl Store {
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        let pairings = sqlx::query("DELETE FROM pairings WHERE expires_at <= ?")
+            .bind(now)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
         tx.commit().await?;
-        Ok(PurgeStats { acked, expired })
+        Ok(PurgeStats { acked, expired, pairings })
+    }
+
+    /// Supprime tous les messages, livrés ou non, puis compacte la base
+    /// (`VACUUM`) pour que les pages libérées ne gardent rien. Sert à la
+    /// bascule vers le chiffrement (note 0014). Renvoie le nombre de messages.
+    pub async fn purge_all_messages(&self) -> Result<u64> {
+        let mut tx = self.begin_write().await?;
+        sqlx::query("DELETE FROM deliveries").execute(&mut *tx).await?;
+        let n = sqlx::query("DELETE FROM messages").execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+        sqlx::query("VACUUM").execute(&self.pool).await?;
+        Ok(n)
     }
 
     pub async fn close(&self) {
         self.pool.close().await;
     }
+}
+
+async fn insert_device(
+    conn: &mut sqlx::SqliteConnection,
+    name: &str,
+    public_key: &[u8; 32],
+    now: i64,
+) -> Result<Device> {
+    let id = DeviceId::generate();
+    let res =
+        sqlx::query("INSERT INTO devices (id, name, public_key, created_at) VALUES (?, ?, ?, ?)")
+            .bind(id.as_str())
+            .bind(name)
+            .bind(&public_key[..])
+            .bind(now)
+            .execute(&mut *conn)
+            .await;
+    match res {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            return Err(if e.message().contains("public_key") {
+                StoreError::KeyTaken
+            } else {
+                StoreError::NameTaken(name.to_owned())
+            });
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(Device {
+        id,
+        name: name.to_owned(),
+        public_key: *public_key,
+        created_at: now,
+        last_seen_at: None,
+        revoked_at: None,
+    })
 }
 
 fn device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<Device> {

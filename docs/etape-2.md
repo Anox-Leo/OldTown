@@ -5,6 +5,11 @@ sous une clé de groupe que seuls mes appareils détiennent, et un nouvel
 appareil rejoint le groupe par un code d'appairage, sans session SSH sur le
 laptop.
 
+**État (10 octobre 2026)** : code livré (T1 à T9, T11), précisions et écarts
+dans les notes [0020](decisions/0020-trames-appairage.md) et
+[0021](decisions/0021-format-chiffre-et-roster.md). Reste T10 : la bascule de
+l'installation réelle et l'essai Mac → Windows.
+
 Références : jalon « 2. Chiffrement et appairage » de la
 [conception](design.md), [revue après l'étape 1](revue-etapes-0-1.md),
 notes 0013 (code d'appairage) et 0014 (choix crypto et bascule).
@@ -180,7 +185,7 @@ est finie. Ordre conseillé : T1 → T2 → T3 en série, T4 en parallèle de T2
 puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
 `CLAUDE.md`, toutes vertes.
 
-- [ ] **T1. Crate `ot-crypto`.**
+- [x] **T1. Crate `ot-crypto`.**
   Fichiers : `crates/ot-crypto/`, `Cargo.toml` (workspace), `deny.toml` si une
   licence manque, `.github/workflows/ci.yml`.
   Faire : types de clés (`GroupKey`, `ExchangeKeyPair`, `PairingSecret`) avec
@@ -188,14 +193,15 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   associées à partir d'une `ot_proto::Envelope` ; signature et vérification ;
   encodage du code d'appairage. Pas de tokio, pas de réseau, pas d'E/S.
   Ajouter en CI une vérification que `ot-server` ne dépend pas de `ot-crypto`
-  (`cargo tree -p ot-server -i ot-crypto` doit échouer).
+  (dépendances normales et de build : ses tests y ont accès par `ot-core`,
+  note 0021).
   Tests : aller-retour par schéma ; chaque altération (en-tête, nonce, chiffré,
   `msg_id`, `from`, `to`, `created_at`) est rejetée ; mauvaise clé rejetée ;
   vecteurs figés dans `crates/ot-crypto/tests/vectors/` (clés et nonces fixés),
   sur le modèle des golden de `ot-proto`.
   Fini quand : les vecteurs passent et la vérification CI est en place.
 
-- [ ] **T2. Clés, roster et `Keyring` dans `ot-core`.**
+- [x] **T2. Clés, roster et `Keyring` dans `ot-core`.**
   Fichiers : `crates/ot-core/src/keyring.rs`, `roster.rs`, `lib.rs`.
   Faire : trait `Keyring` (lire et écrire clé d'échange, clés de groupe,
   roster) ; implémentation en mémoire pour les tests ; règles du roster
@@ -205,7 +211,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Fini quand : l'API est documentée (`///`) et pensée pour UniFFI (types
   simples, pas de génériques exposés).
 
-- [ ] **T3. Chiffrer et signer chaque message.**
+- [x] **T3. Chiffrer et signer chaque message.**
   Fichiers : `crates/ot-core/src/client.rs`, nouveau `crates/ot-core/src/secure.rs`.
   Faire : `Client::send` chiffre (schéma `0x01`, époque courante) et signe ;
   à la réception, déchiffre, vérifie l'expéditeur dans le roster et la
@@ -218,7 +224,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Fini quand : `Received.content` n'est plus jamais rempli depuis un payload
   en clair.
 
-- [ ] **T4. Appairage côté relais.**
+- [x] **T4. Appairage côté relais.**
   Fichiers : `crates/ot-proto/src/frame.rs`, `tests/golden/pair_*.json`,
   `crates/ot-server/migrations/0002_pairings.sql`, `src/store.rs`,
   `src/session.rs`, `src/metrics.rs`, note de décision sur les trames
@@ -232,7 +238,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   base ni dans les logs.
   Fini quand : la note sur les trames existe et les golden sont à jour.
 
-- [ ] **T5. Commandes de groupe et d'appairage dans la CLI.**
+- [x] **T5. Commandes de groupe et d'appairage dans la CLI.**
   Fichiers : `crates/ot-cli/src/main.rs`, `files.rs`.
   Faire : `Keyring` sur fichiers `0600` ; `ot group init` ;
   `ot pair new` (affiche le code, attend 10 min) ;
@@ -242,7 +248,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   groupe existe déjà (sauf `--force`).
   Fini quand : le README décrit ces commandes.
 
-- [ ] **T6. Échange d'appairage.**
+- [x] **T6. Échange d'appairage.**
   Fichiers : `crates/ot-core/src/pairing.rs`, `client.rs`.
   Faire : côté nouveau, `pair_redeem` puis reconnexion, envoi de
   `pair_request` (schéma `0x02`) au parrain ; côté parrain, vérification,
@@ -252,7 +258,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   l'appairage ; un code faux échoue côté relais.
   Fini quand : un troisième appareil apprend B par le message `roster`.
 
-- [ ] **T7. Avertir d'un appareil inconnu.**
+- [x] **T7. Avertir d'un appareil inconnu.**
   Fichiers : `crates/ot-cli/src/main.rs`, `crates/ot-core/src/client.rs`.
   Faire : `ot devices` croise la liste du relais et le roster, et signale un
   appareil présent sur le relais mais absent du roster (relais compromis ou
@@ -260,7 +266,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   du roster.
   Tests : appareil ajouté par `ot-server device add` sans appairage → signalé.
 
-- [ ] **T8. Rotation de la clé de groupe.**
+- [x] **T8. Rotation de la clé de groupe.**
   Fichiers : `crates/ot-core/src/secure.rs`, `crates/ot-cli/src/main.rs`.
   Faire : `ot group rotate [--exclude <nom>]...` tire `K_{n+1}`, envoie un
   `group_key` (schéma `0x03`) à chaque membre restant, puis chiffre sous la
@@ -269,7 +275,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Tests (E2E) : après rotation excluant C, C ne lit plus les nouveaux
   messages ; A et B lisent encore les anciens en retard.
 
-- [ ] **T9. Plus aucun clair.**
+- [x] **T9. Plus aucun clair.**
   Fichiers : `crates/ot-core`, `crates/ot-cli`, `crates/ot-proto/src/envelope.rs`.
   Faire : supprimer l'envoi en clair des clients (`Envelope::new_plain` ne
   sert plus qu'aux tests) ; un client sans groupe refuse d'envoyer et dit
@@ -277,7 +283,9 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Tests : un test E2E lit la base du relais et vérifie qu'aucun `body` envoyé
   n'y apparaît.
 
-- [ ] **T10. Bascule de l'installation réelle.**
+- [ ] **T10. Bascule de l'installation réelle.** *(Documentation prête :
+  README « Passage au chiffrement » et `SECURITY.md` ; reste l'opération sur
+  le laptop et les appareils, puis l'essai réel.)*
   Fichiers : `README.md`, `SECURITY.md`, `docs/etape-2.md` (état).
   Faire : mettre à jour le relais ; `ot-server messages purge --all` (suivi d'un
   `VACUUM`, note 0014) ;
@@ -286,7 +294,7 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   ligne. Retirer l'avertissement « contenu en clair » du README.
   Fini quand : l'essai réel ci-dessous passe.
 
-- [ ] **T11. Tests de bout en bout.**
+- [x] **T11. Tests de bout en bout.**
   Fichiers : `crates/ot-server/tests/e2e.rs` ou nouveau `e2e_crypto.rs`.
   Faire : les scénarios du tableau ci-dessous, avec un relais en processus.
 

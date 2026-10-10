@@ -47,6 +47,15 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      # Le relais ne doit jamais dépendre de la crypto de contenu (note 0014).
+      # Seuls les tests de ot-server y ont accès, par ot-core.
+      - name: ot-server ne dépend pas de ot-crypto
+        if: runner.os == 'Linux'
+        run: |
+          if cargo tree --locked -p ot-server -e normal,build --target all --prefix none | grep -q '^ot-crypto '; then
+            echo "::error::ot-server dépend de ot-crypto"
+            exit 1
+          fi
 
   deny:
     name: cargo deny

@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ulid::Ulid;
 
-use crate::{DeviceId, Envelope, NONCE_LEN, PROTOCOL_VERSION, b64};
+use time::OffsetDateTime;
+
+use crate::{DeviceId, Envelope, NONCE_LEN, PAIR_TOKEN_LEN, PROTOCOL_VERSION, b64};
 
 /// Trame échangée sur la connexion WebSocket. Le type est porté par `t`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,7 +35,30 @@ pub enum Frame {
     ListDevices,
     /// Serveur → client : réponse à `list_devices`.
     Devices { devices: Vec<DeviceInfo> },
-    /// Les deux sens : erreur typée. Seule `auth_failed` ferme la session.
+    /// Client → serveur, session authentifiée : demande un jeton d'appairage.
+    PairCreate,
+    /// Serveur → client : jeton à usage unique, valable jusqu'à `expires_at`.
+    PairCreated {
+        #[serde(with = "b64::array")]
+        token: [u8; PAIR_TOKEN_LEN],
+        #[serde(with = "time::serde::rfc3339")]
+        expires_at: OffsetDateTime,
+    },
+    /// Nouvel appareil → serveur, à la place de `auth` : s'enregistre avec un
+    /// jeton. `sig` signe [`crate::pair_redeem_message`] avec `public_key`.
+    PairRedeem {
+        #[serde(with = "b64::array")]
+        token: [u8; PAIR_TOKEN_LEN],
+        name: String,
+        #[serde(with = "b64::array")]
+        public_key: [u8; 32],
+        #[serde(with = "b64::array")]
+        sig: [u8; 64],
+    },
+    /// Serveur → nouvel appareil : enregistré ; la connexion est ensuite fermée.
+    PairRedeemed { device_id: DeviceId, sponsor: DeviceId },
+    /// Les deux sens : erreur typée. `auth_failed`, `pairing_invalid` et
+    /// `name_taken` ferment la connexion.
     Error {
         code: ErrorCode,
         message: String,
@@ -67,6 +92,10 @@ pub enum ErrorCode {
     UnknownRecipient,
     /// `msg_id` déjà utilisé par un autre expéditeur.
     MsgIdConflict,
+    /// Jeton d'appairage inconnu, expiré ou déjà utilisé, ou signature fausse.
+    PairingInvalid,
+    /// Nom d'appareil déjà pris par un appareil actif.
+    NameTaken,
     Internal,
     /// Code ajouté par une version plus récente du protocole.
     #[serde(other)]
@@ -103,6 +132,10 @@ const KNOWN_TYPES: &[&str] = &[
     "ack",
     "list_devices",
     "devices",
+    "pair_create",
+    "pair_created",
+    "pair_redeem",
+    "pair_redeemed",
     "error",
 ];
 
@@ -123,6 +156,10 @@ impl Frame {
             Self::Ack { .. } => "ack",
             Self::ListDevices => "list_devices",
             Self::Devices { .. } => "devices",
+            Self::PairCreate => "pair_create",
+            Self::PairCreated { .. } => "pair_created",
+            Self::PairRedeem { .. } => "pair_redeem",
+            Self::PairRedeemed { .. } => "pair_redeemed",
             Self::Error { .. } => "error",
         }
     }

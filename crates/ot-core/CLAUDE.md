@@ -14,7 +14,14 @@ authentification, reconnexion avec backoff, file d'envoi, dédoublonnage ;
   un trait (`SecretStore` / `Keyring`), chaque appli fournit son
   implémentation.
 - Livraison au moins une fois : un message n'est acquitté qu'après avoir été
-  remis à l'appli (ou rejeté définitivement), et `Dedup` écarte les doublons.
+  remis à l'appli (ou rejeté définitivement, ou mis en quarantaine dans le
+  `Keyring`), et `Dedup` écarte les doublons.
+- Chiffrement dans `secure.rs` (sceller, ouvrir, roster, quarantaine,
+  appairage, rotation), règles du roster dans `roster.rs`, stockage par le
+  trait `Keyring` (`keyring.rs`, `MemoryKeyring` pour les tests). Le format
+  vient de `ot-crypto` ; aucune primitive crypto n'est appelée directement ici.
+- Aucun envoi en clair : `Client::send` chiffre toujours et refuse sans
+  groupe ; `send_envelope` ne sert qu'aux tests.
 - Jamais de contenu, de clé ni de jeton dans les logs `tracing`.
 - Tests : unitaires dans le crate ; les scénarios avec un vrai relais vivent
   dans `crates/ot-server/tests/` (relais en processus).

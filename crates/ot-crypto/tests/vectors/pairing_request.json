@@ -1,0 +1,27 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "pairing",
+    "token": "FBUWFxgZGhscHQ==",
+    "secret": "Hh8gISIjJCUmJygpKissLQ=="
+  },
+  "body": {
+    "kind": "pair_request",
+    "name": "windows",
+    "sign_key": "Q83AI9ItX54QfRoGk0V9NdHRDrfSHHIRkvVvXeQGZdM=",
+    "exchange_key": "yg/0pLeJ/DBjuwaOZIkz+ESp0oTGvX9rossNRAicEAs="
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "Anho7ztC134sRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdHLQk9yByubRt5qj3fTnbYgb35v77agdWEu+hh1w42Hbb5PXBBhUAy+WcXvKGwj70/KGBGYR0GlRccoqD0B97GfEBpm33z2W9OYBJb3T1xy1VHEFYf6QQgDdHmI1130V/SCv8+Jh5jAC55kIH4dLFUrkeqpZXtnYaPx9/pypkgJ3M81Aj2TotzMJnqjSdU49vLL5Le1Rp6XuLeDcKAbebbOZtFsh92XxZBQfpmaEfmE0X/rSN/1YktVVU1fzQHtoKo8KC+VylLJO5tyMWOx8JhRsb5q/ZqLtieBGr65ockYlTa2OtGbx+G/xENJ5C0oj3"
+    }
+  }
+}

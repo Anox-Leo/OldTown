@@ -1,5 +1,5 @@
 use ed25519_dalek::{Signer, SigningKey};
-use ot_proto::{DeviceId, NONCE_LEN, auth_message, b64};
+use ot_proto::{DeviceId, NONCE_LEN, auth_message, b64, pair_redeem_message};
 
 /// Paire de clés Ed25519 de l'appareil.
 pub struct Identity(SigningKey);
@@ -32,6 +32,15 @@ impl Identity {
     /// Réponse au défi du serveur.
     pub fn sign_challenge(&self, nonce: &[u8; NONCE_LEN], device_id: &DeviceId) -> [u8; 64] {
         self.0.sign(&auth_message(nonce, device_id)).to_bytes()
+    }
+
+    /// Signature de `pair_redeem` : preuve de possession de la clé.
+    pub fn sign_pair_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
+        self.0.sign(&pair_redeem_message(nonce, token_hash)).to_bytes()
+    }
+
+    pub(crate) fn signing_key(&self) -> &SigningKey {
+        &self.0
     }
 }
 
