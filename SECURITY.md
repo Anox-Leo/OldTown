@@ -32,6 +32,8 @@ Ce qui est déjà en place :
 - [ ] Relire la partie cryptographique (idéalement par quelqu'un d'autre).
 - [ ] Vérifier que ni le dépôt ni son historique ne contiennent de données
       personnelles : `git log -p | grep -iE '<ip|nom de machine|tailnet>'`.
+- [ ] Traduire la documentation en anglais et la rendre générique (sans
+      référence à mon installation).
 - [ ] Activer sur GitHub : détection de secrets avec blocage des pushs,
       Dependabot, protection de `main`, signalement privé de failles.
 
