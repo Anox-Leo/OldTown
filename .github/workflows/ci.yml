@@ -1,9 +1,22 @@
 name: CI
 
+# Pour économiser les minutes de CI :
+# - pull request : Linux seulement ;
+# - push sur main, ou lancement manuel (onglet Actions, « Run workflow » sur
+#   une branche) : Linux, macOS et Windows ;
+# - un changement qui ne touche que la doc ne lance rien.
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "**.md", "LICENSE"]
+  workflow_dispatch:
+
+# Un nouveau push annule l'exécution en cours sur la même branche, sauf sur main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # La CI ne fait que lire le dépôt.
 permissions:
@@ -19,8 +32,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +51,7 @@ jobs:
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,7 +61,7 @@ jobs:
   cli:
     name: Binaire ot (${{ matrix.os }})
     needs: test
-    if: github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     strategy:
       matrix:
         include:
@@ -54,6 +69,7 @@ jobs:
           - { os: macos-latest, bin: ot }
           - { os: windows-latest, bin: ot.exe }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,3 +83,4 @@ jobs:
         with:
           name: ot-${{ runner.os }}-${{ runner.arch }}
           path: target/release/${{ matrix.bin }}
+          retention-days: 14
