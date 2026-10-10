@@ -123,3 +123,22 @@ derniers messages reçus, pour ne jamais les afficher deux fois.
 Une seule connexion est active par appareil : lancer `ot send` ou `ot devices`
 sur un appareil qui fait tourner `ot listen` coupe brièvement ce dernier, qui se
 reconnecte seul.
+
+## Dépannage
+
+| Symptôme | Cause probable | Correctif |
+| --- | --- | --- |
+| `tailscale ping relais` répond, mais `curl http://relais:7878/healthz` échoue (« could not connect », ou « Défaillance générale » au `ping` sous Windows) | Un autre VPN actif capte le trafic vers `100.x` avant Tailscale | Couper l'autre VPN, ou l'exclure de la plage `100.64.0.0/10` (ou de l'appli Tailscale) par son réglage de « split tunneling » |
+| Même symptôme juste après l'installation de Tailscale sous Windows | La carte réseau virtuelle n'est pas encore active | Redémarrer le PC |
+| `relais` ne se résout pas, mais l'IP `100.x` répond | DNS du tailnet (MagicDNS) non utilisé par l'appareil | Activer *Use Tailscale DNS* dans le client Tailscale |
+| Le service ne démarre pas, « Address not available » dans `journalctl -u ot-server` | L'IP Tailscale n'est pas encore montée au démarrage | Rien à faire : systemd réessaie toutes les 5 s |
+| `authentification refusée` côté `ot` | Appareil non enregistré, révoqué, ou `device_id` erroné | `ot-server device list` sur le serveur, puis `ot init --device-id …` |
+
+Pour localiser une panne réseau sous Windows :
+
+```powershell
+Find-NetRoute -RemoteIPAddress <ip tailscale du relais> | Select-Object -First 1 InterfaceAlias
+Test-NetConnection <ip tailscale du relais> -Port 7878
+```
+
+La carte de sortie doit être `Tailscale` ; sinon, un autre logiciel (VPN, virtualisation) utilise la même plage d'adresses.

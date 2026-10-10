@@ -121,7 +121,7 @@ Je propose d'avancer l'identité d'appareil Ed25519 dès l'étape 1 et de laisse
 
 Dix tâches dans l'ordre des dépendances ; à partir de T4, chaque tâche se termine par un test qui passe en CI.
 
-- [ ] **T1. Laptop et tailnet.** Veille capot fermé désactivée, seuil de charge, Ethernet, mises à jour automatiques, SSH par clé. Tailscale sur laptop, Mac et PC, avec un nom MagicDNS stable pour le serveur.
+- [x] **T1. Laptop et tailnet.** Veille capot fermé désactivée, seuil de charge, Ethernet, mises à jour automatiques, SSH par clé. Tailscale sur laptop, Mac et PC, avec un nom MagicDNS stable pour le serveur.
 - [x] **T2. Dépôt et CI.** Workspace Cargo, `rustfmt`, `clippy -D warnings`, tests, `cargo deny` pour les licences et failles connues, sur Linux, macOS et Windows.
 - [x] **T3. Crate `ot-proto`.** Types des trames et de l'enveloppe, sérialisation serde, constantes de version. Tests « golden » sur des fichiers JSON de référence pour figer le format.
 - [x] **T4. Stockage serveur.** Schéma, migrations, couche d'accès (insertion idempotente, messages en attente par appareil, acquittement, purge). Tests sur base en mémoire.
@@ -129,13 +129,13 @@ Dix tâches dans l'ordre des dépendances ; à partir de T4, chaque tâche se te
 - [x] **T6. Routage.** Registre des connexions actives, `send` → stockage → `accepted` → `deliver` aux connectés, rejeu des en attente au `welcome`, `ack`. Une seule connexion active par appareil, la nouvelle remplace l'ancienne.
 - [x] **T7. Crate `ot-core`.** Client : connexion, authentification, reconnexion avec backoff exponentiel et gigue, file d'envoi en mémoire, dédoublonnage, flux de messages reçus. API pensée pour UniFFI (étape 3) et Tauri (étape 4).
 - [x] **T8. CLI `ot`.** `ot init --server <url> --name <nom>`, `ot send <texte> [--to <nom>]`, `ot listen`, `ot devices`.
-- [ ] **T9. Observabilité et déploiement.** Logs structurés `tracing` (jamais le contenu des messages), `/healthz`, `/metrics`, unité systemd durcie (`DynamicUser`, `ProtectSystem=strict`, `Restart=on-failure`), sauvegarde de la base.
-- [ ] **T10. Tests de bout en bout.** Serveur lancé en processus dans les tests, deux clients `ot-core` : livraison en ligne, livraison différée, coupure réseau, redémarrage du serveur, expiration. Puis essai réel Windows → Mac via le laptop.
+- [x] **T9. Observabilité et déploiement.** Logs structurés `tracing` (jamais le contenu des messages), `/healthz`, `/metrics`, unité systemd durcie (`DynamicUser`, `ProtectSystem=strict`, `Restart=on-failure`), sauvegarde de la base.
+- [x] **T10. Tests de bout en bout.** Serveur lancé en processus dans les tests, deux clients `ot-core` : livraison en ligne, livraison différée, coupure réseau, redémarrage du serveur, expiration. Puis essai réel Windows → Mac via le laptop.
 
-## État au 10 octobre 2026
+## État au 10 octobre 2026 : étape terminée
 
-- **Fait** : T2 à T8, tests automatisés de T10 (49 tests verts : golden, stockage, auth, routage, bout en bout), code et fichiers de T9 (`deploy/`).
-- **Reste** : T1 côté PC Windows (Tailscale), installation du service sur le laptop (T9), CI verte sur GitHub, essai réel Windows → Mac, reboot du laptop.
+- **Fait** : T1 à T10. 49 tests automatisés verts en CI sur Linux, macOS et Windows ; relais installé en service sur le laptop ; essai réel Windows → Mac réussi (en ligne, lien ciblé, hors ligne, reconnexion sans doublon) ; après un reboot du laptop, le service repart seul et `/healthz` répond.
+- **Constaté pendant l'essai réel** : un autre VPN actif sur le PC empêchait le trafic vers le tailnet ; le service tente parfois une première fois de démarrer avant que l'IP Tailscale soit montée, puis repart 5 s plus tard. Les deux cas sont dans la section « Dépannage » du README.
 - **Écarts** : voir [`decisions/`](decisions/README.md), notes 0001 à 0009. En bref : trames `list_devices`/`devices` ajoutées, premier `auth_failed` fermant, requêtes sqlx non vérifiées à la compilation, compteurs maison, service sous `ot-relay`, sauvegarde des seuls appareils, écritures en `BEGIN IMMEDIATE`, Rust 1.88. Question ouverte : une session par appareil et la CLI (0009).
 
 ## Critères de fin
@@ -152,7 +152,7 @@ L'étape est terminée quand le scénario Windows → Mac marche en vrai et que 
 | Clé inconnue, signature fausse, appareil révoqué | Connexion refusée avec `auth_failed` | Test d'auth |
 | Enveloppe > 64 Kio ou `from` usurpé | Rejetée avec une erreur typée | Test de routage |
 | Durée de vie dépassée | Message purgé, compteur `/metrics` incrémenté | Test de purge |
-| Reboot du laptop | Le service redémarre seul, `/healthz` répond | Essai manuel |
+| Reboot du laptop | Le service redémarre seul, `/healthz` répond | Essai manuel (10 octobre 2026) |
 
 En plus : CI verte sur les trois OS, `clippy` sans avertissement, aucun contenu de message dans les logs, README avec l'installation du serveur et de la CLI.
 
