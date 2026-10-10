@@ -97,21 +97,35 @@ pub async fn next_event(events: &mut Events) -> Event {
     tokio::time::timeout(STEP, events.next()).await.expect("événement attendu").expect("flux fermé")
 }
 
+/// Attend la connexion. Le délai est global : un client qui échoue en boucle
+/// produit sans cesse des événements et ne doit pas bloquer le test.
 pub async fn wait_connected(events: &mut Events) -> u64 {
-    loop {
-        if let Event::Connected { pending } = next_event(events).await {
-            return pending;
+    within(async {
+        loop {
+            match next_event(events).await {
+                Event::Connected { pending } => return pending,
+                other => eprintln!("en attente de connexion : {other:?}"),
+            }
         }
-    }
+    })
+    .await
 }
 
 /// Prochain message reçu, en ignorant les événements de connexion.
 pub async fn next_message(events: &mut Events) -> ot_core::Received {
-    loop {
-        if let Event::Message(m) = next_event(events).await {
-            return m;
+    within(async {
+        loop {
+            if let Event::Message(m) = next_event(events).await {
+                return m;
+            }
         }
-    }
+    })
+    .await
+}
+
+/// Échoue si `fut` ne se termine pas dans `STEP`.
+pub async fn within<T>(fut: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(STEP, fut).await.expect("délai dépassé")
 }
 
 /// Vérifie qu'aucun message n'arrive pendant `d`.
