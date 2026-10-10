@@ -26,14 +26,14 @@ Un cœur Rust unique évite d'écrire trois fois le protocole et le chiffrement,
 
 | Brique | Choix proposé | Rôle | Alternative |
 | --- | --- | --- | --- |
-| Cœur partagé | Rust : crypto (libsodium ou RustCrypto), protocole, file d'envoi, cache local SQLite | Tout ce qui ne dépend pas de l'OS | Kotlin Multiplatform |
+| Cœur partagé | Rust : crypto (RustCrypto, crate `ot-crypto`), protocole, file d'envoi, cache local SQLite | Tout ce qui ne dépend pas de l'OS | Kotlin Multiplatform |
 | Serveur relais | Rust (axum + tokio) ou Go, SQLite, blobs sur disque | Authentifier les appareils, router les messages, stocker les fichiers chiffrés avec durée de vie | — |
 | Appli Android | Kotlin + Jetpack Compose, cœur via UniFFI | Cible de partage, tuile, notifications, réception | — |
 | Appli desktop | Tauri 2 (Rust + interface web), une base pour Windows et macOS | Icône de barre de menu, surveillance du presse-papiers, glisser-déposer, historique | Swift natif sur Mac si l'intégration Tauri ne suffit pas |
 | Extension navigateur | WebExtension (Chrome et Firefox) | Envoyer la page, un lien ou la sélection depuis le menu contextuel | — |
 | Notifications Android | WebSocket dans un service de premier plan, puis [UnifiedPush](https://unifiedpush.org/users/distributors/) avec ntfy auto-hébergé | Réveiller le téléphone sans passer par Google | Firebase (FCM), à éviter ici |
 
-L'extension ne garde aucune clé : elle parle à l'appli desktop locale par native messaging, qui chiffre et envoie.
+L'extension ne garde aucune clé : par native messaging, elle parle à un petit hôte local qui relaie vers l'appli desktop par une socket locale ; l'appli chiffre et envoie. L'hôte n'ouvre jamais sa propre connexion au relais (une seule session par appareil, note 0009).
 
 ## Contraintes par plateforme
 
@@ -54,12 +54,12 @@ Pour éviter les boucles, chaque élément porte un identifiant : un client qui 
 Le serveur authentifie des appareils et transporte des enveloppes opaques ; seuls tes appareils détiennent les clés qui les ouvrent.
 
 1. **Identité d'appareil** : chaque appareil génère une paire de clés Ed25519 (signature) et X25519 (échange), stockées dans le coffre de l'OS (Android Keystore, Trousseau macOS, DPAPI Windows).
-2. **Appairage par QR code** : un appareil déjà appairé affiche un QR contenant l'adresse du serveur, un jeton à usage unique et l'empreinte de sa clé ; le nouvel appareil s'enregistre, puis reçoit la clé de groupe chiffrée pour sa clé publique.
+2. **Appairage par code, puis QR** : un appareil déjà membre obtient du relais un jeton à usage unique et affiche un code (jeton + secret que le relais ne voit jamais) ; le nouvel appareil s'enregistre avec le jeton, puis reçoit la clé de groupe dans un échange chiffré sous le secret. Code copié-collé entre CLI à l'étape 2, QR à partir de l'étape 3 (détail : [étape 2](etape-2.md)).
 3. **Authentification au serveur** : défi signé avec la clé Ed25519, pas de mot de passe ; connexion WebSocket persistante en TLS par-dessus le VPN.
 4. **Messages** : texte et liens chiffrés avec XChaCha20-Poly1305 sous la clé de groupe, signés par l'expéditeur ; le serveur ne voit que destinataire, taille et date.
-5. **Fichiers** : découpés en morceaux chiffrés en flux (`secretstream` de libsodium), envoyés en HTTP avec reprise ; le message n'emporte que la référence et la clé du fichier.
+5. **Fichiers** : découpés en morceaux chiffrés en flux (construction STREAM de RustCrypto), envoyés en HTTP avec reprise ; le message n'emporte que la référence et la clé du fichier.
 6. **File d'attente** : le serveur garde les enveloppes pour les appareils hors ligne, puis les supprime après accusé de réception ou au bout d'une durée que tu fixes.
-7. **Révocation** : retirer un appareil fait tourner la clé de groupe, redistribuée aux appareils restants.
+7. **Révocation** : retirer un appareil fait tourner la clé de groupe, redistribuée aux appareils restants (rotation disponible dès l'étape 2).
 
 Une clé de groupe unique suffit pour quatre appareils à toi. Si tu veux plus tard des propriétés plus fortes (confidentialité persistante par message), MLS via la bibliothèque OpenMLS est l'évolution naturelle.
 
@@ -89,18 +89,18 @@ Oui, c'est possible et c'est suffisant : un serveur relais en Rust ou Go consomm
 
 ## Feuille de route
 
-Chaque jalon donne un outil utilisable au quotidien, ce qui te permet d'ajuster le suivant à l'usage réel.
+Chaque jalon donne un outil utilisable au quotidien, ce qui te permet d'ajuster le suivant à l'usage réel. Chaque jalon a son plan détaillé (`etape-N.md`) ; les ajustements faits après l'étape 1 sont expliqués dans la [revue](revue-etapes-0-1.md), et les choix encore ouverts dans [`decisions-a-prendre.md`](decisions-a-prendre.md).
 
 | Jalon | À construire | Ce que tu sais faire à la fin |
 | --- | --- | --- |
-| 1. Fondations | Tailscale, serveur relais minimal (WebSocket + SQLite), CLI de test, cœur Rust avec tests | Envoyer un texte d'un terminal à un autre |
-| 2. Chiffrement et appairage | Clés d'appareil, clé de groupe, appairage par QR, authentification par signature | Le serveur ne voit plus rien en clair |
-| 3. Android : partage | Appli Kotlin, cible de partage, notifications de réception, service de premier plan | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
-| 4. Desktop : Windows et Mac | Appli Tauri en barre de menu, envoi et réception, glisser-déposer | Échanger avec le téléphone depuis les deux ordinateurs |
-| 5. Fichiers | Envoi par morceaux chiffrés, reprise, durée de vie sur le serveur | Envoyer des documents et des photos volumineux |
-| 6. Presse-papiers live | Surveillance sur Windows et Mac, anti-boucle, filtre mots de passe, tuile Android | Copier sur un ordinateur, coller sur l'autre ou sur le téléphone |
-| 7. Extension navigateur | WebExtension, native messaging vers l'appli desktop | Envoyer la page ou la sélection en un clic |
-| 8. Confort et durcissement | Historique chiffré et recherche, UnifiedPush avec ntfy, révocation, sauvegardes, Headscale | Un système autonome, sans dépendance externe |
+| [1. Fondations](etape-1.md) (terminé) | Tailscale, serveur relais minimal (WebSocket + SQLite), CLI de test, cœur Rust avec tests | Envoyer un texte d'un terminal à un autre |
+| [2. Chiffrement et appairage](etape-2.md) | Clés d'échange, clé de groupe et rotation, appairage par code, relais aveugle | Le serveur ne voit plus rien en clair |
+| [3. Android : partage](etape-3.md) | Appli Kotlin, cible de partage, notifications, service de premier plan, appairage QR, tuile « envoyer le presse-papiers » | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
+| [4. Desktop : Windows, Mac, Ubuntu](etape-4.md) | Appli Tauri en barre de menu, envoi et réception, glisser-déposer, socket locale | Échanger avec le téléphone depuis les deux ordinateurs |
+| [5. Fichiers](etape-5.md) | Envoi par morceaux chiffrés, reprise, durée de vie sur le serveur | Envoyer des documents et des photos volumineux |
+| [6. Presse-papiers live](etape-6.md) | Surveillance sur Windows et Mac, anti-boucle, filtre mots de passe | Copier sur un ordinateur, coller sur l'autre ou sur le téléphone |
+| [7. Extension navigateur](etape-7.md) | WebExtension, native messaging vers l'appli desktop par un hôte local | Envoyer la page ou la sélection en un clic |
+| [8. Confort et durcissement](etape-8.md) | Historique chiffré et recherche, UnifiedPush avec ntfy, révocation sans SSH, sauvegardes, Headscale, publication | Un système autonome, sans dépendance externe |
 
 Dès les jalons 1 à 3, OldTown remplace déjà l'usage principal de Pushbullet.
 
