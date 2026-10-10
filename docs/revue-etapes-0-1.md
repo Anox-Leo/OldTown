@@ -88,7 +88,7 @@ fin).
 | Code crypto | Dans `ot-core` | Nouvelle crate `ot-crypto`, sans réseau ni async | Testable seule, réutilisable par UniFFI et Tauri, et le serveur ne doit jamais en dépendre (vérifiable en CI) |
 | Tuile Android « envoyer le presse-papiers » | Étape 6 | Étape 3 | Quelques dizaines de lignes, et c'est le geste le plus utile sur le téléphone |
 | Service Android | Service de premier plan | Type `specialUse` (appli installée hors Play Store), pas `dataSync` | `dataSync` est limité à 6 h par jour à partir d'Android 15 (à revérifier au démarrage de l'étape 3) |
-| `ws://` sur Android | Non traité | Exception réseau limitée au nom du relais ; `wss` reste dans la liste avant publication | Android refuse le trafic en clair par défaut ; WireGuard chiffre déjà le lien |
+| `ws://` sur Android | Non traité | Garder `ws://` : la connexion part du code Rust, hors de la politique « pas de clair » d'Android ; `wss` reste dans la liste avant publication | WireGuard chiffre déjà le lien ; le contenu est chiffré de bout en bout dès l'étape 2 |
 | Client Ubuntu | Serveur seulement | L'appli Tauri compile aussi pour Linux, sans presse-papiers live sous Wayland | Coût quasi nul avec Tauri ; le laptop est aussi un poste de travail |
 | Extension navigateur | Native messaging vers l'appli | Native messaging vers un petit relais local qui passe par l'appli (socket locale) | Conséquence de la note 0009 |
 | Organisation du dépôt | Monorepo | Monorepo : `crates/` pour Rust, `apps/android`, `apps/desktop`, `apps/extension` | Un workflow CI par dossier |

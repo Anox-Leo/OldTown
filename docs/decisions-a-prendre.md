@@ -24,21 +24,23 @@ signale-le dans ton compte rendu.
 
 | # | Question | ★ Recommandation | Alternative | Impacte |
 | --- | --- | --- | --- | --- |
-| D5 | Forme du code d'appairage | Code d'environ 40 caractères (jeton + secret de 128 bits), copié-collé ; le QR de l'étape 3 porte le même contenu | Code court à taper (`7-guitare-orbite`) avec un échange SPAKE2, comme magic-wormhole | `etape-2.md` T4 à T6 |
-| D6 | Bibliothèque crypto | RustCrypto (`chacha20poly1305`, `x25519-dalek`, `crypto_box`, `hkdf`, `sha2`) | libsodium (`libsodium-sys`) | `etape-2.md`, `etape-5.md` |
+| D5 | Forme du code d'appairage | Code de 46 caractères (jeton de 80 bits + secret de 128 bits), copié-collé ; le QR de l'étape 3 porte le même contenu | Code court à taper (`7-guitare-orbite`) avec un échange SPAKE2, comme magic-wormhole | `etape-2.md` T4 à T6 |
+| D6 | Bibliothèque crypto | RustCrypto (`chacha20poly1305`, `x25519-dalek`, `hkdf`, `sha2`) | libsodium (`libsodium-sys`) | `etape-2.md`, `etape-5.md` |
 | D7 | Clé de groupe ou chiffrement par destinataire | Clé de groupe, comme prévu | Clé de contenu scellée pour chaque destinataire | `etape-2.md` |
 | D8 | Rotation de la clé de groupe | Dès l'étape 2 (`ot group rotate --exclude <appareil>`) | À l'étape 8 avec la révocation | `etape-2.md` T8, `etape-8.md` |
 | D9 | Où vit le code crypto | Nouvelle crate `ot-crypto` | Module de `ot-core` | `etape-2.md` T1 |
 | D10 | Qui refuse le contenu en clair | Les clients (le relais ne lit jamais `payload`) | Le relais, sur `payload.enc` | `etape-2.md` T9 |
 | D11 | Messages en clair restés sur le relais à la bascule | Purge complète des messages au passage à l'étape 2 | Attendre l'expiration (7 jours) | `etape-2.md` T10 |
-| D12 | CLI sur une machine qui a aussi l'appli | La CLI est un appareil distinct (`ot --home`) | Session « envoi seul » (`receive: false` à l'`auth`, note 0009) | `etape-4.md` |
+| D12 | CLI sur une machine qui a aussi l'appli | La CLI est un appareil distinct (`ot --home`) | Session « envoi seul » (`receive: false` à l'`auth`, note 0009) ; ou passage par la socket locale de l'appli, construite de toute façon pour l'extension (étape 4) | `etape-4.md` |
 
 ## Applis
 
 | # | Question | ★ Recommandation | Alternative | Impacte |
 | --- | --- | --- | --- | --- |
-| D13 | `ws://` ou `wss://` pour Android | `ws://` sur Tailscale, exception réseau limitée au nom du relais | `wss` via `tailscale cert` dès l'étape 3 (le nom de machine part dans les journaux publics de certificats) | `etape-3.md` |
+| D13 | `ws://` ou `wss://` pour Android | `ws://` sur Tailscale : la connexion part du code Rust, que la politique « pas de clair » d'Android (piles Java) ne concerne pas ; le clair reste interdit au code Java | `wss` via `tailscale cert` dès l'étape 3 (le nom de machine part dans les journaux publics de certificats) | `etape-3.md` |
 | D14 | Type du service Android | `specialUse` (appli installée hors Play Store) | `dataSync` (limité à 6 h par jour à partir d'Android 15) ; `remoteMessaging` | `etape-3.md` |
 | D15 | Tuile « envoyer le presse-papiers » | Avancée à l'étape 3 | Étape 6 comme prévu | `etape-3.md`, `etape-6.md` |
 | D16 | Client Ubuntu | L'appli Tauri compile pour Linux, sans presse-papiers live sous Wayland | Pas de client Ubuntu | `etape-4.md`, `etape-6.md` |
 | D17 | Organisation du monorepo | `crates/` (Rust), `apps/android`, `apps/desktop`, `apps/extension`, un workflow CI par dossier | Un dépôt par appli | `etape-3.md`, `etape-4.md`, `etape-7.md` |
+| D18 | Lecture du QR sur Android | zxing-cpp (Apache 2.0) avec CameraX, saisie du code en secours | ML Kit (dépendance Google) | `etape-3.md` T9 |
+| D19 | Interface de l'appli desktop | Angular, déjà maîtrisé | Svelte ou TypeScript sans framework, plus léger | `etape-4.md` |
