@@ -1,5 +1,7 @@
 # 0010 — Monorepo, licence MIT, publication après l'étape 2
 
+**Statut : la date de publication est remplacée par [0011](0011-publication-fin-de-projet.md)** ; le reste tient.
+
 **Contexte.** Le projet commence dans un dépôt GitHub privé (Q6) et doit
 devenir public. L'historique git ne s'efface pas : ce qui y entre sera publié.
 
