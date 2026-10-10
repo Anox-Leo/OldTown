@@ -1,8 +1,19 @@
 # OldTown
 
 Échange de textes et de liens entre mes appareils, via un relais auto-hébergé
-sur le laptop Ubuntu, joignable seulement par Tailscale. Conception :
-[`docs/design.md`](docs/design.md) ; étape en cours : [`docs/etape-1.md`](docs/etape-1.md).
+sur le laptop Ubuntu, joignable seulement par Tailscale.
+
+## Documentation
+
+| Document | Contenu |
+| --- | --- |
+| [`docs/design.md`](docs/design.md) | Conception et feuille de route (jalons 1 à 8) |
+| [`docs/etape-1.md`](docs/etape-1.md) … [`docs/etape-8.md`](docs/etape-8.md) | Plan de chaque étape ; l'étape 1 est terminée, la prochaine est l'[étape 2](docs/etape-2.md) |
+| [`docs/revue-etapes-0-1.md`](docs/revue-etapes-0-1.md) | Retour d'expérience de l'étape 1 et choix revus |
+| [`docs/decisions/`](docs/decisions/README.md) | Décisions prises (écarts aux plans) |
+| [`docs/decisions-a-prendre.md`](docs/decisions-a-prendre.md) | Questions encore ouvertes, avec la recommandation appliquée |
+| [`SECURITY.md`](SECURITY.md) | Modèle de menace, conditions avant publication |
+| [`CLAUDE.md`](CLAUDE.md) | Consignes pour les agents de développement |
 
 **Étape 1 : le contenu circule en clair** (`enc: "none"`). Tailscale chiffre le
 réseau, mais la base du laptop garde les textes jusqu'à leur purge : pas de
