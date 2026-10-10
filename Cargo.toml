@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/ot-proto", "crates/ot-core", "crates/ot-server", "crates/ot-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+rust-version = "1.88"
+
+[workspace.dependencies]
+ot-proto = { path = "crates/ot-proto" }
+ot-core = { path = "crates/ot-core" }
+ot-server = { path = "crates/ot-server" }
+
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.23"
+clap = { version = "4", features = ["derive", "env"] }
+directories = "6"
+ed25519-dalek = "3"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+getrandom = { version = "0.4", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+tempfile = "3"
+thiserror = "2"
+time = { version = "0.3", features = ["serde-well-known", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal", "fs"] }
+tokio-tungstenite = "0.30"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ulid = { version = "3", features = ["serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

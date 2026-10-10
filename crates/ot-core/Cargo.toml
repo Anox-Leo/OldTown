@@ -1,0 +1,22 @@
+[package]
+name = "ot-core"
+description = "Cœur client OldTown : connexion, authentification, reconnexion, dédoublonnage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ot-proto.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+time.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true

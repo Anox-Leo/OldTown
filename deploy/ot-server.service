@@ -1,0 +1,63 @@
+# Relais OldTown. Installation : voir README.md, section « Serveur ».
+#
+# Tourne sous l'utilisateur système ot-relay (créé à l'étape 0) plutôt qu'avec
+# DynamicUser, pour que l'administration locale puisse lancer
+# `sudo -u ot-relay ot-server device ...` sur la même base.
+
+[Unit]
+Description=Relais OldTown
+Documentation=file:///usr/local/share/doc/oldtown/README.md
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=exec
+User=ot-relay
+Group=ot-relay
+ExecStart=/usr/local/bin/ot-server serve
+# À remplacer par l'IP Tailscale du serveur dans une surcharge locale :
+#   sudo systemctl edit ot-server
+#   [Service]
+#   Environment=OT_LISTEN=<ip tailscale>:7878
+# À l'amorçage, tant que l'IP n'est pas montée, l'écoute échoue et systemd
+# réessaie.
+Environment=OT_LISTEN=127.0.0.1:7878
+Environment=OT_DB=/var/lib/ot-relay/ot.db
+Environment=OT_TTL=7d
+Environment=OT_LOG_FORMAT=json
+Restart=on-failure
+RestartSec=5
+
+StateDirectory=ot-relay
+StateDirectoryMode=0700
+UMask=0077
+
+# Durcissement
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

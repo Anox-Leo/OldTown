@@ -1,0 +1,10 @@
+/target
+# Notes et réglages propres à mon installation, jamais publiés.
+/private/
+*.db
+*.db-shm
+*.db-wal
+*.key
+seen.json
+.env
+.env.*

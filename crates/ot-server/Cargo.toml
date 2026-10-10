@@ -1,0 +1,33 @@
+[package]
+name = "ot-server"
+description = "Serveur relais OldTown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ot-proto.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+ot-core.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true

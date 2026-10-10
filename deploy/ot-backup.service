@@ -1,0 +1,14 @@
+[Unit]
+Description=Sauvegarde des appareils du relais OldTown
+
+[Service]
+Type=oneshot
+User=ot-relay
+Group=ot-relay
+ExecStart=/usr/local/lib/oldtown/ot-backup.sh
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/ot-relay
