@@ -1,0 +1,3 @@
+# Fichiers figés (golden du protocole, vecteurs chiffrés) : comparés octet par
+# octet par les tests, ils doivent rester en LF quel que soit le checkout.
+crates/*/tests/**/*.json text eol=lf

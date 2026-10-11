@@ -114,6 +114,19 @@ batterie.
 Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
 `./gradlew lint test assembleDebug` dans `apps/android` (Android).
 
+- [x] **T0. Fins de ligne des fichiers figés (CI Windows rouge depuis
+  l'étape 2 ; à faire en premier).**
+  Fichiers : `.gitattributes` (nouveau).
+  Constat : `frozen_vectors` (`crates/ot-crypto/tests/vectors.rs`) échoue sur
+  `windows-latest` : le checkout convertit `tests/vectors/*.json` en CRLF
+  (`core.autocrlf`, pas de `.gitattributes`) alors que le test compare octet
+  par octet avec une sortie en LF. Le format chiffré n'a pas changé.
+  Faire : `crates/*/tests/**/*.json text eol=lf` dans `.gitattributes` ; ne
+  pas normaliser les fins de ligne dans le test (le contrôle du format figé
+  resterait affaibli).
+  Fini quand : le job `Tests (windows-latest)` passe, et les jobs qui en
+  dépendent (vérification `ot-server` sans `ot-crypto`, binaire `ot`) tournent.
+
 - [ ] **T1. `SecretStore` dans `ot-core`.**
   Fichiers : `crates/ot-core/src/keyring.rs`, `crates/ot-cli/src/files.rs`.
   Faire : faire reposer le `Keyring` de l'étape 2 sur un trait `SecretStore`
