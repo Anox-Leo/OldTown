@@ -1,0 +1,9 @@
+/* Interface : popup et réglages (Angular). */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["chrome"]
+  },
+  "include": ["src/main.ts", "src/app/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts"]
+}

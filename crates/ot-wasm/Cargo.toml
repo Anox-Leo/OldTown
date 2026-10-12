@@ -1,0 +1,28 @@
+[package]
+name = "ot-wasm"
+description = "Cœur OldTown sans réseau compilé en WebAssembly pour l'extension Chrome"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Sans la fonction `net` : ni tokio, ni WebSocket, ni TLS (note 0023).
+ot-core = { workspace = true, default-features = false }
+ot-proto.workspace = true
+# Aléa par `crypto.getRandomValues` en WebAssembly ; sans effet ailleurs.
+getrandom = { workspace = true, features = ["wasm_js"] }
+qrcode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Horloge JavaScript en WebAssembly (`OffsetDateTime::now_utc`).
+time = { workspace = true, features = ["wasm-bindgen"] }
+wasm-bindgen.workspace = true
+zeroize.workspace = true

@@ -5,14 +5,13 @@ quelle appli vers mes autres appareils, recevoir une notification avec
 « Copier » et « Ouvrir », et appairer en scannant un QR code : le téléphone
 rejoint le groupe, puis parraine les autres appareils.
 
-**État (11 octobre 2026)** : code livré (T0 à T10) ; précisions et écarts
+**État (12 octobre 2026)** : code livré (T0 à T10) ; précisions et écarts
 dans la note [0022](decisions/0022-etape-3-wss-qr-inverse-ffi.md). Validé en
 local : tests Rust, `./gradlew lint test assembleDebug`, tests instrumentés
-sur émulateur Android 16, et essai de bout en bout sur émulateur (appairage
-par code, réception et notification, Copier, Partager vers la CLI, reprise
-d'un appairage interrompu, oubli de l'appareil). Reste T11 : l'essai réel
-sur le téléphone, dont le QR par la caméra, la nuit en veille et le passage
-Wi-Fi → 4G ([actions manuelles](actions-manuelles.md)).
+sur émulateur Android 16, et essai de bout en bout sur émulateur. Essai réel
+sur le téléphone (T11) concluant pour tous les critères sauf la nuit en
+veille, en cours ([actions manuelles](actions-manuelles.md)) ; l'étape 4
+démarre sans l'attendre.
 
 Références : jalon « 3. Android : partage » de la [conception](design.md),
 [revue après l'étape 1](revue-etapes-0-1.md), note 0009 (un seul processus
@@ -224,24 +223,25 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   Faire : nom de l'appareil, URL du relais, état de connexion avec aide
   « vérifier Tailscale », version.
 
-- [ ] **T11. Essai réel et documentation.**
+- [ ] **T11. Essai réel et documentation.** *(Tout est vérifié sauf la nuit en
+  veille, résultat à reporter dans le tableau.)*
   Fichiers : `README.md`, `docs/etape-3.md` (état), notes de décision.
   Faire : installer, appairer depuis le Mac, dérouler le tableau des critères.
 
 ## Critères de fin
 
-| Scénario | Attendu | Vérifié par |
-| --- | --- | --- |
-| Partager un lien depuis Chrome | Arrive sur le Mac en moins de 2 s | Essai réel |
-| Texte reçu, téléphone verrouillé | Notification ; Copier remplit le presse-papiers | Essai réel |
-| `wss` | Le téléphone se connecte en TLS ; un certificat invalide est refusé | Test + essai réel |
-| Appairage par QR | Le téléphone rejoint le groupe sans SSH ni saisie | Essai réel |
-| QR inversé | Un PC rejoint en affichant un QR scanné par le téléphone ; relais qui triche → échec | E2E + essai réel |
-| Nuit entière en veille | Aucun message perdu ; consommation acceptable (noter le pourcentage) | Essai réel, résultat noté ici |
-| Reboot du téléphone | Le service repart seul | Essai réel |
-| Wi-Fi → 4G | Reconnexion en moins de 10 s | Essai réel |
-| Clés | Absentes des sauvegardes Android et des logs | Revue + test |
-| CI | APK de debug construit, tests Kotlin et Rust verts | CI |
+| Scénario | Attendu | Vérifié par | Résultat (12 oct. 2026) |
+| --- | --- | --- | --- |
+| Partager un lien depuis Chrome | Arrive sur le Mac en moins de 2 s | Essai réel | OK, aussi par le raccourci Direct Share |
+| Texte reçu, téléphone verrouillé | Notification ; Copier remplit le presse-papiers | Essai réel | OK |
+| `wss` | Le téléphone se connecte en TLS ; un certificat invalide est refusé | Test + essai réel | OK (connexion en `wss` ; refus couvert par les tests) |
+| Appairage par QR | Le téléphone rejoint le groupe sans SSH ni saisie | Essai réel | OK |
+| QR inversé | Un PC rejoint en affichant un QR scanné par le téléphone ; relais qui triche → échec | E2E + essai réel | OK (« Groupe rejoint » ; relais tricheur couvert par l'E2E) |
+| Nuit entière en veille | Aucun message perdu ; consommation acceptable (noter le pourcentage) | Essai réel, résultat noté ici | En cours |
+| Reboot du téléphone | Le service repart seul | Essai réel | OK |
+| Wi-Fi → 4G | Reconnexion en moins de 10 s | Essai réel | OK |
+| Clés | Absentes des sauvegardes Android et des logs | Revue + test | OK (`allowBackup=false`, `noBackupFilesDir` à T4 ; logs Android limités aux erreurs, sans contenu) |
+| CI | APK de debug construit, tests Kotlin et Rust verts | CI | OK (jobs Android et CI verts sur `main`) |
 
 ## Risques
 

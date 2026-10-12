@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.oldtown.android.notify.Foreground
 import dev.oldtown.android.relay.Notice
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.Banner
@@ -43,6 +44,17 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent { OldTownTheme { App() } }
+    }
+
+    // Écran visible : les messages reçus vont dans la liste, sans notification (T8b).
+    override fun onStart() {
+        super.onStart()
+        Foreground.mainVisible = true
+    }
+
+    override fun onStop() {
+        Foreground.mainVisible = false
+        super.onStop()
     }
 }
 

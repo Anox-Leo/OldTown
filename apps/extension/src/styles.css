@@ -1,0 +1,197 @@
+/* Thème de l'appli Android (lui-même repris de T3 Code), police DM Sans (OFL). */
+@font-face {
+  font-family: 'DM Sans';
+  src: url('/fonts/dm-sans.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-display: swap;
+}
+
+:root {
+  --screen: #0a0a0a;
+  --card: #111111;
+  --grouped: #1a1b1b;
+  --hover: #141414;
+  --fg: #f5f5f5;
+  --muted: #838383;
+  --border: #191919;
+  --input-border: #1e1e1e;
+  --primary: #346bf1;
+  --on-primary: #ffffff;
+  --primary-text: #4b7cf3;
+  --success: #34d399;
+  --warning: #312108;
+  --warning-border: rgb(254 154 0 / 32%);
+  --warning-fg: #ffb900;
+  --danger: #301214;
+  --danger-border: rgb(251 65 74 / 32%);
+  --danger-fg: #ff6467;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --screen: #fcfcfc;
+    --card: #ffffff;
+    --grouped: #f4f4f5;
+    --hover: #f4f4f5;
+    --fg: #27272a;
+    --muted: #6f6f79;
+    --border: #e4e4e7;
+    --input-border: #d4d4d8;
+    --primary: #1b4ed8;
+    --primary-text: #1b4ed8;
+    --success: #059669;
+    --warning: #fcf4e8;
+    --warning-fg: #bb4d00;
+    --danger: #fcebec;
+    --danger-border: rgb(251 44 54 / 32%);
+    --danger-fg: #c10007;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--screen);
+  color: var(--fg);
+  font:
+    14px/1.45 'DM Sans',
+    system-ui,
+    sans-serif;
+}
+
+body.popup {
+  width: 380px;
+  min-height: 480px;
+  max-height: 600px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--input-border);
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  background: var(--primary);
+}
+
+button.danger {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--primary-text);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 10px 0 4px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.banner {
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.banner.warning {
+  background: var(--warning);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-fg);
+}
+
+.banner.danger {
+  background: var(--danger);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-fg);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}

@@ -7,6 +7,7 @@ members = [
     "crates/ot-server",
     "crates/ot-cli",
     "crates/ot-ffi",
+    "crates/ot-wasm",
 ]
 
 [workspace.package]
@@ -53,6 +54,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ulid = { version = "3", features = ["serde"] }
 uniffi = "0.32"
+wasm-bindgen = "0.2.129"
 webpki-roots = "1"
 x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
@@ -62,6 +64,14 @@ zeroize = { version = "1", features = ["derive"] }
 # gardent le profil `release` habituel.
 [profile.android]
 inherits = "release"
+lto = true
+codegen-units = 1
+strip = true
+
+# WebAssembly de l'extension (`ot-wasm`) : optimisé pour la taille.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true

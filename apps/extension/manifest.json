@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "OldTown",
+  "version": "0.1.0",
+  "description": "Envoyer pages, liens et textes entre mes appareils, chiffrés de bout en bout.",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzlOR+arDeGmmpmxDsbYM+r5k54uAD+9fqK3GPpp9xAIUsE00AzpUzohSMakZCbV8572CTkJjSBE/J0G/2wFAoJ7GD2Ga1KE1V/tNsgtwmjxgV0Jhb+B8gwwKqKrraJ1z8zED9irFFpalnhQZS3jQQxqN/K/L2H+Brzlb+EijWeATAqjPwsmsGw6A2b8apkjWFl7Br2VHMNb2gETR+kamomp2O4LAWNJoCYa91H3j4XtE2E4T/4Lh7lQ5iWopQzTxJeYeIY2+SMk3rYXFKLXNRVb5MKp56qE+EsPe064miFL//HxRDAs6uJVgDbEVOJkF92Ar701vmTNiWjl3pvkENQIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "OldTown",
+    "default_popup": "index.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "clipboardRead",
+    "contextMenus",
+    "notifications",
+    "offscreen",
+    "storage"
+  ],
+  "commands": {
+    "send-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Envoyer la page au dernier destinataire"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  }
+}

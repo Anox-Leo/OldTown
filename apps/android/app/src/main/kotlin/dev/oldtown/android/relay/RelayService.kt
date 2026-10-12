@@ -8,7 +8,9 @@ import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import dev.oldtown.android.OldTownApp
+import dev.oldtown.android.notify.Foreground
 import dev.oldtown.android.notify.Notifications
+import dev.oldtown.android.notify.shouldNotify
 import dev.oldtown.android.share.Shortcuts
 import dev.oldtown.core.Event
 import dev.oldtown.core.OtClient
@@ -89,7 +91,7 @@ class RelayService : LifecycleService() {
                 is Event.AuthFailed -> RelayHub.setConnection(Connection.AuthFailed(event.message))
                 is Event.Message -> {
                     RelayHub.prepend(event.received)
-                    Notifications.showMessage(this, event.received)
+                    if (shouldNotify(Foreground.mainVisible)) Notifications.showMessage(this, event.received)
                 }
                 is Event.GroupChanged -> {
                     val group = started.group()

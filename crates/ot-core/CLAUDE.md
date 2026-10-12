@@ -1,12 +1,17 @@
 # ot-core
 
-Cœur client réutilisé par la CLI et l'appli Android (via `ot-ffi`, étape 3) ;
-l'extension Chrome (étape 4) en reprend la logique en TypeScript, avec la
-crypto de `ot-crypto` en WebAssembly (note 0017) : identité, connexion au relais,
-authentification, reconnexion avec backoff, file d'envoi, dédoublonnage ;
-à partir de l'étape 2, chiffrement, roster et appairage (en s'appuyant sur
-`ot-crypto`).
+Cœur client réutilisé par la CLI et l'appli Android (via `ot-ffi`, étape 3),
+et, sans sa partie réseau, par l'extension Chrome (via `ot-wasm`, étape 4,
+note 0023) : identité, connexion au relais, authentification, reconnexion
+avec backoff, file d'envoi, dédoublonnage ; à partir de l'étape 2,
+chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
 
+- **Fonction `net`** (par défaut) : `Client`, `redeem_pairing`, TLS, et les
+  dépendances tokio, tokio-tungstenite, rustls. Sans elle, le crate se
+  compile en WebAssembly : rien de ce qui reste ne doit dépendre du réseau,
+  d'un runtime ou de l'OS. Les types communs vivent dans `types.rs`.
+  `Secure` (et `Effect`) est public pour `ot-wasm`, qui refait en TypeScript
+  la boucle de `client.rs` (même règles : acquitter après avoir rangé l'état).
 - API publique pensée pour UniFFI : un handle `Client` clonable, un flux
   d'`Event`, des types simples. Pas de génériques ni de traits complexes dans
   ce qui est exposé.
@@ -16,7 +21,9 @@ authentification, reconnexion avec backoff, file d'envoi, dédoublonnage ;
   format des fichiers de l'étape 2.
 - Connexion en `ws://` ou `wss://` (`tls.rs`, rustls avec `ring`, autorités
   de Mozilla, `TlsRoots::with_extra` pour les tests). Tout message reçu, ping
-  compris, entretient la session (`idle_timeout`).
+  compris, entretient la session (`idle_timeout`). Le client Rust n'envoie
+  pas de trame `ping` (les pings WebSocket du relais suffisent) ; il ignore
+  `pong`.
 - Appairage : code (`redeem_pairing`, `pair_join`), et QR inversé (note
   0022) : `pair_offer` côté nouvel appareil, `sponsor` côté parrain (trame
   `pair_register`, réponse en schéma `0x04`). Formats texte des QR et

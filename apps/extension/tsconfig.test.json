@@ -1,0 +1,8 @@
+/* Tests du service worker, sous Node. */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "chrome"]
+  },
+  "include": ["test/**/*.ts", "src/background/**/*.ts", "src/shared/**/*.ts", "src/wasm/*.d.ts"]
+}
