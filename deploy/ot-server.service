@@ -21,6 +21,10 @@ ExecStart=/usr/local/bin/ot-server serve
 #   Environment=OT_LISTEN=<ip tailscale>:7878
 # À l'amorçage, tant que l'IP n'est pas montée, l'écoute échoue et systemd
 # réessaie.
+# TLS (`wss`, note 0015), une fois le certificat obtenu par ot-tls-renew,
+# dans la même surcharge :
+#   Environment=OT_TLS_CERT=/var/lib/ot-relay/tls/relais.crt
+#   Environment=OT_TLS_KEY=/var/lib/ot-relay/tls/relais.key
 Environment=OT_LISTEN=127.0.0.1:7878
 Environment=OT_DB=/var/lib/ot-relay/ot.db
 Environment=OT_TTL=7d

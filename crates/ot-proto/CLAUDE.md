@@ -5,7 +5,8 @@ Types du protocole partagés par le relais et les clients : trames WebSocket
 (version, tailles maximales, préfixe d'authentification).
 
 - Aucune logique réseau, aucune E/S, aucune crypto de contenu : seulement des
-  types, leur sérialisation et `auth_message`.
+  types, leur sérialisation et les messages signés (`auth_message`,
+  `pair_redeem_message`, `pair_register_message`).
 - **Le format est figé par `tests/golden/`.** Un test golden qui casse signale
   un changement de format : s'il est voulu, mettre à jour le fichier JSON,
   écrire une note dans `docs/decisions/` et prévenir que relais et clients

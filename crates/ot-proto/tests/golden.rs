@@ -3,7 +3,7 @@
 
 use ot_proto::{
     Content, DecodeError, DeviceId, DeviceInfo, Encoding, Envelope, ErrorCode, Frame,
-    MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message, pair_redeem_message,
+    MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message, pair_redeem_message, pair_register_message,
 };
 use time::macros::datetime;
 
@@ -74,6 +74,16 @@ fn golden_frames() {
         },
     );
     check("pair_redeemed", Frame::PairRedeemed { device_id: dev(B), sponsor: dev(A) });
+    check(
+        "pair_register",
+        Frame::PairRegister {
+            device_id: dev(B),
+            name: "windows".into(),
+            public_key: [5; 32],
+            sig: [7; 64],
+        },
+    );
+    check("pair_registered", Frame::PairRegistered { device_id: dev(B) });
     check(
         "error",
         Frame::error(
@@ -169,4 +179,13 @@ fn pair_redeem_message_layout() {
     assert_eq!(&msg[..10], b"ot-pair-v1");
     assert_eq!(&msg[10..42], &nonce);
     assert_eq!(&msg[42..], &hash);
+}
+
+#[test]
+fn pair_register_message_layout() {
+    let msg = pair_register_message(&dev(B), &[5; 32], "windows");
+    assert_eq!(&msg[..14], b"ot-pair-reg-v1");
+    assert_eq!(&msg[14..44], B.as_bytes());
+    assert_eq!(&msg[44..76], &[5; 32]);
+    assert_eq!(&msg[76..], b"windows");
 }

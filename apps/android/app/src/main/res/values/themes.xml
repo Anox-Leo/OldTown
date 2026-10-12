@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fenêtres sombres par défaut (palette de T3 Code), claires en mode
+         jour : le reste du thème est en Compose (ui/theme). -->
+    <style name="Theme.OldTown" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/screen</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <style name="Theme.OldTown.Translucent" parent="Theme.OldTown">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
+    <color name="screen">#FCFCFC</color>
+    <color name="launcher_background">#0A0A0A</color>
+</resources>

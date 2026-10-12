@@ -1,0 +1,13 @@
+# Lance ot-tls-renew.service chaque jour ; `tailscale cert` ne demande un
+# nouveau certificat (90 jours) que lorsqu'il approche de l'expiration.
+
+[Unit]
+Description=Renouvellement quotidien du certificat TLS du relais OldTown
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

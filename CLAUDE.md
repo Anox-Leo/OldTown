@@ -19,6 +19,7 @@ mémoire. Si une information manque, la demander plutôt que la deviner.
 | `docs/etape-N.md` | Plan de l'étape N : périmètre, conception, tâches, critères de fin | Avant toute tâche de l'étape N |
 | `docs/decisions/` | Notes numérotées : écarts et précisions par rapport aux plans | Toujours, avant de coder |
 | `docs/decisions-a-prendre.md` | Questions ouvertes (D1…), avec la recommandation appliquée par défaut | Si ta tâche touche un sujet listé |
+| `docs/actions-manuelles.md` | Actions que je dois faire à la main sur mes machines, dans l'ordre | Dès qu'une tâche exige une action de ma part |
 | `docs/revue-etapes-0-1.md` | Ce que l'étape 1 a appris, et les choix revus pour la suite | Au démarrage d'une étape |
 | `SECURITY.md` | Modèle de menace, liste avant publication | Toute tâche qui touche auth, crypto, stockage, réseau |
 | `crates/*/CLAUDE.md`, `apps/*/CLAUDE.md` | Règles propres à chaque composant | Avant de modifier ce composant |
@@ -60,6 +61,10 @@ font foi, puis le plan de l'étape, puis `design.md`.
 - Ne pas capturer d'erreur sans la traiter ou la remonter ; pas de `unwrap()`
   hors tests et invariants commentés.
 - Nouvelle dépendance : justifiée, licence compatible avec `deny.toml`.
+- Toute action que je dois faire moi-même sur mes machines (installation,
+  commande sur le relais, réglage d'un appareil) va dans
+  `docs/actions-manuelles.md`, étape par étape et dans l'ordre, avec les
+  commandes exactes ; le compte rendu y renvoie au lieu de la détailler.
 
 ## Décisions
 

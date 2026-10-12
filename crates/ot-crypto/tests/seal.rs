@@ -1,4 +1,4 @@
-//! Aller-retour et altérations, pour les trois schémas.
+//! Aller-retour et altérations, pour les quatre schémas.
 
 use ot_crypto::{
     Body, CryptoError, ExchangeKeyPair, GroupKey, Header, OpenKey, PairingSecret, SealKey,
@@ -40,6 +40,9 @@ fn cases() -> Vec<(&'static str, Case)> {
     let recipient = ExchangeKeyPair::generate();
     let other_recipient = ExchangeKeyPair::generate();
     let recipient_pub = recipient.public_key();
+    let qr_recipient = ExchangeKeyPair::generate();
+    let qr_pub = qr_recipient.public_key();
+    let qr_secret = PairingSecret::generate();
     vec![
         (
             "groupe",
@@ -84,6 +87,26 @@ fn cases() -> Vec<(&'static str, Case)> {
                 open_wrong: Box::new(move |env| open(env, OpenKey::Device(&other_recipient))),
             },
         ),
+        (
+            "qr inversé",
+            Case {
+                seal: Box::new({
+                    let s = qr_secret.clone();
+                    move |env, sk| {
+                        let key = SealKey::PairQr { recipient: qr_pub, secret: &s };
+                        seal(env, key, sk, &body()).unwrap()
+                    }
+                }),
+                open: Box::new({
+                    let (k, s) = (qr_recipient.clone(), qr_secret.clone());
+                    move |env| open(env, OpenKey::PairQr(&k, &s))
+                }),
+                // Bonne clé X25519, mauvais secret : le relais sans `S`.
+                open_wrong: Box::new(move |env| {
+                    open(env, OpenKey::PairQr(&qr_recipient, &PairingSecret::generate()))
+                }),
+            },
+        ),
     ]
 }
 
@@ -115,7 +138,7 @@ fn every_tampering_is_rejected() {
         let header_len = match Header::parse(&env.payload).unwrap() {
             Header::Group { .. } => 5,
             Header::Pairing { .. } => 9,
-            Header::Device { .. } => 33,
+            Header::Device { .. } | Header::PairQr { .. } => 33,
         };
         let tampered: Vec<(&str, Tamper)> = vec![
             ("en-tête", Box::new(|e: &mut Envelope| e.payload.data[1] ^= 1)),
@@ -176,4 +199,19 @@ fn nonces_are_fresh() {
     let a = seal(&env, SealKey::Group { epoch: 1, key: &key }, &sk, &body()).unwrap();
     let b = seal(&env, SealKey::Group { epoch: 1, key: &key }, &sk, &body()).unwrap();
     assert_ne!(a.data, b.data);
+}
+
+#[test]
+fn pair_qr_needs_both_secret_and_exchange_key() {
+    let (recipient, secret) = (ExchangeKeyPair::generate(), PairingSecret::generate());
+    let mut env = envelope();
+    let key = SealKey::PairQr { recipient: recipient.public_key(), secret: &secret };
+    env.payload = seal(&env, key, &signer(), &body()).unwrap();
+    assert!(matches!(Header::parse(&env.payload), Ok(Header::PairQr { .. })));
+    assert!(open(&env, OpenKey::PairQr(&recipient, &secret)).is_ok());
+    // Une photo du QR (S et clé publique) ne suffit pas à lire.
+    let thief = ExchangeKeyPair::generate();
+    assert_eq!(open(&env, OpenKey::PairQr(&thief, &secret)).err(), Some(CryptoError::Decrypt));
+    // Le schéma 0x03 n'ouvre pas un message 0x04.
+    assert_eq!(open(&env, OpenKey::Device(&recipient)).err(), Some(CryptoError::Decrypt));
 }

@@ -13,18 +13,24 @@ mod keyring;
 mod pairing;
 pub mod roster;
 mod secure;
+mod tls;
+mod uri;
 
 pub use client::{
-    Accepted, Backoff, Client, ClientConfig, ClientError, Event, Events, PairingInvitation,
-    Received,
+    Accepted, Backoff, Client, ClientConfig, ClientError, Event, Events, IDLE_TIMEOUT,
+    PairingInvitation, Received,
 };
 pub use dedup::Dedup;
 pub use identity::Identity;
 pub use keyring::{
-    EpochEntry, GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, MemoryKeyring, Quarantined,
-    RETIRED_KEY_LIFETIME,
+    EpochEntry, GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, MemoryKeyring, MemoryStore,
+    Quarantined, RETIRED_KEY_LIFETIME, SecretStore, StoreKeyring, names,
 };
-pub use ot_crypto::{self as crypto, ExchangeKeyPair, Roster};
+pub use ot_crypto::{
+    self as crypto, ExchangeKeyPair, OFFER_PREFIX, PairingOffer, Roster, valid_device_name,
+};
 pub use ot_proto::{self as proto, Content, ContentKind, DeviceId, DeviceInfo, ErrorCode, Ulid};
 pub use pairing::{Redeemed, redeem_pairing};
 pub use secure::{GroupError, GroupInfo, MemberInfo, ensure_exchange_key, group_info, init_group};
+pub use tls::TlsRoots;
+pub use uri::{PAIR_URI_PREFIX, PairUri, classify};

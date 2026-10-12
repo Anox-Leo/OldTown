@@ -1,0 +1,42 @@
+[package]
+name = "ot-ffi"
+description = "Pont UniFFI entre ot-core et l'appli Android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+# Pas de `[lints] workspace = true` : le code généré par les macros UniFFI
+# contient de l'`unsafe` (fonctions `extern "C"`), interdit dans le reste du
+# dépôt. Le code écrit à la main ici n'en contient pas (note 0022).
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ot_ffi"
+
+[[bin]]
+# Génère les liaisons Kotlin : appelé par Gradle (apps/android).
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+ot-core.workspace = true
+ot-proto.workspace = true
+qrcode.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+uniffi.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+ot-server.workspace = true

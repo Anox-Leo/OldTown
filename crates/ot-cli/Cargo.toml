@@ -18,6 +18,7 @@ path = "src/main.rs"
 ot-core.workspace = true
 ot-proto.workspace = true
 anyhow.workspace = true
+qrcode.workspace = true
 clap.workspace = true
 directories.workspace = true
 serde.workspace = true

@@ -6,6 +6,7 @@ pub mod metrics;
 mod registry;
 mod session;
 pub mod store;
+pub mod tls;
 
 use std::future::Future;
 use std::sync::Arc;
@@ -37,6 +38,8 @@ pub struct Config {
     pub auth_timeout: Duration,
     /// Durée de validité d'un jeton d'appairage.
     pub pairing_ttl: Duration,
+    /// Intervalle de vérification du certificat TLS (rechargé s'il a changé).
+    pub tls_reload_interval: Duration,
 }
 
 impl Default for Config {
@@ -47,6 +50,7 @@ impl Default for Config {
             ping_interval: Duration::from_secs(30),
             auth_timeout: Duration::from_secs(30),
             pairing_ttl: Duration::from_secs(10 * 60),
+            tls_reload_interval: Duration::from_secs(10 * 60),
         }
     }
 }
@@ -118,13 +122,53 @@ impl Relay {
     }
 }
 
-/// Sert le relais sur `listener` jusqu'à ce que `shutdown` se termine, en
-/// purgeant périodiquement. Les sessions ouvertes sont fermées à l'arrêt.
+/// Sert le relais en clair (`ws://`) sur `listener` jusqu'à ce que
+/// `shutdown` se termine, en purgeant périodiquement. Les sessions ouvertes
+/// sont fermées à l'arrêt.
 pub async fn serve(
     relay: Relay,
     listener: TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
+    run(relay, listener, shutdown).await
+}
+
+/// Comme [`serve`], en TLS (`wss://`) ; le certificat est relu toutes les
+/// `tls_reload_interval` s'il a changé sur le disque.
+pub async fn serve_tls(
+    relay: Relay,
+    listener: TcpListener,
+    tls: tls::Tls,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    let reload = {
+        let (tls, every) = (tls.clone(), relay.inner.config.tls_reload_interval);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+            loop {
+                tick.tick().await;
+                match tls.reload_if_changed() {
+                    Ok(true) => tracing::info!("certificat TLS rechargé"),
+                    Ok(false) => {}
+                    Err(e) => tracing::error!(error = %e, "certificat TLS non rechargé"),
+                }
+            }
+        })
+    };
+    let res = run(relay, tls::TlsListener::new(listener, tls)?, shutdown).await;
+    reload.abort();
+    res
+}
+
+async fn run<L>(
+    relay: Relay,
+    listener: L,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()>
+where
+    L: axum::serve::Listener,
+    L::Addr: std::fmt::Debug,
+{
     let purge = {
         let relay = relay.clone();
         tokio::spawn(async move {

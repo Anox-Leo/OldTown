@@ -14,6 +14,8 @@ pub struct Metrics {
     pub purged_expired: AtomicU64,
     pub pairings_created: AtomicU64,
     pub pairings_redeemed: AtomicU64,
+    /// Appareils enregistrés par un parrain (QR inversé).
+    pub pairings_registered: AtomicU64,
     pub pairings_rejected: AtomicU64,
 }
 
@@ -79,10 +81,11 @@ impl Metrics {
         metric(
             "ot_pairings_total",
             "counter",
-            "Jetons d'appairage : créés, utilisés, refusés.",
+            "Appairages : jetons créés et utilisés, appareils enregistrés par un parrain, refus.",
             &[
                 ("{result=\"created\"}", get(&self.pairings_created)),
                 ("{result=\"redeemed\"}", get(&self.pairings_redeemed)),
+                ("{result=\"registered\"}", get(&self.pairings_registered)),
                 ("{result=\"rejected\"}", get(&self.pairings_rejected)),
             ],
         );

@@ -1,0 +1,17 @@
+# Renouvelle le certificat TLS du relais avec `tailscale cert` (note 0015).
+# Le nom du relais (MagicDNS, *.ts.net) ne va jamais dans le dépôt : il est lu
+# dans /etc/oldtown/tls.env, une ligne `OT_TLS_DOMAIN=<nom complet>`.
+# Le relais relit le certificat tout seul quand il change (10 min au plus).
+
+[Unit]
+Description=Renouvellement du certificat TLS du relais OldTown
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/oldtown/tls.env
+ExecStartPre=/usr/bin/install -d -o ot-relay -g ot-relay -m 0700 /var/lib/ot-relay/tls
+ExecStart=/usr/bin/tailscale cert --cert-file /var/lib/ot-relay/tls/relais.crt --key-file /var/lib/ot-relay/tls/relais.key ${OT_TLS_DOMAIN}
+ExecStartPost=/usr/bin/chown ot-relay:ot-relay /var/lib/ot-relay/tls/relais.crt /var/lib/ot-relay/tls/relais.key
+ExecStartPost=/usr/bin/chmod 0600 /var/lib/ot-relay/tls/relais.key

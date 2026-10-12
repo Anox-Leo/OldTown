@@ -1,0 +1,3 @@
+[bindings.kotlin]
+package_name = "dev.oldtown.core"
+cdylib_name = "ot_ffi"

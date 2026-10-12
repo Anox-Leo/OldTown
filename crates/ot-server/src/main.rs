@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use ot_proto::b64;
 use ot_server::store::Store;
+use ot_server::tls::Tls;
 use ot_server::{Config, Relay, now_ms};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -38,6 +39,13 @@ enum Command {
         /// Format des logs.
         #[arg(long, env = "OT_LOG_FORMAT", default_value = "text")]
         log_format: LogFormat,
+        /// Certificat TLS (chaîne PEM) : le relais sert alors en `wss://`.
+        /// Relu automatiquement quand il change (renouvellement).
+        #[arg(long, env = "OT_TLS_CERT", requires = "tls_key")]
+        tls_cert: Option<PathBuf>,
+        /// Clé privée TLS (PEM) du certificat.
+        #[arg(long, env = "OT_TLS_KEY", requires = "tls_cert")]
+        tls_key: Option<PathBuf>,
     },
     /// Gère les appareils autorisés.
     #[command(subcommand)]
@@ -78,9 +86,10 @@ enum LogFormat {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve { listen, ttl, purge_interval, log_format } => {
+        Command::Serve { listen, ttl, purge_interval, log_format, tls_cert, tls_key } => {
             init_logs(log_format);
-            serve(cli.db, listen, Config { ttl, purge_interval, ..Config::default() }).await
+            let tls = tls_cert.zip(tls_key);
+            serve(cli.db, listen, tls, Config { ttl, purge_interval, ..Config::default() }).await
         }
         Command::Device(cmd) => device(&cli.db, cmd).await,
         Command::Messages(cmd) => messages(&cli.db, cmd).await,
@@ -96,13 +105,28 @@ fn init_logs(format: LogFormat) {
     }
 }
 
-async fn serve(db: PathBuf, listen: SocketAddr, config: Config) -> Result<()> {
+async fn serve(
+    db: PathBuf,
+    listen: SocketAddr,
+    tls: Option<(PathBuf, PathBuf)>,
+    config: Config,
+) -> Result<()> {
+    let tls = tls
+        .map(|(cert, key)| {
+            Tls::load(&cert, &key).with_context(|| format!("certificat TLS {}", cert.display()))
+        })
+        .transpose()?;
     let store = Store::open(&db).await.with_context(|| format!("ouverture de {}", db.display()))?;
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("écoute sur {listen}"))?;
-    tracing::info!(%listen, db = %db.display(), ttl = ?config.ttl, "relais démarré");
-    ot_server::serve(Relay::new(store.clone(), config), listener, shutdown_signal()).await?;
+    let scheme = if tls.is_some() { "wss" } else { "ws" };
+    tracing::info!(%listen, scheme, db = %db.display(), ttl = ?config.ttl, "relais démarré");
+    let relay = Relay::new(store.clone(), config);
+    match tls {
+        Some(tls) => ot_server::serve_tls(relay, listener, tls, shutdown_signal()).await?,
+        None => ot_server::serve(relay, listener, shutdown_signal()).await?,
+    }
     store.close().await;
     tracing::info!("relais arrêté");
     Ok(())

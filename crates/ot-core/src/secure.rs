@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use ot_crypto::{
-    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, PairingCode,
-    PairingSecret, Roster, SealKey, fingerprint, open, seal,
+    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened,
+    PairingCode, PairingOffer, PairingSecret, Roster, SealKey, fingerprint, open, seal,
 };
 use ot_proto::{Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
 use time::OffsetDateTime;
@@ -194,6 +194,8 @@ pub(crate) struct Secure {
     keyring: Arc<dyn Keyring>,
     sponsoring: Vec<Sponsoring>,
     joining: Option<Joining>,
+    /// QR inversé affiché : secret `S` attendu dans la réponse du parrain.
+    joining_qr: Option<PairingSecret>,
 }
 
 impl Secure {
@@ -228,6 +230,7 @@ impl Secure {
             keyring,
             sponsoring: Vec::new(),
             joining: None,
+            joining_qr: None,
         };
         let now = OffsetDateTime::now_utc();
         if secure.keys.as_mut().is_some_and(|k| k.prune(now)) {
@@ -318,6 +321,82 @@ impl Secure {
         self.joining =
             Some(Joining { token_id: code.token_id(), secret: code.secret.clone(), sponsor });
         Ok(env)
+    }
+
+    /// Nouvel appareil, QR inversé : prépare l'offre à afficher et attend la
+    /// réponse authentifiée par son secret.
+    pub fn offer(&mut self, name: &str) -> Result<PairingOffer, ClientError> {
+        let secret = PairingSecret::generate();
+        let offer = PairingOffer::new(
+            self.me.clone(),
+            name,
+            self.identity.signing_key(),
+            self.exchange.public_key(),
+            secret.clone(),
+        )
+        .map_err(|e| ClientError::Invalid(e.to_string()))?;
+        self.joining_qr = Some(secret);
+        Ok(offer)
+    }
+
+    /// Parrain, QR inversé : vérifie l'offre scannée avant de demander
+    /// l'enregistrement au relais.
+    pub fn check_offer(&self, offer: &PairingOffer) -> Result<(), ClientError> {
+        let (_, roster) = self.group()?;
+        offer.verify().map_err(|e| ClientError::Pairing(e.to_string()))?;
+        let known = roster.members.iter().any(|m| {
+            m.device_id == offer.device_id
+                || m.sign_key == offer.sign_key
+                || m.exchange_key == offer.exchange_key
+        });
+        if known {
+            return Err(ClientError::Pairing("appareil déjà membre du groupe".into()));
+        }
+        Ok(())
+    }
+
+    /// Parrain, QR inversé, une fois l'appareil enregistré par le relais :
+    /// l'ajoute au roster, lui scelle clés et roster (schéma `0x04`), et
+    /// diffuse le roster. Renvoie la réponse au nouvel appareil à part, pour
+    /// suivre son acceptation.
+    pub fn welcome_offer(
+        &mut self,
+        offer: &PairingOffer,
+    ) -> Result<(Envelope, Vec<Effect>), ClientError> {
+        let (keys, roster) = self.group()?;
+        let member = Member {
+            device_id: offer.device_id.clone(),
+            name: offer.name.clone(),
+            sign_key: offer.sign_key,
+            exchange_key: offer.exchange_key,
+            added_epoch: keys.current,
+        };
+        let next =
+            roster::with_member(roster, member).map_err(|e| ClientError::Pairing(e.to_string()))?;
+        let epoch = keys.current;
+        let current = keys.current_key().ok_or(ClientError::NoGroup)?.clone();
+        let body = Body::PairWelcome {
+            keys: keys
+                .epochs
+                .iter()
+                .map(|e| EpochKey { epoch: e.epoch, key: e.key.clone() })
+                .collect(),
+            roster: next.clone(),
+        };
+        let key = SealKey::PairQr { recipient: offer.exchange_key, secret: &offer.secret };
+        let welcome = self.seal_env(vec![offer.device_id.clone()], key, &body).map_err(crypto)?;
+        let group = SealKey::Group { epoch, key: &current };
+        let broadcast =
+            self.seal_env(vec![], group, &Body::Roster { roster: next.clone() }).map_err(crypto)?;
+        let mut fx = Vec::new();
+        self.set_roster(next, &mut fx);
+        fx.push(Effect::Send(broadcast));
+        fx.push(Effect::Emit(Event::PairingCompleted {
+            device_id: offer.device_id.clone(),
+            name: offer.name.clone(),
+        }));
+        fx.push(Effect::Emit(Event::GroupChanged { epoch }));
+        Ok((welcome, fx))
     }
 
     /// Tire une nouvelle clé de groupe, la scelle pour chaque membre restant
@@ -447,6 +526,13 @@ impl Secure {
                 }
             }
             Header::Device { .. } => self.on_group_key(env, now, fx),
+            Header::PairQr { .. } => {
+                let Some(secret) = &self.joining_qr else {
+                    return Err("appairage par QR inconnu ou terminé".into());
+                };
+                let opened = open(env, OpenKey::PairQr(&self.exchange, secret))?;
+                self.adopt_welcome(env, opened, now, fx)
+            }
         }
     }
 
@@ -525,6 +611,18 @@ impl Secure {
             return Err("pair_welcome d'un autre appareil que le parrain".into());
         }
         let opened = open(env, OpenKey::Pairing(&joining.secret))?;
+        self.adopt_welcome(env, opened, now, fx)
+    }
+
+    /// Nouvel appareil : vérifie la réponse ouverte (par le code ou par le QR
+    /// inversé) et adopte clés et roster.
+    fn adopt_welcome(
+        &mut self,
+        env: &Envelope,
+        opened: Opened,
+        now: OffsetDateTime,
+        fx: &mut Vec<Effect>,
+    ) -> Result<Handled, Reject> {
         let Body::PairWelcome { keys, roster } = opened.body()? else {
             return Err("pair_welcome attendu".into());
         };
@@ -548,6 +646,7 @@ impl Secure {
         let epoch = roster.epoch;
         self.keys = Some(group);
         self.joining = None;
+        self.joining_qr = None;
         self.save_keys(fx);
         self.set_roster(roster, fx);
         fx.push(Effect::Emit(Event::GroupChanged { epoch }));
@@ -963,6 +1062,54 @@ mod tests {
         let code = d[0].secure.sponsor([7; 10], expired).unwrap();
         let request = new.secure.start_join(&code, d[0].id.clone(), "nouveau").unwrap();
         assert_eq!(rejected(&d[0].receive(request)), ["appairage inconnu ou expiré"]);
+    }
+
+    #[test]
+    fn pairing_by_reverse_qr() {
+        let mut d = group(2);
+        let mut new = Dev::new();
+        let offer = new.secure.offer("windows").unwrap();
+        // Le parrain relit le QR scanné.
+        let scanned = PairingOffer::parse(&offer.encode()).unwrap();
+        d[0].secure.check_offer(&scanned).unwrap();
+        let (welcome, fx) = d[0].secure.welcome_offer(&scanned).unwrap();
+        assert!(matches!(Header::parse(&welcome.payload), Ok(Header::PairQr { .. })));
+        assert!(fx.iter().any(
+            |f| matches!(f, Effect::Emit(Event::PairingCompleted { name, .. }) if name == "windows")
+        ));
+        let broadcast = sends(&fx).remove(0);
+
+        let fx = new.receive(welcome);
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
+        d[1].receive(broadcast);
+        assert_eq!(texts(&d[1].receive(new.send("salut"))), ["salut"]);
+        assert_eq!(texts(&new.receive(d[1].send("bienvenue"))), ["bienvenue"]);
+        // Une seconde offre du même appareil est refusée.
+        assert!(d[0].secure.check_offer(&scanned).is_err());
+    }
+
+    #[test]
+    fn reverse_qr_welcome_needs_the_secret() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let offer = new.secure.offer("windows").unwrap();
+        // Un relais qui connaît les clés publiques mais pas `S` fabrique une
+        // réponse : elle ne s'ouvre pas.
+        let mut forged = offer.clone();
+        forged.secret = PairingSecret::generate();
+        let (welcome, _) = d[0].secure.welcome_offer(&forged).unwrap();
+        assert_eq!(rejected(&new.receive(welcome)), ["déchiffrement impossible"]);
+        assert!(new.secure.info().is_none());
+    }
+
+    #[test]
+    fn unsolicited_reverse_qr_welcome_is_rejected() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let offer = new.secure.offer("windows").unwrap();
+        let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
+        new.reload(); // l'offre n'existe qu'en mémoire
+        assert_eq!(rejected(&new.receive(welcome)), ["appairage par QR inconnu ou terminé"]);
     }
 
     #[test]

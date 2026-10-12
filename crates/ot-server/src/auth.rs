@@ -1,7 +1,9 @@
 //! Vérification du défi signé et jetons d'appairage.
 
 use ed25519_dalek::{Signature, VerifyingKey};
-use ot_proto::{DeviceId, NONCE_LEN, PAIR_TOKEN_LEN, auth_message, pair_redeem_message};
+use ot_proto::{
+    DeviceId, NONCE_LEN, PAIR_TOKEN_LEN, auth_message, pair_redeem_message, pair_register_message,
+};
 use sha2::{Digest, Sha256};
 
 pub fn new_nonce() -> [u8; NONCE_LEN] {
@@ -46,4 +48,21 @@ pub fn verify_redeem(
         return false;
     };
     key.verify_strict(&pair_redeem_message(nonce, token_hash), &Signature::from_bytes(sig)).is_ok()
+}
+
+/// Vérifie la signature de `pair_register` par la clé du nouvel appareil.
+pub fn verify_register(
+    public_key: &[u8; 32],
+    device_id: &DeviceId,
+    name: &str,
+    sig: &[u8; 64],
+) -> bool {
+    let Ok(key) = VerifyingKey::from_bytes(public_key) else {
+        return false;
+    };
+    key.verify_strict(
+        &pair_register_message(device_id, public_key, name),
+        &Signature::from_bytes(sig),
+    )
+    .is_ok()
 }

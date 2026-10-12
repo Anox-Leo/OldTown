@@ -31,6 +31,10 @@ pub const NONCE_LEN: usize = 32;
 /// Préfixe de domaine du message signé par `pair_redeem`.
 pub const PAIR_DOMAIN: &[u8] = b"ot-pair-v1";
 
+/// Préfixe de domaine du message signé par un nouvel appareil pour être
+/// enregistré par son parrain (`pair_register`, QR inversé).
+pub const PAIR_REGISTER_DOMAIN: &[u8] = b"ot-pair-reg-v1";
+
 /// Taille du jeton d'appairage.
 pub const PAIR_TOKEN_LEN: usize = 10;
 
@@ -52,4 +56,13 @@ pub fn auth_message(nonce: &[u8; NONCE_LEN], device_id: &DeviceId) -> Vec<u8> {
 /// clés dont le possesseur est présent.
 pub fn pair_redeem_message(nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> Vec<u8> {
     [PAIR_DOMAIN, nonce, token_hash].concat()
+}
+
+/// Message signé par un nouvel appareil dans son QR inversé et vérifié par le
+/// relais à `pair_register` : `"ot-pair-reg-v1" ‖ device_id ‖ clé publique ‖
+/// nom`. L'identifiant (30 octets) et la clé (32) ont une taille fixe ; le nom
+/// vient en dernier. Le relais n'enregistre ainsi que des clés dont le
+/// possesseur a demandé l'enregistrement, sous ce nom et cet identifiant.
+pub fn pair_register_message(device_id: &DeviceId, public_key: &[u8; 32], name: &str) -> Vec<u8> {
+    [PAIR_REGISTER_DOMAIN, device_id.as_str().as_bytes(), public_key, name.as_bytes()].concat()
 }

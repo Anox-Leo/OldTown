@@ -57,6 +57,20 @@ pub enum Frame {
     },
     /// Serveur → nouvel appareil : enregistré ; la connexion est ensuite fermée.
     PairRedeemed { device_id: DeviceId, sponsor: DeviceId },
+    /// Parrain, session authentifiée → serveur (QR inversé, note 0022) :
+    /// enregistre le nouvel appareil dont il a scanné le QR. `sig` signe
+    /// [`crate::pair_register_message`] avec `public_key`.
+    PairRegister {
+        device_id: DeviceId,
+        name: String,
+        #[serde(with = "b64::array")]
+        public_key: [u8; 32],
+        #[serde(with = "b64::array")]
+        sig: [u8; 64],
+    },
+    /// Serveur → parrain : appareil enregistré. Une erreur porte en `ref`
+    /// l'identifiant demandé et laisse la session ouverte.
+    PairRegistered { device_id: DeviceId },
     /// Les deux sens : erreur typée. `auth_failed`, `pairing_invalid` et
     /// `name_taken` ferment la connexion.
     Error {
@@ -92,7 +106,8 @@ pub enum ErrorCode {
     UnknownRecipient,
     /// `msg_id` déjà utilisé par un autre expéditeur.
     MsgIdConflict,
-    /// Jeton d'appairage inconnu, expiré ou déjà utilisé, ou signature fausse.
+    /// Jeton d'appairage inconnu, expiré ou déjà utilisé, signature fausse,
+    /// ou clé ou identifiant déjà enregistrés.
     PairingInvalid,
     /// Nom d'appareil déjà pris par un appareil actif.
     NameTaken,
@@ -136,6 +151,8 @@ const KNOWN_TYPES: &[&str] = &[
     "pair_created",
     "pair_redeem",
     "pair_redeemed",
+    "pair_register",
+    "pair_registered",
     "error",
 ];
 
@@ -160,6 +177,8 @@ impl Frame {
             Self::PairCreated { .. } => "pair_created",
             Self::PairRedeem { .. } => "pair_redeem",
             Self::PairRedeemed { .. } => "pair_redeemed",
+            Self::PairRegister { .. } => "pair_register",
+            Self::PairRegistered { .. } => "pair_registered",
             Self::Error { .. } => "error",
         }
     }

@@ -29,3 +29,4 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0019](0019-presse-papiers-manuel.md) | Presse-papiers : envoi manuel, écriture à la réception (D24) | 6 | Acceptée |
 | [0020](0020-trames-appairage.md) | Trames d'appairage côté relais | 2 | Acceptée |
 | [0021](0021-format-chiffre-et-roster.md) | Format chiffré, roster versionné et cœur client | 2 | Acceptée |
+| [0022](0022-etape-3-wss-qr-inverse-ffi.md) | `wss`, QR inversé (trames, schéma `0x04`), pont UniFFI, appli Android | 3 | Acceptée |

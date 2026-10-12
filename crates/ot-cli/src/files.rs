@@ -3,24 +3,17 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use ot_core::{
-    DeviceId, ExchangeKeyPair, GroupKeys, Identity, Keyring, KeyringError, Quarantined, Roster,
-    Ulid,
-};
+use ot_core::{DeviceId, Identity, KeyringError, SecretStore, StoreKeyring, Ulid};
 use ot_proto::b64;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 const CONFIG: &str = "config.toml";
 const KEY: &str = "device.key";
 const SEEN: &str = "seen.json";
-const EXCHANGE_KEY: &str = "exchange.key";
-const GROUP: &str = "group.json";
-const ROSTER: &str = "roster.json";
-const QUARANTINE: &str = "quarantine.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -100,31 +93,35 @@ impl Home {
     }
 
     /// Clés et état du groupe, dans le même dossier.
-    pub fn keyring(&self) -> FileKeyring {
-        FileKeyring(self.0.clone())
+    pub fn keyring(&self) -> StoreKeyring {
+        StoreKeyring::new(Arc::new(FileStore(self.0.clone())))
     }
 
     /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
     pub fn reset_group(&self) -> Result<()> {
-        for name in [EXCHANGE_KEY, GROUP, ROSTER, QUARANTINE] {
-            match fs::remove_file(self.0.join(name)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("suppression de {name}")),
-            }
-        }
-        Ok(())
+        Ok(self.keyring().forget_group()?)
     }
 }
 
-/// [`Keyring`] sur fichiers : `exchange.key` et `group.json` en `0600`,
-/// `roster.json` et `quarantine.json` aussi (rien n'y est en clair, mais rien
-/// n'oblige à les montrer).
-pub struct FileKeyring(PathBuf);
+/// [`SecretStore`] sur fichiers : un fichier par nom, en `0600` (rien n'y
+/// est en clair, sauf les clés, mais rien n'oblige à montrer le reste).
+pub struct FileStore(PathBuf);
 
-impl FileKeyring {
-    fn read(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError> {
-        let path = self.0.join(name);
+impl FileStore {
+    fn path(&self, name: &str) -> Result<PathBuf, KeyringError> {
+        let valid = !name.is_empty()
+            && !name.starts_with('.')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if !valid {
+            return Err(KeyringError(format!("nom de secret invalide : {name:?}")));
+        }
+        Ok(self.0.join(name))
+    }
+}
+
+impl SecretStore for FileStore {
+    fn get(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError> {
+        let path = self.path(name)?;
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -132,71 +129,21 @@ impl FileKeyring {
         }
     }
 
-    fn read_json<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>, KeyringError> {
-        let Some(bytes) = self.read(name)? else {
-            return Ok(None);
-        };
-        serde_json::from_slice(&bytes).map(Some).map_err(|e| {
-            KeyringError(format!("{} est corrompu : {e}", self.0.join(name).display()))
-        })
-    }
-
-    fn write(&self, name: &str, data: &[u8]) -> Result<(), KeyringError> {
+    fn put(&self, name: &str, value: &[u8]) -> Result<(), KeyringError> {
+        let path = self.path(name)?;
         fs::create_dir_all(&self.0)
-            .and_then(|()| {
-                write_atomic(&self.0.join(name), data, true).map_err(std::io::Error::other)
-            })
+            .map_err(anyhow::Error::from)
+            .and_then(|()| write_atomic(&path, value, true))
             .map_err(|e| KeyringError(format!("écriture de {name} : {e:#}")))
     }
 
-    fn write_json<T: Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<(), KeyringError> {
-        let bytes = serde_json::to_vec_pretty(value)
-            .map_err(|e| KeyringError(format!("sérialisation de {name} : {e}")))?;
-        self.write(name, &Zeroizing::new(bytes))
-    }
-}
-
-impl Keyring for FileKeyring {
-    fn load_exchange_key(&self) -> Result<Option<ExchangeKeyPair>, KeyringError> {
-        let Some(bytes) = self.read(EXCHANGE_KEY)? else {
-            return Ok(None);
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        let secret = Zeroizing::new(
-            b64::decode_array::<32>(text.trim())
-                .ok_or_else(|| KeyringError(format!("{EXCHANGE_KEY} est corrompu")))?,
-        );
-        Ok(Some(ExchangeKeyPair::from_bytes(*secret)))
-    }
-
-    fn save_exchange_key(&self, key: &ExchangeKeyPair) -> Result<(), KeyringError> {
-        let secret = Zeroizing::new(key.to_bytes());
-        let text = Zeroizing::new(format!("{}\n", b64::encode(&*secret)));
-        self.write(EXCHANGE_KEY, text.as_bytes())
-    }
-
-    fn load_group_keys(&self) -> Result<Option<GroupKeys>, KeyringError> {
-        self.read_json(GROUP)
-    }
-
-    fn save_group_keys(&self, keys: &GroupKeys) -> Result<(), KeyringError> {
-        self.write_json(GROUP, keys)
-    }
-
-    fn load_roster(&self) -> Result<Option<Roster>, KeyringError> {
-        self.read_json(ROSTER)
-    }
-
-    fn save_roster(&self, roster: &Roster) -> Result<(), KeyringError> {
-        self.write_json(ROSTER, roster)
-    }
-
-    fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError> {
-        Ok(self.read_json(QUARANTINE)?.unwrap_or_default())
-    }
-
-    fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError> {
-        self.write_json(QUARANTINE, messages)
+    fn delete(&self, name: &str) -> Result<(), KeyringError> {
+        let path = self.path(name)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(KeyringError(format!("suppression de {} : {e}", path.display()))),
+        }
     }
 }
 
@@ -224,6 +171,8 @@ fn write_atomic(path: &Path, data: &[u8], private: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ot_core::Keyring;
+    use ot_core::names::{EXCHANGE_KEY, GROUP, QUARANTINE, ROSTER};
 
     #[test]
     fn roundtrip() {
@@ -302,5 +251,19 @@ mod tests {
         fs::write(dir.path().join(GROUP), "pas du json").unwrap();
         let err = home.keyring().load_group_keys().unwrap_err();
         assert!(err.0.contains("corrompu"), "{err}");
+    }
+
+    #[test]
+    fn store_refuses_path_like_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore(dir.path().to_owned());
+        for bad in ["", "../x", "a/b", ".cache", "é"] {
+            assert!(store.put(bad, b"x").is_err(), "{bad:?}");
+        }
+        store.put("seen.json", b"[]").unwrap();
+        assert_eq!(&store.get("seen.json").unwrap().unwrap()[..], b"[]");
+        store.delete("seen.json").unwrap();
+        store.delete("seen.json").unwrap();
+        assert!(store.get("seen.json").unwrap().is_none());
     }
 }

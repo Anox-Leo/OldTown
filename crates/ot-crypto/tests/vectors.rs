@@ -7,8 +7,8 @@
 //! `OT_REGENERATE_VECTORS=1 cargo test -p ot-crypto --test vectors`.
 
 use ot_crypto::{
-    Body, EpochKey, ExchangeKeyPair, GroupKey, Member, OpenKey, PairingCode, PairingSecret,
-    Randomness, Roster, SealKey, SigningKey, open, seal_with, token_id,
+    Body, EpochKey, ExchangeKeyPair, GroupKey, Member, OpenKey, PairingCode, PairingOffer,
+    PairingSecret, Randomness, Roster, SealKey, SigningKey, open, seal_with, token_id,
 };
 use ot_proto::{DeviceId, Encoding, Envelope, Payload, Ulid, b64};
 use serde_json::{Value, json};
@@ -109,6 +109,17 @@ fn vectors() -> Vec<Vector> {
                 roster: roster(2, 3),
             },
         },
+        Vector {
+            name: "pairing_qr_welcome",
+            key: json!({"scheme": "pair_qr", "recipient_secret": b64::encode(&bytes::<32>(102)),
+                        "secret": b64::encode(&bytes::<16>(30)),
+                        "ephemeral": b64::encode(&bytes::<32>(50))}),
+            to: &[B],
+            body: Body::PairWelcome {
+                keys: vec![EpochKey { epoch: 1, key: GroupKey::from_bytes(bytes(10)) }],
+                roster: roster(1, 2),
+            },
+        },
     ]
 }
 
@@ -139,6 +150,14 @@ fn seal_vector(v: &Vector) -> Envelope {
             let key = SealKey::Device { recipient: recipient.public_key() };
             seal_with(&env, key, &signer, &v.body, rand)
         }
+        "pair_qr" => {
+            let recipient =
+                ExchangeKeyPair::from_bytes(arr("recipient_secret").try_into().unwrap());
+            let secret = PairingSecret::from_bytes(arr("secret").try_into().unwrap());
+            *rand.ephemeral = arr("ephemeral").try_into().unwrap();
+            let key = SealKey::PairQr { recipient: recipient.public_key(), secret: &secret };
+            seal_with(&env, key, &signer, &v.body, rand)
+        }
         other => panic!("schéma inconnu : {other}"),
     };
     env.payload = payload.unwrap();
@@ -153,6 +172,13 @@ fn open_vector(v: &Vector, env: &Envelope) -> Body {
         "pairing" => open(
             env,
             OpenKey::Pairing(&PairingSecret::from_bytes(arr("secret").try_into().unwrap())),
+        ),
+        "pair_qr" => open(
+            env,
+            OpenKey::PairQr(
+                &ExchangeKeyPair::from_bytes(arr("recipient_secret").try_into().unwrap()),
+                &PairingSecret::from_bytes(arr("secret").try_into().unwrap()),
+            ),
         ),
         _ => open(
             env,
@@ -224,4 +250,34 @@ fn frozen_pairing_code() {
     assert_eq!(doc["code"].as_str().unwrap(), &*text);
     assert_eq!(doc["token_id"].as_str().unwrap(), b64::encode(&code.token_id()));
     assert_eq!(PairingCode::parse(doc["code"].as_str().unwrap()).unwrap(), code);
+}
+
+#[test]
+fn frozen_pairing_offer() {
+    let signer = SigningKey::from_bytes(&bytes(2));
+    let offer = PairingOffer::new(
+        dev(B),
+        "windows",
+        &signer,
+        ExchangeKeyPair::from_bytes(bytes(102)).public_key(),
+        PairingSecret::from_bytes(bytes(30)),
+    )
+    .unwrap();
+    let text = offer.encode();
+    let file = path("pairing_offer");
+    if std::env::var_os("OT_REGENERATE_VECTORS").is_some() {
+        let doc = json!({
+            "device_id": B,
+            "name": "windows",
+            "signing_seed": b64::encode(&bytes::<32>(2)),
+            "exchange_secret": b64::encode(&bytes::<32>(102)),
+            "secret": b64::encode(&bytes::<16>(30)),
+            "qr": &*text,
+        });
+        std::fs::write(&file, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+        return;
+    }
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(doc["qr"].as_str().unwrap(), &*text, "format du QR inversé modifié");
+    assert_eq!(PairingOffer::parse(doc["qr"].as_str().unwrap()).unwrap(), offer);
 }

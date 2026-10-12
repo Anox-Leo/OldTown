@@ -11,3 +11,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule:
+      interval: weekly
+    groups:
+      gradle:
+        patterns: ["*"]

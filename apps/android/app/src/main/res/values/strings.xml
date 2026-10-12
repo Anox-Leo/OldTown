@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OldTown</string>
+    <string name="share_label">OldTown</string>
+
+    <!-- Notifications -->
+    <string name="channel_connection">Connexion au relais</string>
+    <string name="channel_connection_desc">État de la connexion permanente au relais.</string>
+    <string name="channel_messages">Messages</string>
+    <string name="channel_messages_desc">Textes et liens reçus de vos appareils.</string>
+    <string name="status_starting">Démarrage…</string>
+    <string name="status_connected">Connecté</string>
+    <string name="status_reconnecting">Reconnexion…</string>
+    <string name="status_unreachable">Relais injoignable : Tailscale est-il connecté ?</string>
+    <string name="status_auth_failed">Appareil refusé par le relais</string>
+    <string name="status_waiting_sponsor">En attente du parrain…</string>
+    <string name="action_copy">Copier</string>
+    <string name="action_open">Ouvrir</string>
+    <string name="action_share">Partager</string>
+    <string name="sensitive_hidden">Contenu masqué</string>
+</resources>
