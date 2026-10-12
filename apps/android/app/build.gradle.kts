@@ -138,12 +138,21 @@ abstract class CargoNdkTask @Inject constructor(exec: ExecOperations) : CargoTas
 
     @TaskAction
     fun build() {
+        // Le NDK n'est pas téléchargé par AGP pour cette tâche : message clair
+        // plutôt qu'une erreur du cache de configuration.
+        val ndk = File(ndkDir.get())
+        if (!ndk.isDirectory) {
+            throw org.gradle.api.GradleException(
+                "NDK ${ndk.name} absent ($ndk). Android Studio : Settings → Android SDK → SDK Tools → " +
+                    "Show Package Details → NDK (Side by side) ${ndk.name}, ou : sdkmanager \"ndk;${ndk.name}\"",
+            )
+        }
         val out = outputDir.get().asFile
         out.deleteRecursively()
         val targets = abis.get().flatMap { listOf("-t", it) }
         cargo(
             listOf("ndk") + targets + listOf("-o", out.path, "build", "-p", "ot-ffi", "--profile", "android", "--locked"),
-            mapOf("ANDROID_NDK_HOME" to ndkDir.get()),
+            mapOf("ANDROID_NDK_HOME" to ndk.path),
         )
     }
 }
@@ -183,7 +192,8 @@ val cargoNdk = tasks.register<CargoNdkTask>("cargoNdk") {
     crates.set(File(repoRoot, "crates"))
     lockFile.set(File(repoRoot, "Cargo.lock"))
     abis.set(rustAbis)
-    ndkDir.set(androidComponents.sdkComponents.ndkDirectory.map { it.asFile.path })
+    // Chemin calculé sans exiger que le NDK soit installé à la configuration.
+    ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.dir("ndk/${android.ndkVersion}").asFile.path })
     outputDir.set(layout.buildDirectory.dir("rust/jniLibs"))
 }
 

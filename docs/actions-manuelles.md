@@ -98,12 +98,16 @@ Depuis la copie du dépôt à jour, sur le laptop :
    cargo install --locked cargo-ndk
    ```
 
-4. Android Studio : *File* → *Open* → le dossier `apps/android` du dépôt.
+4. NDK : *Settings* → *Languages & Frameworks* → *Android SDK* → onglet
+   *SDK Tools* → cocher *Show Package Details* → *NDK (Side by side)* →
+   **29.0.14206865** → *Apply*. Gradle ne le télécharge pas seul pour le
+   cœur Rust (`cargo ndk`).
+5. Android Studio : *File* → *Open* → le dossier `apps/android` du dépôt.
    Accepter la synchronisation Gradle : elle télécharge la plateforme
-   Android 37 et le NDK 29 si besoin. JDK de Gradle : celui d'Android Studio
+   Android 37 si besoin. JDK de Gradle : celui d'Android Studio
    (*Settings* → *Build, Execution, Deployment* → *Build Tools* → *Gradle* →
    *Gradle JDK* : `jbr-21`).
-5. Facultatif, dans `apps/android/local.properties` (créé par Android
+6. Facultatif, dans `apps/android/local.properties` (créé par Android
    Studio, jamais versionné) :
 
    ```properties
@@ -112,7 +116,7 @@ Depuis la copie du dépôt à jour, sur le laptop :
 
    (ne compile que pour le téléphone : build deux fois plus court). Si le
    build dit « cargo introuvable » : ajouter `cargo.dir=/Users/<moi>/.cargo/bin`.
-6. Compiler : *Build* → *Generate App Bundles or APKs* → *Generate APKs*
+7. Compiler : *Build* → *Generate App Bundles or APKs* → *Generate APKs*
    (ou `./gradlew assembleDebug` dans `apps/android`). Le premier build
    compile le cœur Rust (quelques minutes). APK :
    `apps/android/app/build/outputs/apk/debug/app-debug.apk`.

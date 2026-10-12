@@ -434,7 +434,9 @@ cargo run -p ot-cli -- --home /tmp/a send bonjour
 
 **Appli Android** (`apps/android`, détails dans
 [`apps/android/CLAUDE.md`](apps/android/CLAUDE.md)) : JDK 21, SDK Android
-(API 37) et NDK r29, Rust avec les cibles Android et `cargo-ndk` :
+(API 37) et NDK 29.0.14206865 (à installer soi-même : SDK Manager →
+*SDK Tools* → *NDK (Side by side)*, ou `sdkmanager "ndk;29.0.14206865"`),
+Rust avec les cibles Android et `cargo-ndk` :
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
