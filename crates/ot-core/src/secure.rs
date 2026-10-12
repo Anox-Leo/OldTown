@@ -363,17 +363,35 @@ impl Secure {
         &mut self,
         offer: &PairingOffer,
     ) -> Result<(Envelope, Vec<Effect>), ClientError> {
-        let (keys, roster) = self.group()?;
         let member = Member {
             device_id: offer.device_id.clone(),
             name: offer.name.clone(),
             sign_key: offer.sign_key,
             exchange_key: offer.exchange_key,
-            added_epoch: keys.current,
+            added_epoch: 0, // fixée par `admit`
         };
+        let key = SealKey::PairQr { recipient: offer.exchange_key, secret: &offer.secret };
+        let mut fx = Vec::new();
+        let welcome = self.admit(member, key, &mut fx)?;
+        Ok((welcome, fx))
+    }
+
+    /// Parrain : ajoute `member` au roster (à l'époque courante), lui scelle
+    /// sous `key` les clés encore utiles et le nouveau roster, et diffuse ce
+    /// roster à tous. Renvoie la réponse au nouvel appareil ; la diffusion et
+    /// les événements vont dans `fx`.
+    fn admit(
+        &mut self,
+        mut member: Member,
+        key: SealKey<'_>,
+        fx: &mut Vec<Effect>,
+    ) -> Result<Envelope, ClientError> {
+        let (keys, roster) = self.group()?;
+        let epoch = keys.current;
+        member.added_epoch = epoch;
+        let (device_id, name) = (member.device_id.clone(), member.name.clone());
         let next =
             roster::with_member(roster, member).map_err(|e| ClientError::Pairing(e.to_string()))?;
-        let epoch = keys.current;
         let current = keys.current_key().ok_or(ClientError::NoGroup)?.clone();
         let body = Body::PairWelcome {
             keys: keys
@@ -383,20 +401,15 @@ impl Secure {
                 .collect(),
             roster: next.clone(),
         };
-        let key = SealKey::PairQr { recipient: offer.exchange_key, secret: &offer.secret };
-        let welcome = self.seal_env(vec![offer.device_id.clone()], key, &body).map_err(crypto)?;
+        let welcome = self.seal_env(vec![device_id.clone()], key, &body).map_err(crypto)?;
         let group = SealKey::Group { epoch, key: &current };
         let broadcast =
             self.seal_env(vec![], group, &Body::Roster { roster: next.clone() }).map_err(crypto)?;
-        let mut fx = Vec::new();
-        self.set_roster(next, &mut fx);
+        self.set_roster(next, fx);
         fx.push(Effect::Send(broadcast));
-        fx.push(Effect::Emit(Event::PairingCompleted {
-            device_id: offer.device_id.clone(),
-            name: offer.name.clone(),
-        }));
+        fx.push(Effect::Emit(Event::PairingCompleted { device_id, name }));
         fx.push(Effect::Emit(Event::GroupChanged { epoch }));
-        Ok((welcome, fx))
+        Ok(welcome)
     }
 
     /// Tire une nouvelle clé de groupe, la scelle pour chaque membre restant
@@ -566,36 +579,19 @@ impl Secure {
             return Err("pair_request attendu".into());
         };
         opened.verify(&sign_key)?;
-        let (keys, roster) = self.group().map_err(|e| Reject::Reason(e.to_string()))?;
-        let member = Member {
-            device_id: env.from.clone(),
-            name: name.clone(),
-            sign_key,
-            exchange_key,
-            added_epoch: keys.current,
-        };
-        let next = roster::with_member(roster, member)?;
-        let epoch = keys.current;
-        let current = keys.current_key().ok_or("aucune clé courante")?.clone();
-        let welcome = Body::PairWelcome {
-            keys: keys
-                .epochs
-                .iter()
-                .map(|e| EpochKey { epoch: e.epoch, key: e.key.clone() })
-                .collect(),
-            roster: next.clone(),
-        };
-        let sponsoring = self.sponsoring.remove(i);
-        let pairing =
-            SealKey::Pairing { token_id: sponsoring.token_id, secret: &sponsoring.secret };
-        let welcome = self.seal_env(vec![env.from.clone()], pairing, &welcome)?;
-        let group = SealKey::Group { epoch, key: &current };
-        let broadcast = self.seal_env(vec![], group, &Body::Roster { roster: next.clone() })?;
-        self.set_roster(next, fx);
+        // `added_epoch` est fixée par `admit`.
+        let member =
+            Member { device_id: env.from.clone(), name, sign_key, exchange_key, added_epoch: 0 };
+        let (token_id, secret) = (self.sponsoring[i].token_id, self.sponsoring[i].secret.clone());
+        let pairing = SealKey::Pairing { token_id, secret: &secret };
+        // La réponse au nouvel appareil part avant la diffusion du roster.
+        let mut admitted = Vec::new();
+        let welcome = self
+            .admit(member, pairing, &mut admitted)
+            .map_err(|e| Reject::Reason(e.to_string()))?;
+        self.sponsoring.remove(i);
         fx.push(Effect::Send(welcome));
-        fx.push(Effect::Send(broadcast));
-        fx.push(Effect::Emit(Event::PairingCompleted { device_id: env.from.clone(), name }));
-        fx.push(Effect::Emit(Event::GroupChanged { epoch }));
+        fx.extend(admitted);
         Ok(Handled::Done)
     }
 

@@ -24,7 +24,7 @@ use crate::metrics::Metrics;
 use crate::registry::Registry;
 use crate::store::{PurgeStats, Store};
 
-pub use crate::auth::{token_hash, verify as verify_auth};
+pub use crate::auth::token_hash;
 
 #[derive(Debug, Clone)]
 pub struct Config {

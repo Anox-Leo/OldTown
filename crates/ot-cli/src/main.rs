@@ -585,24 +585,27 @@ async fn pair_join_qr(home: &Home, server: String, name: String, force: bool) ->
     println!();
     println!("En attente du parrain (10 minutes au plus)…");
 
-    let wait = async {
-        loop {
-            match events.next().await {
-                Some(Event::GroupChanged { epoch }) => return Ok(epoch),
-                Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
-                Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
-                Some(_) => {}
-                None => bail!("client arrêté"),
-            }
-        }
-    };
-    let res = tokio::time::timeout(PAIRING_TIMEOUT, wait).await;
+    let res = tokio::time::timeout(PAIRING_TIMEOUT, group_received(&mut events)).await;
     client.shutdown().await;
     let epoch = res.map_err(|_| {
         anyhow!("aucun parrain en 10 minutes : relancer `ot pair join --qr --force`")
     })??;
     println!("Groupe rejoint (époque {epoch}).");
     group_show(home)
+}
+
+/// Nouvel appareil : attend que la réponse du parrain apporte le groupe ;
+/// renvoie son époque.
+async fn group_received(events: &mut Events) -> Result<u32> {
+    loop {
+        match events.next().await {
+            Some(Event::GroupChanged { epoch }) => return Ok(epoch),
+            Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
+            Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
+            Some(_) => {}
+            None => bail!("client arrêté"),
+        }
+    }
 }
 
 /// Parrain, QR inversé, depuis un terminal : texte du QR collé.
@@ -651,18 +654,7 @@ async fn pair_join(
     let (client, mut events) = start(home)?;
     connected(&mut events).await?;
     within(client.pair_join(&code, redeemed.sponsor, &name)).await?;
-    let wait = async {
-        loop {
-            match events.next().await {
-                Some(Event::GroupChanged { epoch }) => return Ok(epoch),
-                Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
-                Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
-                Some(_) => {}
-                None => bail!("client arrêté"),
-            }
-        }
-    };
-    let res = tokio::time::timeout(PAIRING_TIMEOUT, wait).await;
+    let res = tokio::time::timeout(PAIRING_TIMEOUT, group_received(&mut events)).await;
     client.shutdown().await;
     let epoch = res.map_err(|_| {
         anyhow!(

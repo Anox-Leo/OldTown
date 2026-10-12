@@ -32,9 +32,7 @@ object OtIcons {
 
     val Back = icon("back", "m12 19-7-7 7-7", "M19 12H5")
     val Send = icon("send", "m5 12 7-7 7 7", "M12 19V5")
-    val Close = icon("close", "M18 6 6 18", "m6 6 12 12")
     val Check = icon("check", "M20 6 9 17l-5-5")
-    val Plus = icon("plus", "M5 12h14", "M12 5v14")
     val ChevronRight = icon("chevron", "m9 18 6-6-6-6")
     val Copy = icon(
         "copy",

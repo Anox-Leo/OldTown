@@ -218,8 +218,6 @@ fn qr_helpers() {
     let qr = qr_code("oldtown://pair?s=wss://relais&c=ot1-…".into()).unwrap();
     assert_eq!(qr.modules.len(), (qr.size * qr.size) as usize);
     assert!(qr.modules.iter().any(|&m| m) && qr.modules.iter().any(|&m| !m));
-    assert_eq!(classify_text("https://x.fr".into()), ContentKind::Link);
-    assert_eq!(classify_text("bonjour".into()), ContentKind::Text);
     assert!(!core_version().is_empty());
 }
 

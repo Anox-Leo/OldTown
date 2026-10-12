@@ -96,11 +96,5 @@ pub fn qr_code(text: String) -> Result<QrCode, OtError> {
     Ok(QrCode { size, modules })
 }
 
-/// Un texte partagé est-il un lien ? (Même règle que la CLI.)
-#[uniffi::export]
-pub fn classify_text(text: String) -> ContentKind {
-    ot_core::classify(&text).kind.into()
-}
-
 #[cfg(test)]
 mod tests;

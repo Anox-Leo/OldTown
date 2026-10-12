@@ -4,6 +4,7 @@
 use ot_proto::{
     Content, DecodeError, DeviceId, DeviceInfo, Encoding, Envelope, ErrorCode, Frame,
     MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message, pair_redeem_message, pair_register_message,
+    valid_device_name,
 };
 use time::macros::datetime;
 
@@ -188,4 +189,13 @@ fn pair_register_message_layout() {
     assert_eq!(&msg[14..44], B.as_bytes());
     assert_eq!(&msg[44..76], &[5; 32]);
     assert_eq!(&msg[76..], b"windows");
+}
+
+#[test]
+fn device_name_rules() {
+    for bad in ["", " mac", "mac ", "a\nb", &"x".repeat(65)] {
+        assert!(!valid_device_name(bad), "{bad:?}");
+    }
+    assert!(valid_device_name("Téléphone de Léo"));
+    assert!(valid_device_name(&"é".repeat(64)));
 }

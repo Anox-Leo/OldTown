@@ -27,7 +27,8 @@ pub use body::{Body, EpochKey, Member, Roster};
 pub use code::{PairingCode, TOKEN_LEN, token_hash, token_id};
 pub use ed25519_dalek::SigningKey;
 pub use keys::{ExchangeKeyPair, GroupKey, PairingSecret, fingerprint};
-pub use offer::{MAX_NAME_CHARS, OFFER_PREFIX, PairingOffer, valid_device_name};
+pub use offer::{OFFER_PREFIX, PairingOffer};
+pub use ot_proto::{MAX_NAME_CHARS, valid_device_name};
 pub use seal::{
     Header, NONCE_LEN, OpenKey, Opened, Randomness, SealKey, associated_data, open, seal, seal_with,
 };
