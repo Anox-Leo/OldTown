@@ -3,20 +3,22 @@ import { FormsModule } from '@angular/forms';
 
 import type { Item, StateView } from '../shared/api';
 import { BackgroundService } from './background.service';
-import { GroupComponent } from './group';
+import { IconComponent } from './icon';
 import { connectionStatus, shortTime } from './status';
 
-/** Écran principal de la popup : envoi, derniers éléments reçus, groupe. */
+/** Écran principal de la popup : envoi et derniers éléments reçus. */
 @Component({
   selector: 'app-home',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, GroupComponent],
+  imports: [FormsModule, IconComponent],
   template: `
     @let s = state();
     <header class="row">
       <strong class="grow">{{ s.device?.name }}</strong>
       <span class="small" [class]="status().tone">● {{ status().text }}</span>
-      <button class="link small" (click)="openSettings()">Réglages</button>
+      <button class="icon" (click)="openSettings()" title="Réglages" aria-label="Réglages">
+        <app-icon name="settings" />
+      </button>
     </header>
     @if (status().help; as help) {
       <div class="banner warning">{{ help }}</div>
@@ -27,8 +29,7 @@ import { connectionStatus, shortTime } from './status';
         [(ngModel)]="text"
         placeholder="Texte ou lien à envoyer"
         aria-label="Texte à envoyer"
-        (keydown.control.enter)="send()"
-        (keydown.meta.enter)="send()"
+        (keydown)="onKey($event)"
       ></textarea>
       <div class="row">
         <select
@@ -43,13 +44,25 @@ import { connectionStatus, shortTime } from './status';
           }
         </select>
 
-        <button class="primary" (click)="send()" [disabled]="busy() || !text.trim()">
-          Envoyer
+        <button
+          class="icon"
+          (click)="sendClipboard()"
+          [disabled]="busy()"
+          title="Coller et envoyer le presse-papiers"
+          aria-label="Coller et envoyer le presse-papiers"
+        >
+          <app-icon name="clipboard" />
+        </button>
+        <button
+          class="primary icon"
+          (click)="send()"
+          [disabled]="busy() || !text.trim()"
+          title="Envoyer (Entrée)"
+          aria-label="Envoyer"
+        >
+          <app-icon name="send" />
         </button>
       </div>
-      <button class="link small clip" (click)="sendClipboard()" [disabled]="busy()">
-        Envoyer le presse-papiers
-      </button>
       @if (notice(); as n) {
         <p class="small muted notice">{{ n }}</p>
       }
@@ -58,53 +71,31 @@ import { connectionStatus, shortTime } from './status';
       }
     </section>
 
-    <nav class="row tabs" role="tablist">
-      <button
-        role="tab"
-        [class.active]="tab() === 'items'"
-        [attr.aria-selected]="tab() === 'items'"
-        (click)="tab.set('items')"
-      >
-        Reçus
-      </button>
-      <button
-        role="tab"
-        [class.active]="tab() === 'group'"
-        [attr.aria-selected]="tab() === 'group'"
-        (click)="tab.set('group')"
-      >
-        Groupe
-      </button>
-    </nav>
-
-    @if (tab() === 'items') {
-      <ul class="items">
-        @for (item of bg.items(); track item.msgId) {
-          <li class="card">
-            <div class="row small muted">
-              <span class="grow">{{ item.fromName }}</span>
-              <span>{{ time(item.createdAt) }}</span>
-            </div>
-            @if (isLink(item)) {
-              <a class="body" [href]="item.body" target="_blank" rel="noopener noreferrer">{{
-                item.body
-              }}</a>
-            } @else {
-              <p class="body">{{ item.body }}</p>
-            }
-            <div class="row actions">
-              <button class="link small" (click)="copy(item)">
-                {{ copied() === item.msgId ? 'Copié' : 'Copier' }}
-              </button>
-            </div>
-          </li>
-        } @empty {
-          <li class="muted empty">Rien reçu pour l'instant.</li>
-        }
-      </ul>
-    } @else {
-      <app-group />
-    }
+    <h2 class="small muted title">Reçus</h2>
+    <ul class="items">
+      @for (item of bg.items(); track item.msgId) {
+        <li class="card">
+          <div class="row small muted">
+            <span class="grow">{{ item.fromName }}</span>
+            <span>{{ time(item.createdAt) }}</span>
+          </div>
+          @if (isLink(item)) {
+            <a class="body" [href]="item.body" target="_blank" rel="noopener noreferrer">{{
+              item.body
+            }}</a>
+          } @else {
+            <p class="body">{{ item.body }}</p>
+          }
+          <div class="row actions">
+            <button class="link small" (click)="copy(item)">
+              {{ copied() === item.msgId ? 'Copié' : 'Copier' }}
+            </button>
+          </div>
+        </li>
+      } @empty {
+        <li class="muted empty">Rien reçu pour l'instant.</li>
+      }
+    </ul>
   `,
   styles: `
     :host {
@@ -114,8 +105,21 @@ import { connectionStatus, shortTime } from './status';
     header {
       margin-bottom: 8px;
     }
-    .clip {
-      justify-self: start;
+    .icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 7px 10px;
+    }
+    header .icon {
+      border: none;
+      background: none;
+      padding: 4px;
+      color: var(--muted);
+    }
+    .title {
+      margin: 12px 2px 6px;
+      font-weight: 500;
     }
     .send {
       padding: 8px;
@@ -124,20 +128,6 @@ import { connectionStatus, shortTime } from './status';
     }
     .notice {
       margin: 0;
-    }
-    .tabs {
-      margin: 12px 0 8px;
-      gap: 4px;
-    }
-    .tabs button {
-      border: none;
-      background: none;
-      color: var(--muted);
-      padding: 4px 8px;
-    }
-    .tabs button.active {
-      color: var(--fg);
-      background: var(--grouped);
     }
     .items {
       list-style: none;
@@ -185,7 +175,6 @@ export class HomeComponent {
   protected readonly others = computed(
     () => this.state().group?.members.filter((m) => m.device_id !== this.state().device?.id) ?? [],
   );
-  protected readonly tab = signal<'items' | 'group'>('items');
   protected readonly busy = signal(false);
   protected readonly notice = signal<string | undefined>(undefined);
   protected readonly copied = signal<string | undefined>(undefined);
@@ -205,6 +194,14 @@ export class HomeComponent {
 
   protected setRecipient(to: string): Promise<unknown> {
     return this.bg.run({ type: 'set-recipient', to });
+  }
+
+  /** Entrée envoie, Maj+Entrée va à la ligne (et rien pendant une composition IME). */
+  protected onKey(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void this.send();
+    }
   }
 
   protected async send(): Promise<void> {

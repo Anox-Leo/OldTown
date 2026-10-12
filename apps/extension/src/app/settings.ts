@@ -10,13 +10,14 @@ import { FormsModule } from '@angular/forms';
 
 import type { RelayDevice, StateView } from '../shared/api';
 import { BackgroundService } from './background.service';
+import { GroupComponent } from './group';
 import { connectionStatus } from './status';
 
 /** Page de réglages : appareil, relais, état, raccourci, oubli. */
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, GroupComponent],
   template: `
     <h1>OldTown · réglages</h1>
     @let s = state();
@@ -47,6 +48,13 @@ import { connectionStatus } from './status';
         </div>
       </section>
 
+      @if (s.group) {
+        <section class="card">
+          <h2>Groupe</h2>
+          <app-group />
+        </section>
+      }
+
       <section class="card">
         <h2>Appareils sur le relais</h2>
         @for (dev of devices(); track dev.id) {
@@ -64,10 +72,10 @@ import { connectionStatus } from './status';
       </section>
 
       <section class="card">
-        <h2>Raccourci clavier</h2>
+        <h2>Raccourcis clavier</h2>
         <p class="small muted">
-          Alt+Maj+S envoie l'adresse de l'onglet au dernier destinataire choisi. La sélection
-          s'envoie par le clic droit.
+          Alt+Maj+S envoie l'adresse de l'onglet, Alt+Maj+V le presse-papiers, au dernier
+          destinataire choisi. La sélection s'envoie par le clic droit.
         </p>
         <button (click)="shortcuts()">Modifier les raccourcis</button>
       </section>

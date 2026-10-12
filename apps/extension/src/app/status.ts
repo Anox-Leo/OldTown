@@ -34,14 +34,14 @@ export function connectionStatus(state: StateView): Status {
   }
 }
 
-/** Nom proposé pour l'appareil, d'après le système. */
-export function suggestedName(platform: string): string {
+/** Nom proposé pour l'appareil, d'après le système et le navigateur (Brave, Chrome). */
+export function suggestedName(platform: string, browser = 'Chrome'): string {
   const p = platform.toLowerCase();
-  if (p.includes('mac')) return 'Chrome Mac';
-  if (p.includes('win')) return 'Chrome Windows';
-  if (p.includes('linux') || p.includes('x11')) return 'Chrome Linux';
+  if (p.includes('mac')) return `${browser} Mac`;
+  if (p.includes('win')) return `${browser} Windows`;
+  if (p.includes('linux') || p.includes('x11')) return `${browser} Linux`;
   if (p.includes('cros')) return 'Chromebook';
-  return 'Chrome';
+  return browser;
 }
 
 /** Heure ou date courte d'un élément reçu. */

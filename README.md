@@ -311,7 +311,8 @@ Android et exclues des sauvegardes.
 
 ### 6. Extension Chrome (macOS, Windows, Linux)
 
-Chrome 120 au moins, Tailscale connecté sur l'ordinateur. L'extension tient
+Brave ou Chrome (Chromium 120 au moins, 127 pour l'ouverture automatique de
+la popup), Tailscale connecté sur l'ordinateur. L'extension tient
 elle-même la connexion au relais : rien d'autre à installer. Elle se charge
 en mode développeur (pas de Chrome Web Store) ; son identifiant est fixé par
 la clé publique du manifeste (`fiblpidpjopjpinfgonlkblkonllpgfb`).
@@ -320,8 +321,8 @@ la clé publique du manifeste (`fiblpidpjopjpinfgonlkblkonllpgfb`).
    (workflow *Extension*), dézippé dans un dossier qui ne bougera plus ; ou
    la construire (voir [Développement](#développement)) :
    `apps/extension/dist/extension`.
-2. `chrome://extensions` → activer le *Mode développeur* → *Charger
-   l'extension non empaquetée* → choisir ce dossier.
+2. `brave://extensions` (ou `chrome://extensions`) → activer le *Mode
+   développeur* → *Charger l'extension non empaquetée* → choisir ce dossier.
 3. Ouvrir la popup d'OldTown (icône des flèches ; l'épingler dans la barre) :
    URL du relais (`wss://relais.exemple.ts.net:7878`, le nom complet du
    certificat), nom de l'ordinateur, puis *Afficher un QR à scanner*.
@@ -329,18 +330,20 @@ la clé publique du manifeste (`fiblpidpjopjpinfgonlkblkonllpgfb`).
    passe à l'écran principal dès que le groupe est reçu (10 minutes au plus).
    Sans téléphone : *J'ai un code d'appairage* et coller le code de
    `ot pair new` (ou le texte de son QR).
-5. macOS : autoriser les notifications de Chrome (*Réglages Système* →
-   *Notifications* → *Google Chrome*).
+5. macOS : autoriser les notifications du navigateur (*Réglages Système* →
+   *Notifications* → *Brave Browser* ou *Google Chrome*).
 
 Envoyer : clic droit sur une page, un lien ou une sélection → *Envoyer à
-OldTown* → l'appareil ; `Alt+Maj+S` envoie l'adresse de l'onglet au dernier
-destinataire choisi (raccourci modifiable dans
-`chrome://extensions/shortcuts`) ; ou la popup (zone de texte, bouton
-presse-papiers). Recevoir : une notification (clic : ouvrir le lien ;
-*Copier*), et les 50 derniers éléments dans la popup, sans notification tant
-qu'elle est ouverte. Les réglages (clic droit sur l'icône → *Options*)
-montrent l'état de la connexion, l'URL du relais, et permettent d'oublier
-l'appareil. Chrome fermé, rien n'est reçu : le relais garde les messages
+OldTown* → l'appareil ; `Alt+Maj+S` envoie l'adresse de l'onglet, et
+`Alt+Maj+V` le presse-papiers, au dernier destinataire choisi (raccourcis
+modifiables dans `brave://extensions/shortcuts`) ; ou la popup (*Entrée*
+envoie, *Maj+Entrée* va à la ligne ; bouton « coller et envoyer »).
+Recevoir : navigateur au premier plan, un lien s'ouvre dans un nouvel onglet
+et un texte ouvre la popup, sans notification ; sinon une notification (clic :
+le lien, ou la popup ; *Copier*). Les 50 derniers éléments sont dans la popup
+(pas de notification tant qu'elle est ouverte). Les réglages (clic droit sur l'icône → *Options*)
+montrent l'état de la connexion, l'URL du relais, les membres du groupe (et
+la nouvelle clé de groupe), et permettent d'oublier l'appareil. Chrome fermé, rien n'est reçu : le relais garde les messages
 7 jours et l'extension les reçoit à la réouverture.
 
 Les clés sont rangées dans le profil Chrome, chiffrées par une clé WebCrypto
@@ -444,7 +447,7 @@ sans sauvegarde, la liste des appareils.
   gardés. L'URL du relais se change dans *Réglages*.
 
 - **Extension Chrome** : remplacer le contenu du dossier chargé par la
-  nouvelle version, puis *Actualiser* l'extension dans `chrome://extensions`.
+  nouvelle version, puis *Actualiser* l'extension dans `brave://extensions`.
   Clés, groupe et historique sont gardés (ils sont dans le profil Chrome,
   liés à l'identifiant fixe de l'extension).
 

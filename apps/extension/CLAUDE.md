@@ -38,6 +38,11 @@ l'interface.
   l'a changé. L'historique (contenu en clair) est rangé de la même façon.
   En clair dans `chrome.storage.local` : seulement `device` (id, nom, URL),
   `recipient`, `outbox` (enveloppes chiffrées) et `seen` (`msg_id`).
+- **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
+  navigateur au premier plan et élément récent → lien ouvert dans un onglet,
+  texte → popup (`action.openPopup`) ; sinon notification. Raccourcis
+  `send-page` (`Alt+Shift+S`) et `send-clipboard` (`Alt+Shift+V`, lecture
+  par le document offscreen). Navigateur cible : Brave (Chromium).
 - **Jamais de contenu, de clé, de code d'appairage ni de texte de QR dans
   `console`** : `log()` de `main.ts` n'écrit que des messages d'erreur.
 - **Format** : les trames reçues sont validées par `ot-proto` (WebAssembly,
@@ -45,7 +50,7 @@ l'interface.
   (`test/frames.test.ts`) ; les vecteurs de `ot-crypto` sont rejoués
   (`test/vectors.test.ts`).
 - **Permissions** (`manifest.json`) : `activeTab`, `alarms`,
-  `clipboardRead` (bouton « presse-papiers » seulement), `contextMenus`,
+  `clipboardRead` (bouton et raccourci « presse-papiers » seulement), `contextMenus`,
   `notifications`, `offscreen`, `storage`. CSP : `script-src 'self'
   'wasm-unsafe-eval'`. Toute permission nouvelle se justifie dans une note.
 - **Identifiant fixe** : `key` du manifeste (clé publique) ; la clé privée,

@@ -3,17 +3,12 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import type { MemberView, StateView } from '../shared/api';
 import { BackgroundService } from './background.service';
 
-/** Écran « Groupe » : membres, empreintes, rotation de la clé. */
+/** Section « Groupe » des réglages : membres et rotation de la clé. */
 @Component({
   selector: 'app-group',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (state().group; as g) {
-      <p class="small muted">
-        Époque {{ g.epoch }} · clé <span class="mono">{{ g.key_fingerprint }}</span> · roster v{{
-          g.roster_version
-        }}
-      </p>
       <ul>
         @for (m of g.members; track m.device_id) {
           <li class="card">
@@ -32,8 +27,6 @@ import { BackgroundService } from './background.service';
                 <span class="small muted">cet appareil</span>
               }
             </div>
-            <div class="small muted mono">signature {{ m.sign_fingerprint }}</div>
-            <div class="small muted mono">échange {{ m.exchange_fingerprint }}</div>
           </li>
         }
       </ul>
@@ -107,7 +100,7 @@ export class GroupComponent {
     const epoch = await this.bg.run<number>({ type: 'rotate', exclude: [...this.excluded()] });
     this.busy.set(false);
     if (epoch !== undefined) {
-      this.done.set(`Nouvelle clé : époque ${epoch}.`);
+      this.done.set('Nouvelle clé envoyée aux autres appareils.');
       this.cancel();
     }
   }

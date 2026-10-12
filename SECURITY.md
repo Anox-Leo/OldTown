@@ -50,8 +50,10 @@ Ce qui est déjà en place :
   en donnée associée) ; l'historique reçu aussi. Le service worker n'accepte
   de messages que des pages de l'extension (pas d'`externally_connectable`,
   pas de script de contenu) ; CSP `script-src 'self' 'wasm-unsafe-eval'` ;
-  « Ouvrir » limité aux liens `http(s)`. Limite : un instant en clair dans
-  le JavaScript pour passer à WebCrypto.
+  « Ouvrir » limité aux liens `http(s)`. Navigateur au premier plan, un lien
+  reçu d'un membre s'ouvre seul dans un onglet (`http(s)` seulement, note
+  0024). Limite : un instant en clair dans le JavaScript pour passer à
+  WebCrypto.
 - Appairage par QR inversé (note 0022) : enregistrement par le parrain
   seulement depuis une session authentifiée, signature du nouvel appareil
   vérifiée par le parrain et par le relais, réponse authentifiée par `S` et

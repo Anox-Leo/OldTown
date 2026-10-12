@@ -38,6 +38,7 @@ describe('suggestedName', () => {
     expect(suggestedName('Win32')).toBe('Chrome Windows');
     expect(suggestedName('Linux x86_64')).toBe('Chrome Linux');
     expect(suggestedName('')).toBe('Chrome');
+    expect(suggestedName('MacIntel', 'Brave')).toBe('Brave Mac');
   });
 });
 

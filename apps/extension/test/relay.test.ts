@@ -56,7 +56,10 @@ describe('extension contre ot-server', () => {
     const group = engine.state().group;
     expect(group?.members.map((m) => m.name).sort()).toEqual(['chrome', 'telephone']);
     expect(engine.state().pending).toBeUndefined();
-    expect(chrome.kv.items.has('secret:pending_offer.json')).toBe(false);
+    // L'effacement du secret est rangé juste après (avant l'acquittement).
+    await eventually('offre effacée', () =>
+      chrome.kv.items.has('secret:pending_offer.json') ? undefined : true,
+    );
   });
 
   it('envoie et reçoit', async () => {
@@ -151,7 +154,9 @@ describe('extension contre ot-server', () => {
       await eventually('groupe adopté', () => second.state().phase === 'ready' || undefined);
       await invitation.done;
       expect(second.state().group?.members).toHaveLength(3);
-      expect(other.kv.items.has('secret:pending_join.json')).toBe(false);
+      await eventually('demande effacée', () =>
+        other.kv.items.has('secret:pending_join.json') ? undefined : true,
+      );
     } finally {
       second.close();
     }

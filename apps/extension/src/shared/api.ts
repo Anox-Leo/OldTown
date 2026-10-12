@@ -91,8 +91,5 @@ export type Push = { type: 'state'; state: StateView } | { type: 'item'; item: I
 export const POPUP_PORT = 'popup';
 
 /** Messages du service worker vers le document offscreen. */
-export interface OffscreenCopy {
-  target: 'offscreen';
-  type: 'copy';
-  text: string;
-}
+export type OffscreenMessage =
+  { target: 'offscreen'; type: 'copy'; text: string } | { target: 'offscreen'; type: 'read' };

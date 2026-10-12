@@ -9,9 +9,9 @@ rejoint le groupe, puis parraine les autres appareils.
 dans la note [0022](decisions/0022-etape-3-wss-qr-inverse-ffi.md). Validé en
 local : tests Rust, `./gradlew lint test assembleDebug`, tests instrumentés
 sur émulateur Android 16, et essai de bout en bout sur émulateur. Essai réel
-sur le téléphone (T11) concluant pour tous les critères sauf la nuit en
-veille, en cours ([actions manuelles](actions-manuelles.md)) ; l'étape 4
-démarre sans l'attendre.
+sur le téléphone (T11) concluant pour tous les critères, dont la
+consommation : 70 mAh en 17 h d'usage (1,5 % de la batterie consommée).
+**Étape terminée.**
 
 Références : jalon « 3. Android : partage » de la [conception](design.md),
 [revue après l'étape 1](revue-etapes-0-1.md), note 0009 (un seul processus
@@ -223,8 +223,7 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   Faire : nom de l'appareil, URL du relais, état de connexion avec aide
   « vérifier Tailscale », version.
 
-- [ ] **T11. Essai réel et documentation.** *(Tout est vérifié sauf la nuit en
-  veille, résultat à reporter dans le tableau.)*
+- [x] **T11. Essai réel et documentation.**
   Fichiers : `README.md`, `docs/etape-3.md` (état), notes de décision.
   Faire : installer, appairer depuis le Mac, dérouler le tableau des critères.
 
@@ -237,7 +236,7 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
 | `wss` | Le téléphone se connecte en TLS ; un certificat invalide est refusé | Test + essai réel | OK (connexion en `wss` ; refus couvert par les tests) |
 | Appairage par QR | Le téléphone rejoint le groupe sans SSH ni saisie | Essai réel | OK |
 | QR inversé | Un PC rejoint en affichant un QR scanné par le téléphone ; relais qui triche → échec | E2E + essai réel | OK (« Groupe rejoint » ; relais tricheur couvert par l'E2E) |
-| Nuit entière en veille | Aucun message perdu ; consommation acceptable (noter le pourcentage) | Essai réel, résultat noté ici | En cours |
+| Nuit entière en veille | Aucun message perdu ; consommation acceptable (noter le pourcentage) | Essai réel, résultat noté ici | OK : 70 mAh en 17 h d'usage actif et passif (plus de 10 messages reçus et envoyés), 1,5 % de la consommation totale de la batterie ; aucune perte signalée |
 | Reboot du téléphone | Le service repart seul | Essai réel | OK |
 | Wi-Fi → 4G | Reconnexion en moins de 10 s | Essai réel | OK |
 | Clés | Absentes des sauvegardes Android et des logs | Revue + test | OK (`allowBackup=false`, `noBackupFilesDir` à T4 ; logs Android limités aux erreurs, sans contenu) |

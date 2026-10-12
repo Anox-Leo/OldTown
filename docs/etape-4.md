@@ -132,6 +132,14 @@ publication sur le Chrome Web Store.
   *(Documentation faite ; essai réel à dérouler, résultats à reporter dans
   le tableau.)*
 
+- [x] **T10. Retours de l'essai** (note 0024). Brave comme navigateur
+  cible ; élément reçu ouvert directement si le navigateur est au premier
+  plan (lien → onglet, texte → popup), notification sinon ; clic sur une
+  notification de texte → popup ; raccourci `Alt+Maj+V` (presse-papiers) ;
+  popup : *Entrée* envoie, icônes, groupe déplacé dans les réglages sans
+  empreintes ni époque ; Android : 3 notifications au plus, retirées à
+  l'ouverture de l'appli.
+
 Chaque tâche finit par les validations Rust de `CLAUDE.md`, plus
 `npm run lint && npm test` dans `apps/extension`.
 

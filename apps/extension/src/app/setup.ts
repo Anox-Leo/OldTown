@@ -72,7 +72,7 @@ export class SetupComponent {
   protected readonly mode = signal<'qr' | 'code'>('qr');
   protected readonly busy = signal(false);
   protected serverUrl = 'wss://';
-  protected name = suggestedName(navigator.platform);
+  protected name = suggestedName(navigator.platform, 'brave' in navigator ? 'Brave' : 'Chrome');
   protected code = '';
 
   protected async offer(): Promise<void> {

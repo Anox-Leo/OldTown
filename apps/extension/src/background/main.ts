@@ -4,7 +4,7 @@
 // secrets, connexion) s'ouvre au premier événement.
 
 import init from '../wasm/ot_wasm.js';
-import type { Item, OffscreenCopy, Push, Reply, Request, StateView } from '../shared/api';
+import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
 import { POPUP_PORT } from '../shared/api';
 import { Engine } from './engine';
 import { type KeyValue, IndexedDbKeySource } from './secrets';
@@ -13,6 +13,13 @@ const KEEPALIVE_ALARM = 'keepalive';
 const MENU_ROOT = 'send';
 const MENU_ALL = 'to:';
 const COMMAND_SEND_PAGE = 'send-page';
+const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
+/**
+ * Un élément reçu s'ouvre de lui-même (navigateur au premier plan) seulement
+ * s'il est récent : à la réouverture du navigateur, les messages en attente
+ * donnent des notifications, pas une rafale d'onglets.
+ */
+const AUTO_OPEN_MAX_AGE = 2 * 60_000;
 const NOTIFICATION_COPY = 0;
 
 function log(message: string, error?: unknown): void {
@@ -72,7 +79,7 @@ async function wake(): Promise<void> {
 function onPush(e: Engine, push: Push): void {
   for (const port of popups) port.postMessage(push);
   if (push.type === 'state') void updateMenus(push.state);
-  if (push.type === 'item' && popups.size === 0) void notify(push.item);
+  if (push.type === 'item') void deliver(push.item);
   if (push.type === 'state') void updateBadge(e.state());
 }
 
@@ -192,27 +199,57 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 chrome.commands.onCommand.addListener((command, tab) => {
-  if (command !== COMMAND_SEND_PAGE) return;
-  // L'URL de l'onglet actif (permission `activeTab`) ; la sélection
-  // demanderait un script injecté, exclu par le plan (note 0023).
-  const url = tab?.url;
-  if (!url) return;
-  void engine().then((e) => sendFromBrowser(url, e.state().recipient));
+  if (command === COMMAND_SEND_PAGE) {
+    // L'URL de l'onglet actif (permission `activeTab`) ; la sélection
+    // demanderait un script injecté, exclu par le plan (note 0023).
+    const url = tab?.url;
+    if (url) void engine().then((e) => sendFromBrowser(url, e.state().recipient, true));
+  } else if (command === COMMAND_SEND_CLIPBOARD) {
+    void sendClipboard();
+  }
 });
 
-async function sendFromBrowser(text: string, to: string): Promise<void> {
+/** Raccourci : le presse-papiers, lu par le document offscreen, au dernier destinataire. */
+async function sendClipboard(): Promise<void> {
+  let text: string;
+  try {
+    text = await readClipboard();
+  } catch (err) {
+    log('lecture du presse-papiers', err);
+    text = '';
+  }
+  const e = await engine();
+  if (!text.trim()) {
+    await problem('Le presse-papiers ne contient pas de texte.');
+    return;
+  }
+  await sendFromBrowser(text, e.state().recipient, true);
+}
+
+async function problem(message: string): Promise<void> {
+  await chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon-128.png',
+    title: 'OldTown : envoi impossible',
+    message,
+  });
+}
+
+/** Coche brève sur l'icône : un raccourci n'a pas d'autre retour visible. */
+async function flashSent(): Promise<void> {
+  await chrome.action.setBadgeText({ text: '✓' });
+  setTimeout(() => void engine().then((e) => updateBadge(e.state())), 1500);
+}
+
+async function sendFromBrowser(text: string, to: string, shortcut = false): Promise<void> {
   try {
     const e = await engine();
     await e.setRecipient(to);
     await e.send(text, to);
+    if (shortcut) await flashSent();
   } catch (err) {
     log('envoi', err);
-    await chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon-128.png',
-      title: 'OldTown : envoi impossible',
-      message: err instanceof Error ? err.message : String(err),
-    });
+    await problem(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -220,6 +257,49 @@ async function sendFromBrowser(text: string, to: string): Promise<void> {
 
 function isWebLink(item: Item): boolean {
   return item.kind === 'link' && /^https?:\/\//i.test(item.body);
+}
+
+/** Fenêtre du navigateur qui a le focus de l'OS, s'il y en a une. */
+async function focusedWindow(): Promise<chrome.windows.Window | undefined> {
+  try {
+    const w = await chrome.windows.getLastFocused();
+    return w.focused ? w : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Ouvre la popup de l'extension (Chromium 127 ou plus, fenêtre au premier
+ * plan) ; renvoie `false` si le navigateur refuse.
+ */
+async function openPopup(windowId?: number): Promise<boolean> {
+  try {
+    await chrome.action.openPopup(windowId === undefined ? {} : { windowId });
+    return true;
+  } catch (e) {
+    log('ouverture de la popup', e);
+    return false;
+  }
+}
+
+/**
+ * Élément reçu (note 0024) : popup ouverte, il n'apparaît que dans la liste ;
+ * navigateur au premier plan, un lien s'ouvre dans un onglet et un texte
+ * ouvre la popup, sans notification ; sinon, notification.
+ */
+async function deliver(item: Item): Promise<void> {
+  if (popups.size > 0) return;
+  const recent = Date.now() - Date.parse(item.createdAt) < AUTO_OPEN_MAX_AGE;
+  const win = recent ? await focusedWindow() : undefined;
+  if (win) {
+    if (isWebLink(item)) {
+      await chrome.tabs.create({ url: item.body, active: true, windowId: win.id });
+      return;
+    }
+    if (await openPopup(win.id)) return;
+  }
+  await notify(item);
 }
 
 /** Notification d'un élément reçu ; l'identifiant est son `msg_id`. */
@@ -236,12 +316,26 @@ async function notify(item: Item): Promise<void> {
 
 chrome.notifications.onClicked.addListener((id) => {
   void (async () => {
+    await chrome.notifications.clear(id);
     const item = await (await engine()).item(id);
     // « Ouvrir » seulement pour un lien http(s), comme sur Android.
-    if (item && isWebLink(item)) await chrome.tabs.create({ url: item.body });
-    await chrome.notifications.clear(id);
+    if (item && isWebLink(item)) {
+      await chrome.tabs.create({ url: item.body });
+      return;
+    }
+    await showExtension();
   })().catch((e: unknown) => log('notification', e));
 });
+
+/**
+ * Montre l'extension après un clic sur une notification : la popup si le
+ * navigateur l'accepte, sinon la même page dans une petite fenêtre.
+ */
+async function showExtension(): Promise<void> {
+  const win = await focusedWindow();
+  if (win && (await openPopup(win.id))) return;
+  await chrome.windows.create({ url: 'index.html', type: 'popup', width: 400, height: 640 });
+}
 
 chrome.notifications.onButtonClicked.addListener((id, button) => {
   if (button !== NOTIFICATION_COPY) return;
@@ -257,7 +351,7 @@ chrome.notifications.onButtonClicked.addListener((id, button) => {
 
 let creatingOffscreen: Promise<void> | undefined;
 
-async function copy(text: string): Promise<void> {
+async function offscreen<T>(message: OffscreenMessage): Promise<T> {
   const url = chrome.runtime.getURL('offscreen.html');
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -268,14 +362,19 @@ async function copy(text: string): Promise<void> {
       .createDocument({
         url: 'offscreen.html',
         reasons: [chrome.offscreen.Reason.CLIPBOARD],
-        justification: 'Copier un élément reçu dans le presse-papiers',
+        justification: 'Copier un élément reçu, ou lire le presse-papiers pour un raccourci',
       })
       .finally(() => (creatingOffscreen = undefined));
     await creatingOffscreen;
   }
-  await chrome.runtime.sendMessage({
-    target: 'offscreen',
-    type: 'copy',
-    text,
-  } satisfies OffscreenCopy);
+  return (await chrome.runtime.sendMessage(message)) as T;
+}
+
+async function copy(text: string): Promise<void> {
+  await offscreen<boolean>({ target: 'offscreen', type: 'copy', text });
+}
+
+/** Texte du presse-papiers (permission `clipboardRead`), au raccourci seulement. */
+async function readClipboard(): Promise<string> {
+  return (await offscreen<string | null>({ target: 'offscreen', type: 'read' })) ?? '';
 }

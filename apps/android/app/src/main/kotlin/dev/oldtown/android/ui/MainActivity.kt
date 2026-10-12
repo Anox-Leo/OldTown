@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.oldtown.android.notify.Foreground
+import dev.oldtown.android.notify.Notifications
 import dev.oldtown.android.relay.Notice
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.Banner
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         Foreground.mainVisible = true
+        Notifications.clearMessages(this)
     }
 
     override fun onStop() {

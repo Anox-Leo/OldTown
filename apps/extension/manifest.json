@@ -43,6 +43,12 @@
         "default": "Alt+Shift+S"
       },
       "description": "Envoyer la page au dernier destinataire"
+    },
+    "send-clipboard": {
+      "suggested_key": {
+        "default": "Alt+Shift+V"
+      },
+      "description": "Envoyer le presse-papiers au dernier destinataire"
     }
   },
   "content_security_policy": {
