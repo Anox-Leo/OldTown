@@ -5,10 +5,14 @@ sous une clé de groupe que seuls mes appareils détiennent, et un nouvel
 appareil rejoint le groupe par un code d'appairage, sans session SSH sur le
 laptop.
 
-**État (10 octobre 2026)** : code livré (T1 à T9, T11), précisions et écarts
-dans les notes [0020](decisions/0020-trames-appairage.md) et
-[0021](decisions/0021-format-chiffre-et-roster.md). Reste T10 : la bascule de
-l'installation réelle et l'essai Mac → Windows.
+**État (11 octobre 2026) : étape terminée.** T1 à T11 faites ; précisions et
+écarts dans les notes [0020](decisions/0020-trames-appairage.md) et
+[0021](decisions/0021-format-chiffre-et-roster.md). Installation réelle
+basculée : relais mis à jour, messages de l'étape 1 purgés (`VACUUM`), groupe
+créé par `ot group init` et appareils réappairés par code ; essai réel
+réussi, échange chiffré entre le PC Windows et le Mac dans les deux sens. CI
+verte sur Linux, macOS et Windows après correction des fins de ligne des
+vecteurs figés (`.gitattributes`, tâche T0 de l'étape 3).
 
 Références : jalon « 2. Chiffrement et appairage » de la
 [conception](design.md), [revue après l'étape 1](revue-etapes-0-1.md),
@@ -283,9 +287,8 @@ puis T5 à T11. Chaque tâche finit par les quatre commandes de validation de
   Tests : un test E2E lit la base du relais et vérifie qu'aucun `body` envoyé
   n'y apparaît.
 
-- [ ] **T10. Bascule de l'installation réelle.** *(Documentation prête :
-  README « Passage au chiffrement » et `SECURITY.md` ; reste l'opération sur
-  le laptop et les appareils, puis l'essai réel.)*
+- [x] **T10. Bascule de l'installation réelle.** *(Faite le 11 octobre 2026 ;
+  essai réel Windows ↔ Mac réussi.)*
   Fichiers : `README.md`, `SECURITY.md`, `docs/etape-2.md` (état).
   Faire : mettre à jour le relais ; `ot-server messages purge --all` (suivi d'un
   `VACUUM`, note 0014) ;
