@@ -1,0 +1,65 @@
+# Diagnostic du relais envoyé par OldTown (note 0023). Instances :
+#   ot-diag@report.service   rapport complet, lancé par ot-diag.timer ;
+#   ot-diag@power.service    changement d'alimentation, lancé par la règle
+#                            udev 90-ot-diag.rules.
+#
+# Tourne sous l'utilisateur système ot-diag, membre du groupe OldTown sous le
+# nom relais-diag ; clés dans /var/lib/ot-diag/ot, illisibles par ot-relay.
+# Réglages locaux (jamais dans le dépôt) dans /etc/oldtown/diag.env, ex. :
+#   OT_DIAG_TO=<nom du téléphone>
+
+[Unit]
+Description=Diagnostic du relais OldTown (%i)
+Documentation=file:///usr/local/share/doc/oldtown/README.md
+Wants=network-online.target
+After=network-online.target tailscaled.service ot-server.service
+# Relais injoignable : nouvel essai toutes les 2 min, abandon après 5 échecs
+# en une heure (le rapport suivant repart de zéro).
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+User=ot-diag
+Group=ot-diag
+# Lecture du journal du noyau (erreurs disque).
+SupplementaryGroups=systemd-journal
+Environment=OT_HOME=/var/lib/ot-diag/ot
+EnvironmentFile=-/etc/oldtown/diag.env
+ExecStart=/usr/local/lib/oldtown/ot-diag.sh %i
+Restart=on-failure
+RestartSec=2min
+# power attend que l'alimentation se stabilise, puis au plus 10 min entre
+# deux envois.
+TimeoutStartSec=20min
+
+StateDirectory=ot-diag
+StateDirectoryMode=0700
+UMask=0077
+
+# Durcissement. Pas de ProcSubset=pid : journalctl -k lit l'identifiant du
+# démarrage dans /proc/sys/kernel/random/boot_id.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

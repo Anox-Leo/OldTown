@@ -1,0 +1,5 @@
+# Changement d'alimentation (secteur, USB-C) : diagnostic immédiat par
+# ot-diag@power.service (note 0023). Les événements de la batterie elle-même,
+# un par point de charge, sont ignorés ; le script attend que l'état se
+# stabilise et n'envoie que s'il a changé depuis le dernier envoi.
+SUBSYSTEM=="power_supply", ACTION=="change", ATTR{type}=="Mains|USB", RUN+="/usr/bin/systemctl start --no-block ot-diag@power.service"

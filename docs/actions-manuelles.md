@@ -169,3 +169,54 @@ Noter les résultats et me les transmettre (je remplirai le tableau de
    « Connecté » revient seule, et un `ot send` arrive.
 6. Passer du Wi-Fi à la 4G (couper le Wi-Fi) : un `ot send` arrive en moins
    de 10 s.
+
+### 6. Relais : diagnostic envoyé au téléphone — note 0023
+
+Sur le laptop, depuis la copie du dépôt à jour, une fois le lot 4 fait
+(téléphone dans le groupe) :
+
+1. Utilisateur, CLI et fichiers :
+
+   ```sh
+   sudo useradd --system --home /var/lib/ot-diag --shell /usr/sbin/nologin ot-diag
+   sudo install -d -o ot-diag -g ot-diag -m 0700 /var/lib/ot-diag
+   cargo build --release --locked -p ot-cli
+   sudo install -m 0755 target/release/ot /usr/local/bin/
+   sudo install -D -m 0755 deploy/ot-diag.sh /usr/local/lib/oldtown/ot-diag.sh
+   sudo install -m 0644 deploy/ot-diag@.service deploy/ot-diag.timer /etc/systemd/system/
+   sudo install -m 0644 deploy/90-ot-diag.rules /etc/udev/rules.d/
+   sudo install -D -m 0644 README.md /usr/local/share/doc/oldtown/README.md
+   sudo systemctl daemon-reload
+   sudo udevadm control --reload
+   ```
+
+2. Destinataire (nom du téléphone affiché par `ot group show`) :
+
+   ```sh
+   echo "OT_DIAG_TO=<nom du téléphone>" | sudo tee /etc/oldtown/diag.env
+   ```
+
+3. Appairage : lancer la commande, puis sur le téléphone *Groupe* →
+   *Ajouter un appareil* → scanner → *Ajouter* ; le terminal affiche
+   « Groupe rejoint ».
+
+   ```sh
+   sudo -u ot-diag ot --home /var/lib/ot-diag/ot pair join --qr --server wss://<nom complet>:7878 --name relais-diag
+   ```
+
+4. Aperçu (doit afficher le niveau de batterie et « SSD : aucune alerte sur
+   12 h », pas « journal du noyau illisible »), premier envoi, activation :
+
+   ```sh
+   sudo -u ot-diag -g systemd-journal /usr/local/lib/oldtown/ot-diag.sh preview
+   sudo systemctl start ot-diag@report.service
+   journalctl -u ot-diag@report -n 5          # « envoyé (…) »
+   sudo systemctl enable --now ot-diag.timer
+   systemctl list-timers ot-diag.timer         # prochain passage à 00:00 ou 12:00
+   ```
+
+5. Essai : débrancher le secteur ; une notification « Alimentation :
+   batterie, … » arrive sur le téléphone en moins d'une minute. Rebrancher :
+   « Alimentation : secteur, … » arrive au plus 10 minutes après le premier
+   message.
+   Me transmettre le résultat, et le message reçu si un libellé gêne.
