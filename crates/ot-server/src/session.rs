@@ -285,6 +285,7 @@ impl Active<'_> {
                 None
             }
             Frame::ListDevices => Some(devices(self.inner).await?),
+            Frame::Ping => Some(Frame::Pong),
             Frame::PairCreate => Some(self.pair_create().await?),
             Frame::PairRegister { device_id, name, public_key, sig } => {
                 Some(self.pair_register(device_id, &name, &public_key, &sig).await)

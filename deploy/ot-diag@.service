@@ -1,4 +1,4 @@
-# Diagnostic du relais envoyé par OldTown (note 0023). Instances :
+# Diagnostic du relais envoyé par OldTown (note 0025). Instances :
 #   ot-diag@report.service   rapport complet, lancé par ot-diag.timer ;
 #   ot-diag@power.service    changement d'alimentation, lancé par la règle
 #                            udev 90-ot-diag.rules.

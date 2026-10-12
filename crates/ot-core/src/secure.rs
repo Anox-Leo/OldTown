@@ -13,11 +13,11 @@ use ot_proto::{Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, P
 use time::OffsetDateTime;
 
 use crate::Identity;
-use crate::client::{ClientError, Event, Received};
 use crate::keyring::{
     GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, Quarantined, RETIRED_KEY_LIFETIME,
 };
 use crate::roster::{self, RosterError};
+use crate::types::{ClientError, Event, Received};
 
 /// État du groupe, vu de cet appareil (pour l'affichage).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,9 +127,11 @@ pub fn group_info(keyring: &dyn Keyring) -> Result<Option<GroupInfo>, KeyringErr
     }
 }
 
-/// Ce que le client doit faire après le traitement d'un message.
+/// Ce que le client doit faire après le traitement d'un message : émettre un
+/// événement, ou envoyer une enveloppe (message système : roster, réponse
+/// d'appairage).
 #[derive(Debug)]
-pub(crate) enum Effect {
+pub enum Effect {
     Emit(Event),
     Send(Envelope),
 }
@@ -184,7 +186,12 @@ struct Joining {
     sponsor: DeviceId,
 }
 
-pub(crate) struct Secure {
+/// Cœur de groupe sans réseau : scelle les messages sortants, ouvre et
+/// vérifie les messages entrants, tient roster, époques, quarantaine et
+/// appairages en cours. Chaque changement est enregistré dans le
+/// [`Keyring`] avant de rendre la main. Utilisé par le [`crate::Client`]
+/// réseau et, compilé en WebAssembly, par l'extension (note 0023).
+pub struct Secure {
     me: DeviceId,
     identity: Identity,
     exchange: ExchangeKeyPair,
@@ -337,6 +344,24 @@ impl Secure {
         .map_err(|e| ClientError::Invalid(e.to_string()))?;
         self.joining_qr = Some(secret);
         Ok(offer)
+    }
+
+    /// Nouvel appareil, QR inversé : reprend une offre affichée avant un
+    /// redémarrage (secret rangé par l'appli, note 0023).
+    pub fn restore_offer(&mut self, secret: PairingSecret) {
+        self.joining_qr = Some(secret);
+    }
+
+    /// Nouvel appareil, appairage par code : reprend l'attente de la réponse
+    /// du parrain après un redémarrage, sans renvoyer la demande.
+    pub fn restore_join(&mut self, code: &PairingCode, sponsor: DeviceId) {
+        self.joining =
+            Some(Joining { token_id: code.token_id(), secret: code.secret.clone(), sponsor });
+    }
+
+    /// Un appairage (par code ou QR inversé) attend encore sa réponse.
+    pub fn is_joining(&self) -> bool {
+        self.joining.is_some() || self.joining_qr.is_some()
     }
 
     /// Parrain, QR inversé : vérifie l'offre scannée avant de demander
@@ -1106,6 +1131,36 @@ mod tests {
         let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
         new.reload(); // l'offre n'existe qu'en mémoire
         assert_eq!(rejected(&new.receive(welcome)), ["appairage par QR inconnu ou terminé"]);
+    }
+
+    #[test]
+    fn restored_offer_accepts_the_welcome() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let offer = new.secure.offer("windows").unwrap();
+        let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
+        new.reload();
+        assert!(!new.secure.is_joining());
+        new.secure.restore_offer(offer.secret.clone());
+        assert!(new.secure.is_joining());
+        let fx = new.receive(welcome);
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
+        assert!(!new.secure.is_joining());
+    }
+
+    #[test]
+    fn restored_join_accepts_the_welcome() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let expires = OffsetDateTime::now_utc() + time::Duration::minutes(10);
+        let code = d[0].secure.sponsor([7; 10], expires).unwrap();
+        let request = new.secure.start_join(&code, d[0].id.clone(), "nouveau").unwrap();
+        let welcome = sends(&d[0].receive(request)).remove(0);
+        new.reload();
+        assert_eq!(rejected(&new.receive(welcome.clone())), ["appairage inconnu ou expiré"]);
+        new.secure.restore_join(&code, d[0].id.clone());
+        let fx = new.receive(welcome);
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
     }
 
     #[test]

@@ -15,7 +15,7 @@ Internet**, et rester prudent avec les données sensibles.
 | Relais qui ajoute un appareil à lui | Le faire apparaître dans `ot devices` (signalé « hors du groupe ») ; il ne reçoit rien de lisible et ses messages sont rejetés | Inchangé |
 | Appareil du tailnet non enregistré | Ouvrir des connexions, échouer à l'authentification, essayer des jetons d'appairage (80 bits, 10 minutes, usage unique) | Limites de connexions et de débit |
 | Membre du groupe | Lire et écrire comme les autres ; ajouter un appareil par appairage ; tirer une nouvelle clé de groupe | Inchangé : un groupe sert une seule personne |
-| Appareil volé | Tout ce que fait un membre, jusqu'à `ot group rotate --exclude <nom>` (ou *Groupe* → exclure, depuis le téléphone) et `ot-server device revoke`. Sur Android, les clés sont chiffrées par une clé du Keystore, hors sauvegardes, mais utilisables téléphone verrouillé (réception la nuit) | Étape 8 : révocation depuis un appareil, sans SSH |
+| Appareil volé | Tout ce que fait un membre, jusqu'à `ot group rotate --exclude <nom>` (ou *Groupe* → exclure, depuis le téléphone ou l'extension) et `ot-server device revoke`. Sur Android, les clés sont chiffrées par une clé du Keystore, hors sauvegardes, mais utilisables téléphone verrouillé (réception la nuit). Dans l'extension Chrome, elles sont chiffrées par une clé WebCrypto non exportable du même profil : quiconque ouvre la session de l'ordinateur (ou copie tout le profil Chrome, IndexedDB compris) peut s'en servir | Étape 8 : révocation depuis un appareil, sans SSH |
 
 Ce qui est déjà en place :
 - Chiffrement de bout en bout (étape 2, `ot-crypto`) : XChaCha20-Poly1305
@@ -44,6 +44,16 @@ Ce qui est déjà en place :
   sauvegardes Android désactivées ; « Ouvrir » limité aux liens `http(s)` ;
   « Copier » relit le texte dans l'appli au lieu de le faire passer par un
   `Intent`.
+- Extension Chrome (étape 4, note 0023) : clés générées et utilisées dans
+  le WebAssembly ; au repos dans `chrome.storage.local`, chiffrées en
+  AES-256-GCM par une clé WebCrypto non exportable gardée dans IndexedDB (nom
+  en donnée associée) ; l'historique reçu aussi. Le service worker n'accepte
+  de messages que des pages de l'extension (pas d'`externally_connectable`,
+  pas de script de contenu) ; CSP `script-src 'self' 'wasm-unsafe-eval'` ;
+  « Ouvrir » limité aux liens `http(s)`. Navigateur au premier plan, un lien
+  reçu d'un membre s'ouvre seul dans un onglet (`http(s)` seulement, note
+  0024). Limite : un instant en clair dans le JavaScript pour passer à
+  WebCrypto.
 - Appairage par QR inversé (note 0022) : enregistrement par le parrain
   seulement depuis une session authentifiée, signature du nouvel appareil
   vérifiée par le parrain et par le relais, réponse authentifiée par `S` et

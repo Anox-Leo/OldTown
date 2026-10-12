@@ -1,5 +1,5 @@
 #!/bin/sh
-# Diagnostic du relais envoyé par OldTown (note 0023) : alimentation, batterie
+# Diagnostic du relais envoyé par OldTown (note 0025) : alimentation, batterie
 # et erreurs disque relevées par le noyau.
 #
 #   ot-diag.sh report    rapport complet (ot-diag.timer : 00:00 et 12:00)

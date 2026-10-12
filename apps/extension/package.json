@@ -1,0 +1,41 @@
+{
+  "name": "oldtown-extension",
+  "version": "0.1.0",
+  "scripts": {
+    "wasm": "node scripts/build-wasm.mjs",
+    "build": "npm run wasm && ng build && node scripts/build-extension.mjs",
+    "lint": "ng lint && prettier --check . && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "npm run wasm && vitest run --config vitest.worker.config.mts && ng test --watch=false",
+    "test:worker": "vitest run --config vitest.worker.config.mts",
+    "format": "prettier --write ."
+  },
+  "private": true,
+  "packageManager": "npm@11.19.0",
+  "dependencies": {
+    "@angular/common": "^22.2.0",
+    "@angular/compiler": "^22.2.0",
+    "@angular/core": "^22.2.0",
+    "@angular/forms": "^22.2.0",
+    "@angular/platform-browser": "^22.2.0",
+    "@angular/router": "^22.2.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.2.2",
+    "@angular/cli": "^22.2.2",
+    "@angular/compiler-cli": "^22.2.0",
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.3.5",
+    "@types/node": "^24.19.2",
+    "angular-eslint": "22.6.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.12.0",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^30.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "8.71.0",
+    "vitest": "^5.0.0"
+  }
+}

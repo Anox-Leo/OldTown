@@ -58,6 +58,8 @@ fn golden_frames() {
         },
     );
     check("pair_create", Frame::PairCreate);
+    check("ping", Frame::Ping);
+    check("pong", Frame::Pong);
     check(
         "pair_created",
         Frame::PairCreated {

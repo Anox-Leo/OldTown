@@ -30,4 +30,6 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0020](0020-trames-appairage.md) | Trames d'appairage côté relais | 2 | Acceptée |
 | [0021](0021-format-chiffre-et-roster.md) | Format chiffré, roster versionné et cœur client | 2 | Acceptée |
 | [0022](0022-etape-3-wss-qr-inverse-ffi.md) | `wss`, QR inversé (trames, schéma `0x04`), pont UniFFI, appli Android | 3 | Acceptée |
-| [0023](0023-diagnostic-du-relais.md) | Diagnostic du relais envoyé par un membre dédié `relais-diag` | Hors jalon | Acceptée |
+| [0023](0023-extension-wasm-et-transport-ts.md) | Extension : cœur de groupe en WebAssembly, transport en TypeScript, `ping`/`pong` | 4 | Acceptée |
+| [0024](0024-retours-essai-extension-brave.md) | Retours d'essai : Brave, ouverture directe des éléments reçus, raccourci presse-papiers, notifications Android | 4 | Acceptée |
+| [0025](0025-diagnostic-du-relais.md) | Diagnostic du relais envoyé par un membre dédié `relais-diag` | Hors jalon | Acceptée |

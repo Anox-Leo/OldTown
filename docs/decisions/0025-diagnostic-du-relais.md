@@ -1,4 +1,4 @@
-# 0023 — Diagnostic du relais envoyé par un membre dédié
+# 0025 — Diagnostic du relais envoyé par un membre dédié
 
 **Statut : acceptée** (12 octobre 2026). Hors des jalons : petit service
 d'exploitation, sans changement du protocole ni des crates.
