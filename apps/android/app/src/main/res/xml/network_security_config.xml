@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aucun trafic en clair depuis le code Java/Kotlin. La connexion au relais
+     part du cœur Rust (rustls, autorités de Mozilla), en wss. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

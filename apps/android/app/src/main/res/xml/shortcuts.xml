@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Direct Share : un raccourci dynamique par membre du groupe
+     (share/Shortcuts.kt) porte cette catégorie. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="dev.oldtown.android.share.ShareActivity">
+        <data android:mimeType="text/plain" />
+        <category android:name="dev.oldtown.android.category.SHARE_TARGET" />
+    </share-target>
+</shortcuts>
