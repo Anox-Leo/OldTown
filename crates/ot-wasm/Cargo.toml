@@ -14,8 +14,10 @@ workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Sans la fonction `net` : ni tokio, ni WebSocket, ni TLS (note 0023).
-ot-core = { workspace = true, default-features = false }
+# Sans la fonction `net` : ni tokio, ni WebSocket, ni TLS (note 0023). Par
+# son chemin : hériter du workspace avec `default-features = false` est
+# refusé par certaines versions de cargo (dont celle de cargo-deny-action).
+ot-core = { path = "../ot-core", default-features = false }
 ot-proto.workspace = true
 # Aléa par `crypto.getRandomValues` en WebAssembly ; sans effet ailleurs.
 getrandom = { workspace = true, features = ["wasm_js"] }
