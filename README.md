@@ -350,6 +350,67 @@ Les clés sont rangées dans le profil Chrome, chiffrées par une clé WebCrypto
 non exportable : moins bien protégées qu'un coffre de l'OS (voir
 [`SECURITY.md`](SECURITY.md)).
 
+### 7. Diagnostic du relais (facultatif)
+
+Le serveur envoie au téléphone un bilan de deux lignes : alimentation avec
+niveau et état de la batterie (comme `upower -i`), et erreurs disque du
+journal du noyau. Il l'envoie à 00:00 et
+12:00, et dès que l'alimentation passe sur batterie ou revient sur secteur
+(note 0025). Exemple :
+
+```text
+Alimentation : batterie, 58 % (en décharge)
+SSD : aucune alerte sur 12 h
+```
+
+Le serveur est alors un membre du groupe comme les autres, sous le nom
+`relais-diag`, avec un utilisateur système dédié `ot-diag`. Ses clés sont
+illisibles pour `ot-relay`. Il ne fait qu'envoyer : chaque envoi ouvre une
+session courte, sans `ot listen`.
+
+1. Utilisateur, CLI et fichiers, depuis une copie du dépôt (le service ne
+   voit pas les dossiers personnels : la CLI doit être dans `/usr/local/bin`) :
+
+   ```sh
+   sudo useradd --system --home /var/lib/ot-diag --shell /usr/sbin/nologin ot-diag
+   sudo install -d -o ot-diag -g ot-diag -m 0700 /var/lib/ot-diag
+   cargo build --release --locked -p ot-cli
+   sudo install -m 0755 target/release/ot /usr/local/bin/
+   sudo install -D -m 0755 deploy/ot-diag.sh /usr/local/lib/oldtown/ot-diag.sh
+   sudo install -m 0644 deploy/ot-diag@.service deploy/ot-diag.timer /etc/systemd/system/
+   sudo install -m 0644 deploy/90-ot-diag.rules /etc/udev/rules.d/
+   sudo systemctl daemon-reload
+   sudo udevadm control --reload
+   ```
+
+2. Destinataire : le nom du téléphone dans le groupe (`ot group show`). Sans
+   ce fichier, le bilan part à tous les autres membres.
+
+   ```sh
+   echo "OT_DIAG_TO=android" | sudo tee /etc/oldtown/diag.env
+   ```
+
+3. Faire entrer `relais-diag` dans le groupe, parrainé par le téléphone
+   (*Groupe* → *Ajouter un appareil*, viser le QR) :
+
+   ```sh
+   sudo -u ot-diag ot --home /var/lib/ot-diag/ot pair join --qr --server wss://relais.exemple.ts.net:7878 --name relais-diag
+   ```
+
+4. Aperçu, premier envoi, puis activation :
+
+   ```sh
+   sudo -u ot-diag -g systemd-journal /usr/local/lib/oldtown/ot-diag.sh preview
+   sudo systemctl start ot-diag@report.service      # le téléphone reçoit le bilan
+   sudo systemctl enable --now ot-diag.timer
+   ```
+
+Le passage sur batterie se voit environ 30 s après avoir débranché le
+secteur, le temps que l'état se stabilise. Au plus un envoi toutes les
+10 minutes en cas de changements répétés : le dernier état est toujours
+envoyé. Si le relais est injoignable, systemd réessaie toutes les 2 minutes.
+Suivi : `journalctl -u 'ot-diag@*'`.
+
 ## Utilisation
 
 ```sh

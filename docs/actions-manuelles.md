@@ -134,3 +134,34 @@ Après avoir rechargé la nouvelle version de l'extension (`brave://extensions`
    disparaissent ; appli fermée, cinq messages d'affilée → trois
    notifications au plus, les plus récentes.
 
+### 7. Relais : diagnostic envoyé au téléphone — note 0025
+
+Déjà fait : utilisateur `ot-diag`, appairage de `relais-diag`, premier envoi
+reçu. Reste, sur le laptop, depuis la copie du dépôt à jour :
+
+1. Réinstaller le script et l'unité (correctifs depuis le premier essai :
+   `boot_id` lisible, bilan en deux lignes, journal du noyau sur plusieurs
+   démarrages) :
+
+   ```sh
+   sudo install -D -m 0755 deploy/ot-diag.sh /usr/local/lib/oldtown/ot-diag.sh
+   sudo install -m 0644 deploy/ot-diag@.service deploy/ot-diag.timer /etc/systemd/system/
+   sudo install -m 0644 deploy/90-ot-diag.rules /etc/udev/rules.d/
+   sudo systemctl daemon-reload
+   sudo udevadm control --reload
+   ```
+
+2. Envoi et activation : le téléphone reçoit deux lignes, dont « SSD :
+   aucune alerte sur 12 h » (pas « journal du noyau illisible »).
+
+   ```sh
+   sudo systemctl start ot-diag@report.service
+   journalctl -u ot-diag@report -n 5          # « envoyé (…) », sans « Failed to get boot ID »
+   sudo systemctl enable --now ot-diag.timer
+   systemctl list-timers ot-diag.timer         # prochain passage à 00:00 ou 12:00
+   ```
+
+3. Essai : débrancher le secteur ; une notification « Alimentation :
+   batterie, … » arrive sur le téléphone en moins d'une minute. Rebrancher :
+   « Alimentation : secteur, … » arrive au plus 10 minutes après le premier
+   message. Me transmettre le résultat.
