@@ -7,8 +7,8 @@ relais ne stocke que des octets chiffrés et les clients refusent tout message
 en clair.
 
 **État** : étapes 1 (relais et CLI) et 2 (chiffrement et appairage) terminées ;
-étape 3 (appli Android, `wss`, appairage par QR) livrée, en essai réel ;
-étape 4 (extension Chrome) livrée, en essai réel.
+étape 3 (appli Android, `wss`, appairage par QR) terminée ;
+étape 4 (extension pour Brave et Chrome) terminée.
 Clients : la CLI `ot` sous macOS, Windows et Linux, l'appli Android
 (APK à compiler, voir [Téléphone Android](#5-téléphone-android)) et
 l'extension Chrome (à charger en mode développeur, voir

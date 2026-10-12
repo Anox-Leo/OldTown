@@ -6,15 +6,16 @@ sélection d'un clic droit ; recevoir en notification ; une popup avec les
 derniers éléments et une zone d'envoi. Aucune appli à installer à côté
 (note 0017).
 
-**État (12 octobre 2026)** : code livré (T1 à T8b) ; écarts et précisions
-dans la note [0023](decisions/0023-extension-wasm-et-transport-ts.md) (cœur
-de groupe en WebAssembly, transport en TypeScript, `ping`/`pong`). Validé en
-local : tests Rust, `npm run lint && npm test` (dont un vrai `ot-server`
-avec la CLI comme parrain), `./gradlew lint test assembleDebug`, et un essai
-de l'extension construite dans Chrome for Testing 155 contre un relais local
-(QR inversé, envoi, réception avec et sans popup ouverte, stockage). Reste
-T9 : l'essai réel sur le Mac et le PC Windows
-([actions manuelles](actions-manuelles.md)).
+**État (12 octobre 2026)** : **étape terminée.** Code livré (T1 à T10) ;
+écarts et précisions dans les notes
+[0023](decisions/0023-extension-wasm-et-transport-ts.md) (cœur de groupe en
+WebAssembly, transport en TypeScript, `ping`/`pong`) et
+[0024](decisions/0024-retours-essai-extension-brave.md) (retours d'essai :
+Brave, ouverture directe, raccourci presse-papiers, notifications Android).
+Validé en local et en CI (tests Rust, `npm run lint && npm test` dont un vrai
+`ot-server`, `./gradlew lint test assembleDebug`), dans Chrome for Testing
+155, et par l'essai réel dans Brave et sur le téléphone : tous les critères
+sont concluants.
 
 Références : jalon « 4. Extension Chrome » de la [conception](design.md),
 notes 0009 (un seul propriétaire de la connexion), 0013 (QR inversé), 0015
@@ -127,10 +128,9 @@ publication sur le Chrome Web Store.
   s'ajoute à l'historique sans notification (la notification permanente du
   service ne change pas). Tests : test unitaire de la règle « au premier plan
   → pas de notification ».
-- [ ] **T9. Essai réel et documentation.** Windows et Mac, README
+- [x] **T9. Essai réel et documentation.** Windows et Mac, README
   (installation en mode développeur), état de l'étape, notes de décision.
-  *(Documentation faite ; essai réel à dérouler, résultats à reporter dans
-  le tableau.)*
+
 
 - [x] **T10. Retours de l'essai** (note 0024). Brave comme navigateur
   cible ; élément reçu ouvert directement si le navigateur est au premier
@@ -145,18 +145,18 @@ Chaque tâche finit par les validations Rust de `CLAUDE.md`, plus
 
 ## Critères de fin
 
-| Scénario | Attendu | Vérifié par |
-| --- | --- | --- |
-| Clic droit sur un lien → téléphone | Notification sur le téléphone | Essai réel |
-| Téléphone → Mac, lien | Notification Chrome ; clic ouvre le lien | Essai réel |
-| Message reçu, popup ou appli Android ouverte | Pas de notification ; l'élément apparaît dans la liste | Essai réel |
-| Sélection de texte → Windows | Arrive sur le PC | Essai réel |
-| Appairage | Le téléphone scanne le QR de la popup ; l'extension rejoint le groupe | Essai réel |
-| Chrome ouvert sans activité pendant une heure | Toujours connecté, messages reçus | Essai réel |
-| Chrome fermé puis rouvert | Les messages en attente arrivent | Essai réel |
-| Compatibilité | Golden et vecteurs passent côté TypeScript | CI |
-| Clés | Jamais en clair dans le profil Chrome ni dans les logs | Revue + test |
-| Une page web ou une autre extension | Ne peut pas parler au service worker | Revue du manifeste |
+| Scénario | Attendu | Vérifié par | Résultat (12 oct. 2026) |
+| --- | --- | --- | --- |
+| Clic droit sur un lien → téléphone | Notification sur le téléphone | Essai réel | OK |
+| Téléphone → Mac, lien | Notification Chrome ; clic ouvre le lien | Essai réel | OK |
+| Message reçu, popup ou appli Android ouverte | Pas de notification ; l'élément apparaît dans la liste | Essai réel | OK |
+| Sélection de texte → Windows | Arrive sur le PC | Essai réel | OK |
+| Appairage | Le téléphone scanne le QR de la popup ; l'extension rejoint le groupe | Essai réel | OK |
+| Chrome ouvert sans activité pendant une heure | Toujours connecté, messages reçus | Essai réel | OK |
+| Chrome fermé puis rouvert | Les messages en attente arrivent | Essai réel | OK |
+| Compatibilité | Golden et vecteurs passent côté TypeScript | CI | OK |
+| Clés | Jamais en clair dans le profil Chrome ni dans les logs | Revue + test | OK |
+| Une page web ou une autre extension | Ne peut pas parler au service worker | Revue du manifeste | OK |
 
 ## Risques
 
