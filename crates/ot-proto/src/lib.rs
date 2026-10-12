@@ -38,8 +38,21 @@ pub const PAIR_REGISTER_DOMAIN: &[u8] = b"ot-pair-reg-v1";
 /// Taille du jeton d'appairage.
 pub const PAIR_TOKEN_LEN: usize = 10;
 
+/// Taille maximale d'un nom d'appareil, en caractères.
+pub const MAX_NAME_CHARS: usize = 64;
+
 /// Chemin de l'endpoint WebSocket.
 pub const WS_PATH: &str = "/v1/ws";
+
+/// Nom d'appareil accepté par le relais : 1 à [`MAX_NAME_CHARS`] caractères
+/// imprimables, sans espace autour. Les clients le vérifient avant de le
+/// signer (QR inversé) ; le relais l'impose à l'enregistrement.
+pub fn valid_device_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.trim() == name
+        && name.chars().count() <= MAX_NAME_CHARS
+        && !name.chars().any(char::is_control)
+}
 
 /// Message signé par le client : `"ot-auth-v1" ‖ nonce ‖ device_id`.
 pub fn auth_message(nonce: &[u8; NONCE_LEN], device_id: &DeviceId) -> Vec<u8> {

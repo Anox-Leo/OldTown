@@ -19,10 +19,7 @@ pub fn verify(
     device_id: &DeviceId,
     sig: &[u8; 64],
 ) -> bool {
-    let Ok(key) = VerifyingKey::from_bytes(public_key) else {
-        return false;
-    };
-    key.verify_strict(&auth_message(nonce, device_id), &Signature::from_bytes(sig)).is_ok()
+    verify_sig(public_key, &auth_message(nonce, device_id), sig)
 }
 
 pub fn new_token() -> [u8; PAIR_TOKEN_LEN] {
@@ -44,10 +41,7 @@ pub fn verify_redeem(
     token_hash: &[u8; 32],
     sig: &[u8; 64],
 ) -> bool {
-    let Ok(key) = VerifyingKey::from_bytes(public_key) else {
-        return false;
-    };
-    key.verify_strict(&pair_redeem_message(nonce, token_hash), &Signature::from_bytes(sig)).is_ok()
+    verify_sig(public_key, &pair_redeem_message(nonce, token_hash), sig)
 }
 
 /// Vérifie la signature de `pair_register` par la clé du nouvel appareil.
@@ -57,12 +51,12 @@ pub fn verify_register(
     name: &str,
     sig: &[u8; 64],
 ) -> bool {
-    let Ok(key) = VerifyingKey::from_bytes(public_key) else {
-        return false;
-    };
-    key.verify_strict(
-        &pair_register_message(device_id, public_key, name),
-        &Signature::from_bytes(sig),
-    )
-    .is_ok()
+    verify_sig(public_key, &pair_register_message(device_id, public_key, name), sig)
+}
+
+/// Signature Ed25519 stricte de `msg` par `public_key` ; une clé invalide
+/// donne `false`.
+fn verify_sig(public_key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
+    VerifyingKey::from_bytes(public_key)
+        .is_ok_and(|key| key.verify_strict(msg, &Signature::from_bytes(sig)).is_ok())
 }

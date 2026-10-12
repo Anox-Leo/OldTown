@@ -1,7 +1,9 @@
 //! Une connexion WebSocket : défi, authentification, puis boucle de session.
 
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
-use ot_proto::{DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES};
+use ot_proto::{
+    DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES, MAX_NAME_CHARS, valid_device_name,
+};
 use std::sync::atomic::Ordering::Relaxed;
 use time::OffsetDateTime;
 use tokio::time::{Instant, timeout_at};
@@ -118,15 +120,6 @@ async fn auth_failed(
     Err(Close("auth_failed"))
 }
 
-/// Taille maximale d'un nom d'appareil, en caractères.
-const MAX_NAME_CHARS: usize = 64;
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.chars().count() <= MAX_NAME_CHARS
-        && !name.chars().any(char::is_control)
-}
-
 fn invalid_name() -> String {
     format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables")
 }
@@ -143,7 +136,7 @@ async fn redeem(
     sig: &[u8; 64],
 ) -> Result<DeviceId, Close> {
     let name = name.trim();
-    if !valid_name(name) {
+    if !valid_device_name(name) {
         return pairing_rejected(inner, socket, ErrorCode::BadFrame, invalid_name()).await;
     }
     let hash = auth::token_hash(token);
@@ -350,7 +343,7 @@ impl Active<'_> {
             Frame::error(code, message, reference.clone())
         };
         let m = &self.inner.metrics;
-        if !valid_name(name) || name.trim() != name {
+        if !valid_device_name(name) {
             return reject(m, ErrorCode::BadFrame, invalid_name());
         }
         if !auth::verify_register(public_key, &device_id, name, sig) {

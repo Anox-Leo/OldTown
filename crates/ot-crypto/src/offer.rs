@@ -12,7 +12,7 @@ use std::fmt;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use ot_proto::{DeviceId, Ulid, pair_register_message};
+use ot_proto::{DeviceId, Ulid, pair_register_message, valid_device_name};
 use zeroize::Zeroizing;
 
 use crate::{CryptoError, PairingSecret, Result};
@@ -21,8 +21,6 @@ use crate::{CryptoError, PairingSecret, Result};
 pub const OFFER_PREFIX: &str = "oldtown://sponsor?o=";
 const VERSION: u8 = 1;
 const FIXED_LEN: usize = 1 + 16 + 32 + 32 + 16 + 64;
-/// Taille maximale d'un nom d'appareil, en caractères (comme le relais).
-pub const MAX_NAME_CHARS: usize = 64;
 
 /// Demande d'appairage affichée par le nouvel appareil.
 #[derive(Clone, PartialEq, Eq)]
@@ -38,15 +36,6 @@ pub struct PairingOffer {
     pub secret: PairingSecret,
     /// Signature de [`pair_register_message`] par `sign_key`.
     pub sig: [u8; 64],
-}
-
-/// Nom accepté par le relais : 1 à 64 caractères imprimables, sans espace
-/// autour.
-pub fn valid_device_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.trim() == name
-        && name.chars().count() <= MAX_NAME_CHARS
-        && !name.chars().any(char::is_control)
 }
 
 impl PairingOffer {
@@ -182,11 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn names_follow_relay_rules() {
-        for bad in ["", " mac", "mac ", "a\nb", &"x".repeat(65)] {
-            assert!(!valid_device_name(bad), "{bad:?}");
-        }
-        assert!(valid_device_name("Téléphone de Léo"));
+    fn invalid_names_are_refused() {
         let signer = SigningKey::from_bytes(&[2; 32]);
         let secret = PairingSecret::from_bytes([3; 16]);
         assert!(PairingOffer::new(DeviceId::generate(), "", &signer, [4; 32], secret).is_err());
