@@ -17,11 +17,28 @@ allow = [
     "BSD-3-Clause",
     "Zlib",
     "Unicode-3.0",
+    # Permissive, équivalente à MIT : ring, rustls-webpki, untrusted (TLS,
+    # étape 3, note 0022).
+    "ISC",
 ]
 confidence-threshold = 0.9
 # MPL-2.0 (copyleft faible, par fichier) : toléré pour cette dépendance de
 # `directories`, que l'on ne modifie pas.
-exceptions = [{ crate = "option-ext", allow = ["MPL-2.0"] }]
+exceptions = [
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+    # Liste des autorités de Mozilla (données), licence permissive : client
+    # `wss` (note 0022).
+    { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
+    # UniFFI (pont Android, étape 3) : MPL-2.0, utilisée sans modification ;
+    # le copyleft porte sur ses fichiers seulement (note 0022). Le générateur
+    # (option `bindgen` d'ot-ffi) n'est pas dans le graphe vérifié.
+    { crate = "uniffi", allow = ["MPL-2.0"] },
+    { crate = "uniffi_core", allow = ["MPL-2.0"] },
+    { crate = "uniffi_internal_macros", allow = ["MPL-2.0"] },
+    { crate = "uniffi_macros", allow = ["MPL-2.0"] },
+    { crate = "uniffi_meta", allow = ["MPL-2.0"] },
+    { crate = "uniffi_pipeline", allow = ["MPL-2.0"] },
+]
 
 [bans]
 multiple-versions = "allow"

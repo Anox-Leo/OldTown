@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ot_crypto::PairingCode;
+use ot_crypto::{PairingCode, PairingOffer};
 use ot_proto::{
     Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid, WS_PATH,
 };
@@ -17,6 +17,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::keyring::Keyring;
 use crate::secure::{Effect, GroupInfo, Secure};
+use crate::tls::{self, TlsRoots};
 use crate::{Dedup, Identity};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -25,9 +26,9 @@ pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Attente maximale de la réponse du relais à la fermeture.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
-/// Sans aucune trame du serveur (qui pinge toutes les 30 s) pendant ce délai,
+/// Sans aucun message du serveur (qui pinge toutes les 30 s) pendant ce délai,
 /// la connexion est considérée morte.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 
 #[derive(Clone)]
 pub struct ClientConfig {
@@ -40,6 +41,11 @@ pub struct ClientConfig {
     /// `msg_id` déjà vus lors d'une exécution précédente.
     pub seen: Vec<Ulid>,
     pub backoff: Backoff,
+    /// Autorités de confiance pour `wss://`.
+    pub tls: TlsRoots,
+    /// Silence du serveur (pings compris) au-delà duquel la connexion est
+    /// considérée morte ; [`IDLE_TIMEOUT`] par défaut.
+    pub idle_timeout: Duration,
 }
 
 impl ClientConfig {
@@ -56,6 +62,8 @@ impl ClientConfig {
             keyring,
             seen: Vec::new(),
             backoff: Backoff::default(),
+            tls: TlsRoots::default(),
+            idle_timeout: IDLE_TIMEOUT,
         }
     }
 
@@ -211,6 +219,9 @@ enum Command {
     PairJoin { code: PairingCode, sponsor: DeviceId, name: String, reply: Reply<Accepted> },
     Rotate(Vec<DeviceId>, Reply<Rotation>),
     Group(oneshot::Sender<Option<GroupInfo>>),
+    PairOffer(String, Reply<String>),
+    Sponsor(Box<PairingOffer>, Reply<Accepted>),
+    Reconnect,
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -303,6 +314,33 @@ impl Client {
         Ok(epoch)
     }
 
+    /// Nouvel appareil, QR inversé (note 0022) : texte du QR à afficher au
+    /// parrain. Le groupe est adopté à l'arrivée de sa réponse
+    /// ([`Event::GroupChanged`]), tant que ce client tourne. En attendant
+    /// l'enregistrement, l'authentification échoue ([`Event::AuthFailed`]) :
+    /// prévoir un `backoff.max` court.
+    pub async fn pair_offer(&self, name: &str) -> Result<String, ClientError> {
+        let name = name.to_owned();
+        self.request(|tx| Command::PairOffer(name, tx)).await
+    }
+
+    /// Parrain, QR inversé : fait enregistrer par le relais l'appareil dont
+    /// `qr` est le QR scanné, puis lui envoie clés et roster. Renvoie
+    /// l'appareil ajouté une fois la réponse acceptée par le relais ;
+    /// [`Event::PairingCompleted`] suit.
+    pub async fn sponsor(&self, qr: &str) -> Result<(DeviceId, String), ClientError> {
+        let offer = PairingOffer::parse(qr).map_err(|e| ClientError::Pairing(e.to_string()))?;
+        let added = (offer.device_id.clone(), offer.name.clone());
+        self.request(|tx| Command::Sponsor(Box::new(offer), tx)).await?;
+        Ok(added)
+    }
+
+    /// Le réseau a changé : ferme la connexion en cours s'il y en a une et se
+    /// reconnecte tout de suite, sans attendre le délai de reconnexion.
+    pub fn reconnect_now(&self) {
+        let _ = self.cmd.send(Command::Reconnect);
+    }
+
     /// État du groupe ; `None` sans groupe.
     pub async fn group(&self) -> Result<Option<GroupInfo>, ClientError> {
         let (tx, rx) = oneshot::channel();
@@ -323,6 +361,8 @@ impl Client {
 enum End {
     /// Reconnexion à prévoir.
     Lost(String),
+    /// Reconnexion immédiate demandée par l'appli.
+    Reconnect,
     AuthFailed(String),
     Shutdown(Option<oneshot::Sender<()>>),
 }
@@ -338,7 +378,25 @@ struct Outgoing {
 enum Next {
     /// Trames à envoyer si la session est ouverte (sinon, en file).
     Frames(Vec<Frame>),
+    Reconnect,
     Shutdown(Option<oneshot::Sender<()>>),
+}
+
+/// Parrainage par QR inversé en attente de `pair_registered`.
+struct Registration {
+    offer: Box<PairingOffer>,
+    reply: Reply<Accepted>,
+}
+
+impl Registration {
+    fn frame(&self) -> Frame {
+        Frame::PairRegister {
+            device_id: self.offer.device_id.clone(),
+            name: self.offer.name.clone(),
+            public_key: self.offer.sign_key,
+            sig: self.offer.sig,
+        }
+    }
 }
 
 struct Worker {
@@ -355,6 +413,8 @@ struct Worker {
     device_requests: VecDeque<Reply<Vec<DeviceInfo>>>,
     /// Demandes `pair_create` en attente de réponse, dans l'ordre.
     pair_requests: VecDeque<Reply<PairingInvitation>>,
+    /// Enregistrements par QR inversé en attente de réponse.
+    registrations: Vec<Registration>,
 }
 
 impl Worker {
@@ -376,6 +436,7 @@ impl Worker {
             outbox: Vec::new(),
             device_requests: VecDeque::new(),
             pair_requests: VecDeque::new(),
+            registrations: Vec::new(),
         }
     }
 
@@ -452,6 +513,28 @@ impl Worker {
                 let _ = tx.send(self.secure.info());
                 Next::Frames(Vec::new())
             }
+            Command::PairOffer(name, tx) => {
+                let _ = tx.send(self.secure.offer(&name).map(|o| o.encode().to_string()));
+                Next::Frames(Vec::new())
+            }
+            Command::Sponsor(offer, reply) => {
+                let pending =
+                    self.registrations.iter().any(|r| r.offer.device_id == offer.device_id);
+                let res = if pending {
+                    Err(ClientError::Pairing("appairage déjà en cours".into()))
+                } else {
+                    self.secure.check_offer(&offer)
+                };
+                if let Err(e) = res {
+                    let _ = reply.send(Err(e));
+                    return Next::Frames(Vec::new());
+                }
+                let registration = Registration { offer, reply };
+                let frame = registration.frame();
+                self.registrations.push(registration);
+                Next::Frames(vec![frame])
+            }
+            Command::Reconnect => Next::Reconnect,
         }
     }
 
@@ -499,6 +582,12 @@ impl Worker {
                     self.emit(Event::Disconnected { reason }).await;
                     self.config.backoff.delay(attempt)
                 }
+                End::Reconnect => {
+                    tracing::debug!("reconnexion demandée");
+                    self.emit(Event::Disconnected { reason: "changement de réseau".into() }).await;
+                    attempt = 0;
+                    continue;
+                }
                 End::AuthFailed(message) => {
                     tracing::warn!(message, "authentification refusée");
                     self.emit(Event::AuthFailed { message }).await;
@@ -523,8 +612,12 @@ impl Worker {
                 () = sleep_until(until) => return None,
                 cmd = self.cmd.recv() => {
                     // Hors ligne, les trames restent en file jusqu'à la connexion.
-                    if let Next::Shutdown(done) = self.on_command(cmd).await {
-                        return Some(done.unwrap_or_else(|| oneshot::channel().0));
+                    match self.on_command(cmd).await {
+                        Next::Shutdown(done) => {
+                            return Some(done.unwrap_or_else(|| oneshot::channel().0));
+                        }
+                        Next::Reconnect => return None,
+                        Next::Frames(_) => {}
                     }
                 }
             }
@@ -543,6 +636,9 @@ impl Worker {
         for tx in self.pair_requests.drain(..) {
             let _ = tx.send(Err(ClientError::Closed));
         }
+        for r in self.registrations.drain(..) {
+            let _ = r.reply.send(Err(ClientError::Closed));
+        }
     }
 
     async fn connect(&mut self) -> Result<(Ws, u64), End> {
@@ -550,8 +646,8 @@ impl Worker {
         let ws_config = WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME_BYTES))
             .max_frame_size(Some(MAX_FRAME_BYTES));
-        let connect = tokio_tungstenite::connect_async_with_config(&url, Some(ws_config), true);
-        let (mut ws, _) = match timeout(HANDSHAKE_TIMEOUT, connect).await {
+        let connect = tls::connect(&url, &self.config.tls, Some(ws_config));
+        let mut ws = match timeout(HANDSHAKE_TIMEOUT, connect).await {
             Ok(Ok(ok)) => ok,
             Ok(Err(e)) => return Err(End::Lost(format!("connexion à {url} : {e}"))),
             Err(_) => return Err(End::Lost(format!("connexion à {url} : délai dépassé"))),
@@ -601,18 +697,21 @@ impl Worker {
             self.outbox.iter().map(|o| Frame::Send { env: o.env.clone() }).collect();
         resume.extend(self.device_requests.iter().map(|_| Frame::ListDevices));
         resume.extend(self.pair_requests.iter().map(|_| Frame::PairCreate));
+        resume.extend(self.registrations.iter().map(Registration::frame));
         for frame in &resume {
             if let Err(end) = send_frame(ws, frame).await {
                 return end;
             }
         }
 
-        let mut idle = Instant::now() + IDLE_TIMEOUT;
+        let idle_timeout = self.config.idle_timeout;
+        let mut idle = Instant::now() + idle_timeout;
         loop {
             tokio::select! {
                 () = sleep_until(idle) => return End::Lost("plus de nouvelles du serveur".into()),
                 cmd = self.cmd.recv() => match self.on_command(cmd).await {
                     Next::Shutdown(done) => return End::Shutdown(done),
+                    Next::Reconnect => return End::Reconnect,
                     Next::Frames(frames) => {
                         for frame in &frames {
                             if let Err(end) = send_frame(ws, frame).await {
@@ -621,10 +720,13 @@ impl Worker {
                         }
                     }
                 },
-                frame = recv_frame(ws) => {
-                    idle = Instant::now() + IDLE_TIMEOUT;
-                    let res = match frame {
-                        Ok(frame) => self.on_frame(ws, frame).await,
+                msg = recv_message(ws) => {
+                    // Tout message compte, pings du serveur compris : sans eux,
+                    // une session calme tombait toutes les 75 s.
+                    idle = Instant::now() + idle_timeout;
+                    let res = match msg {
+                        Ok(Some(frame)) => self.on_frame(ws, frame).await,
+                        Ok(None) => Ok(()),
                         Err(end) => Err(end),
                     };
                     if let Err(end) = res {
@@ -670,8 +772,46 @@ impl Worker {
                     let _ = tx.send(res);
                 }
             }
+            Frame::PairRegistered { device_id } => {
+                let Some(i) =
+                    self.registrations.iter().position(|r| r.offer.device_id == device_id)
+                else {
+                    tracing::warn!(device = %device_id, "pair_registered inattendu");
+                    return Ok(());
+                };
+                let Registration { offer, reply } = self.registrations.remove(i);
+                match self.secure.welcome_offer(&offer) {
+                    Ok((welcome, effects)) => {
+                        // Réponse au nouvel appareil d'abord, puis le roster à tous.
+                        let mut frames = match self.queue(welcome, Some(reply)) {
+                            Next::Frames(f) => f,
+                            _ => Vec::new(),
+                        };
+                        frames.extend(self.effects(effects).await);
+                        for frame in &frames {
+                            send_frame(ws, frame).await?;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
+                }
+            }
             Frame::Error { code: ErrorCode::AuthFailed, message, .. } => {
                 return Err(End::AuthFailed(message));
+            }
+            Frame::Error { code, message, reference }
+                if reference.as_deref().is_some_and(|r| {
+                    self.registrations.iter().any(|reg| reg.offer.device_id.as_str() == r)
+                }) =>
+            {
+                let r = reference.as_deref().unwrap_or_default();
+                if let Some(i) =
+                    self.registrations.iter().position(|reg| reg.offer.device_id.as_str() == r)
+                {
+                    let reg = self.registrations.remove(i);
+                    let _ = reg.reply.send(Err(ClientError::Rejected { code, message }));
+                }
             }
             Frame::Error { code, message, reference } => {
                 let pos = reference
@@ -704,21 +844,33 @@ async fn send_frame(ws: &mut Ws, frame: &Frame) -> Result<(), End> {
     ws.send(Message::text(frame.to_json())).await.map_err(|e| End::Lost(format!("envoi : {e}")))
 }
 
-/// Lit la prochaine trame du protocole ; les pings sont traités par tungstenite.
+/// Lit le prochain message : `Some` pour une trame du protocole, `None` pour
+/// un ping, un pong ou une trame illisible (les pongs sont envoyés par
+/// tungstenite).
+async fn recv_message(ws: &mut Ws) -> Result<Option<Frame>, End> {
+    match ws.next().await {
+        None => Err(End::Lost("connexion fermée".into())),
+        Some(Err(e)) => Err(End::Lost(format!("lecture : {e}"))),
+        Some(Ok(Message::Close(frame))) => {
+            let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
+            Err(End::Lost(format!("fermée par le serveur : {reason}")))
+        }
+        Some(Ok(Message::Text(text))) => match Frame::from_json(&text) {
+            Ok(frame) => Ok(Some(frame)),
+            Err(e) => {
+                tracing::warn!(error = %e, "trame illisible ignorée");
+                Ok(None)
+            }
+        },
+        Some(Ok(_)) => Ok(None),
+    }
+}
+
+/// Prochaine trame du protocole, en ignorant le reste.
 async fn recv_frame(ws: &mut Ws) -> Result<Frame, End> {
     loop {
-        match ws.next().await {
-            None => return Err(End::Lost("connexion fermée".into())),
-            Some(Err(e)) => return Err(End::Lost(format!("lecture : {e}"))),
-            Some(Ok(Message::Close(frame))) => {
-                let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
-                return Err(End::Lost(format!("fermée par le serveur : {reason}")));
-            }
-            Some(Ok(Message::Text(text))) => match Frame::from_json(&text) {
-                Ok(frame) => return Ok(frame),
-                Err(e) => tracing::warn!(error = %e, "trame illisible ignorée"),
-            },
-            Some(Ok(_)) => {}
+        if let Some(frame) = recv_message(ws).await? {
+            return Ok(frame);
         }
     }
 }

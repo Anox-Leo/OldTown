@@ -217,3 +217,77 @@ async fn store_never_keeps_token_in_clear() {
     let hash = token_hash(&token);
     assert!(bytes.windows(hash.len()).any(|w| w == hash), "le hash doit y être");
 }
+
+/// Étape 3, T9 : enregistrement par le parrain (QR inversé, note 0022).
+fn register_frame(id: &ot_proto::DeviceId, name: &str, key: &ed25519_dalek::SigningKey) -> Frame {
+    use ed25519_dalek::Signer;
+    let public_key = key.verifying_key().to_bytes();
+    let sig = key.sign(&ot_proto::pair_register_message(id, &public_key, name)).to_bytes();
+    Frame::PairRegister { device_id: id.clone(), name: name.into(), public_key, sig }
+}
+
+#[tokio::test]
+async fn sponsor_registers_a_device_by_reverse_qr() {
+    let (server, sponsor) = setup(test_config()).await;
+    let (mut raw, _) = Raw::login(&server, &sponsor).await;
+    let id = ot_proto::DeviceId::generate();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
+
+    raw.send(&register_frame(&id, "windows", &key)).await;
+    assert_eq!(raw.recv().await, Some(Frame::PairRegistered { device_id: id.clone() }));
+    let stored = server.relay.store().device(&id).await.unwrap().unwrap();
+    assert_eq!(
+        (stored.name.as_str(), stored.public_key),
+        ("windows", key.verifying_key().to_bytes())
+    );
+
+    // Le nouvel appareil s'authentifie sous l'identifiant qu'il a choisi.
+    let nonce_dev = TestDevice {
+        id: id.clone(),
+        name: "windows".into(),
+        identity: Identity::from_bytes(&[9; 32]),
+        keyring: std::sync::Arc::new(ot_core::MemoryKeyring::new()),
+    };
+    let (_b, pending) = Raw::login(&server, &nonce_dev).await;
+    assert_eq!(pending, 0);
+
+    // Rejeu : identifiant et clé déjà pris ; la session du parrain reste ouverte.
+    raw.send(&register_frame(&id, "autre", &key)).await;
+    match raw.recv().await {
+        Some(Frame::Error { code: ErrorCode::PairingInvalid, reference, .. }) => {
+            assert_eq!(reference.as_deref(), Some(id.as_str()));
+        }
+        other => panic!("pairing_invalid attendu, reçu {other:?}"),
+    }
+    raw.send(&Frame::ListDevices).await;
+    assert!(matches!(raw.recv().await, Some(Frame::Devices { .. })));
+}
+
+#[tokio::test]
+async fn reverse_qr_registration_is_checked() {
+    let (server, sponsor) = setup(test_config()).await;
+    let (mut raw, _) = Raw::login(&server, &sponsor).await;
+    let key = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
+    let id = ot_proto::DeviceId::generate();
+
+    // Nom changé après signature (relais ou proxy qui triche).
+    let Frame::PairRegister { device_id, public_key, sig, .. } =
+        register_frame(&id, "windows", &key)
+    else {
+        unreachable!()
+    };
+    raw.send(&Frame::PairRegister { device_id, name: "intrus".into(), public_key, sig }).await;
+    assert_error(raw.recv().await.unwrap(), ErrorCode::PairingInvalid);
+    // Nom déjà pris, nom invalide.
+    raw.send(&register_frame(&id, "mac", &key)).await;
+    assert_error(raw.recv().await.unwrap(), ErrorCode::NameTaken);
+    raw.send(&register_frame(&id, " windows", &key)).await;
+    assert_error(raw.recv().await.unwrap(), ErrorCode::BadFrame);
+    assert!(server.relay.store().device(&id).await.unwrap().is_none());
+
+    // Hors session authentifiée : refusé avant `auth`.
+    let mut anon = Raw::connect(&server).await;
+    anon.challenge().await;
+    anon.send(&register_frame(&id, "windows", &key)).await;
+    assert_error(anon.recv().await.unwrap(), ErrorCode::UnexpectedFrame);
+}

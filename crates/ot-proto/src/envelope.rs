@@ -23,6 +23,16 @@ impl DeviceId {
         Self(format!("{}{}", Self::PREFIX, Ulid::generate()))
     }
 
+    pub fn from_ulid(ulid: Ulid) -> Self {
+        Self(format!("{}{ulid}", Self::PREFIX))
+    }
+
+    /// ULID de l'identifiant (forme binaire compacte, 16 octets).
+    pub fn ulid(&self) -> Ulid {
+        // Invariant : un `DeviceId` n'est construit que d'un ULID valide.
+        Ulid::from_string(&self.0[Self::PREFIX.len()..]).expect("DeviceId toujours valide")
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

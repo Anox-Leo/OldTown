@@ -8,8 +8,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use ot_core::{
-    Client, ClientConfig, Content, ContentKind, Dedup, DeviceId, Event, Events, GroupInfo,
-    Identity, Received,
+    Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, GroupInfo, Identity,
+    Received, TlsRoots,
 };
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
@@ -99,20 +99,35 @@ enum GroupCommand {
 enum PairCommand {
     /// Parraine un nouvel appareil : affiche un code et attend sa demande
     /// (10 minutes au plus).
-    New,
-    /// Rejoint le groupe avec le code affiché par `ot pair new`.
+    New {
+        /// Affiche aussi le code en QR, à scanner par le téléphone.
+        #[arg(long)]
+        qr: bool,
+    },
+    /// Rejoint le groupe avec le code affiché par `ot pair new`, ou, avec
+    /// --qr, en affichant un QR à scanner par un membre (le téléphone).
     Join {
-        /// URL du relais, ex. ws://relais:7878.
+        /// URL du relais, ex. wss://relais:7878.
         #[arg(long)]
         server: String,
         /// Nom de cet appareil.
         #[arg(long)]
         name: String,
-        /// Code `ot1-…`.
-        code: String,
+        /// Code `ot1-…` (sans --qr).
+        #[arg(required_unless_present = "qr", conflicts_with = "qr")]
+        code: Option<String>,
+        /// Affiche un QR que le parrain scanne : rien à taper ici.
+        #[arg(long)]
+        qr: bool,
         /// Repart de zéro si cet appareil est déjà enregistré.
         #[arg(long)]
         force: bool,
+    },
+    /// Parraine l'appareil dont on a copié le texte du QR (`oldtown://sponsor?…`),
+    /// affiché par `ot pair join --qr`.
+    Sponsor {
+        /// Texte du QR.
+        qr: String,
     },
 }
 
@@ -132,10 +147,14 @@ fn main() -> Result<()> {
             Command::Group(GroupCommand::Init { force }) => group_init(&home, force),
             Command::Group(GroupCommand::Show) => group_show(&home),
             Command::Group(GroupCommand::Rotate { exclude }) => group_rotate(&home, exclude).await,
-            Command::Pair(PairCommand::New) => pair_new(&home, offset).await,
-            Command::Pair(PairCommand::Join { server, name, code, force }) => {
+            Command::Pair(PairCommand::New { qr }) => pair_new(&home, qr, offset).await,
+            Command::Pair(PairCommand::Join { server, name, code: Some(code), force, .. }) => {
                 pair_join(&home, server, name, code, force).await
             }
+            Command::Pair(PairCommand::Join { server, name, code: None, force, .. }) => {
+                pair_join_qr(&home, server, name, force).await
+            }
+            Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
         }
     })
 }
@@ -243,7 +262,7 @@ async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
     if body.is_empty() {
         bail!("texte vide");
     }
-    let content = classify(body);
+    let content = ot_core::classify(&body);
     // Les destinataires sont choisis dans le roster, jamais dans la liste du relais.
     let group = group(home)?;
     let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
@@ -260,14 +279,6 @@ async fn within<T, E: std::error::Error + Send + Sync + 'static>(
     fut: impl Future<Output = Result<T, E>>,
 ) -> Result<T> {
     Ok(tokio::time::timeout(COMMAND_TIMEOUT, fut).await.context("pas de réponse du relais")??)
-}
-
-/// Un texte d'un seul mot commençant par http(s):// est un lien.
-fn classify(body: String) -> Content {
-    let trimmed = body.trim();
-    let is_link = (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
-        && !trimmed.contains(char::is_whitespace);
-    if is_link { Content::link(trimmed) } else { Content::text(body) }
 }
 
 /// Membre du groupe désigné par son nom ou son identifiant.
@@ -455,7 +466,22 @@ async fn group_rotate(home: &Home, exclude: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-async fn pair_new(home: &Home, offset: UtcOffset) -> Result<()> {
+/// QR à afficher dans un terminal sombre (modules clairs en caractères
+/// pleins), suivi d'une ligne vide.
+fn print_qr(text: &str) -> Result<()> {
+    use qrcode::render::unicode::Dense1x2;
+    let code = qrcode::QrCode::new(text.as_bytes()).context("texte trop long pour un QR")?;
+    let image = code
+        .render::<Dense1x2>()
+        .dark_color(Dense1x2::Light)
+        .light_color(Dense1x2::Dark)
+        .quiet_zone(true)
+        .build();
+    println!("{image}");
+    Ok(())
+}
+
+async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
     let mut group = Some(group(home)?);
     let (config, _) = registered(home)?;
     let (client, mut events) = start(home)?;
@@ -471,6 +497,15 @@ async fn pair_new(home: &Home, offset: UtcOffset) -> Result<()> {
     println!("Sur le nouvel appareil (le code contient un secret : le transmettre par un");
     println!("canal de confiance, pas par un service tiers) :");
     println!("  ot pair join --server {} --name <nom> {}", config.server_url, invitation.code);
+    if qr {
+        let uri = ot_core::PairUri {
+            server_url: config.server_url.clone(),
+            code: invitation.code.clone(),
+        };
+        println!();
+        println!("Ou scanner ce QR avec l'appli Android (« Rejoindre un groupe ») :");
+        print_qr(&uri.encode())?;
+    }
 
     let mut seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, home.load_seen());
     let left = Duration::try_from(invitation.expires_at - OffsetDateTime::now_utc())
@@ -510,6 +545,80 @@ async fn pair_new(home: &Home, offset: UtcOffset) -> Result<()> {
     result
 }
 
+/// Nouvel appareil, QR inversé (note 0022) : affiche le QR, puis attend
+/// que le parrain l'ait fait enregistrer et ait envoyé le groupe.
+async fn pair_join_qr(home: &Home, server: String, name: String, force: bool) -> Result<()> {
+    if let Some(Config { device_id: Some(id), .. }) = home.load_config()?
+        && !force
+    {
+        bail!("cet appareil est déjà enregistré ({id}) ; --force pour repartir de zéro");
+    }
+    let name = name.trim().to_owned();
+    if !ot_core::valid_device_name(&name) {
+        bail!("nom invalide : 1 à 64 caractères imprimables");
+    }
+    // L'identifiant est choisi ici : le parrain le fait enregistrer tel quel.
+    let identity = Identity::generate();
+    let device_id = DeviceId::generate();
+    home.reset_group()?;
+    home.save_key(&identity)?;
+    home.save_config(&Config {
+        server_url: server,
+        device_name: name.clone(),
+        device_id: Some(device_id.clone()),
+    })?;
+
+    let (config, _) = registered(home)?;
+    let mut client =
+        ClientConfig::new(config.server_url, device_id, home.load_key()?, Arc::new(home.keyring()));
+    // Tant que le parrain n'a pas scanné, l'authentification échoue : on
+    // réessaie souvent.
+    client.backoff =
+        ot_core::Backoff { initial: Duration::from_secs(1), max: Duration::from_secs(3) };
+    let (client, mut events) = Client::start(client);
+    let offer = within(client.pair_offer(&name)).await?;
+
+    println!("Sur le téléphone : OldTown → Groupe → « Ajouter un appareil », puis scanner :");
+    print_qr(&offer)?;
+    println!("Sans téléphone, sur un membre du groupe : ot pair sponsor '<texte ci-dessous>'");
+    println!("  {offer}");
+    println!();
+    println!("En attente du parrain (10 minutes au plus)…");
+
+    let wait = async {
+        loop {
+            match events.next().await {
+                Some(Event::GroupChanged { epoch }) => return Ok(epoch),
+                Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
+                Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
+                Some(_) => {}
+                None => bail!("client arrêté"),
+            }
+        }
+    };
+    let res = tokio::time::timeout(PAIRING_TIMEOUT, wait).await;
+    client.shutdown().await;
+    let epoch = res.map_err(|_| {
+        anyhow!("aucun parrain en 10 minutes : relancer `ot pair join --qr --force`")
+    })??;
+    println!("Groupe rejoint (époque {epoch}).");
+    group_show(home)
+}
+
+/// Parrain, QR inversé, depuis un terminal : texte du QR collé.
+async fn pair_sponsor(home: &Home, qr: &str) -> Result<()> {
+    group(home)?;
+    let (client, mut events) = start(home)?;
+    connected(&mut events).await?;
+    let res = within(client.sponsor(qr)).await;
+    // La réponse et le roster sont déjà écrits sur la connexion : le relais
+    // les lit avant la fermeture.
+    client.shutdown().await;
+    let (id, name) = res?;
+    println!("« {name} » ({id}) a rejoint le groupe.");
+    Ok(())
+}
+
 async fn pair_join(
     home: &Home,
     server: String,
@@ -524,7 +633,8 @@ async fn pair_join(
     }
     let name = name.trim().to_owned();
     let identity = Identity::generate();
-    let redeemed = ot_core::redeem_pairing(&server, &identity, &name, &code).await?;
+    let redeemed =
+        ot_core::redeem_pairing(&server, &TlsRoots::default(), &identity, &name, &code).await?;
 
     home.reset_group()?;
     home.save_key(&identity)?;
@@ -562,17 +672,4 @@ async fn pair_join(
     })??;
     println!("Groupe rejoint (époque {epoch}).");
     group_show(home)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn links_are_detected() {
-        assert_eq!(classify("https://example.org/a?b".into()).kind, ContentKind::Link);
-        assert_eq!(classify(" http://x.fr ".into()), Content::link("http://x.fr"));
-        assert_eq!(classify("voir https://x.fr".into()).kind, ContentKind::Text);
-        assert_eq!(classify("bonjour".into()).kind, ContentKind::Text);
-    }
 }

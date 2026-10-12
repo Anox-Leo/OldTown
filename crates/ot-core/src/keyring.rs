@@ -1,12 +1,16 @@
-//! Stockage des clés et de l'état du groupe. Chaque appli fournit son
-//! [`Keyring`] : fichiers `0600` pour la CLI, coffre de l'OS pour les applis.
+//! Stockage des clés et de l'état du groupe. Chaque appli fournit un
+//! [`SecretStore`] (fichiers `0600` pour la CLI, Keystore pour Android) ;
+//! [`StoreKeyring`] en tire le [`Keyring`] du cœur.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use ot_crypto::{ExchangeKeyPair, GroupKey, Roster};
-use ot_proto::{DeviceId, Envelope};
+use ot_proto::{DeviceId, Envelope, b64};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
+use zeroize::Zeroizing;
 
 /// Durée pendant laquelle une clé de groupe remplacée reste utilisable pour
 /// lire les messages en retard (durée de vie des messages sur le relais).
@@ -34,6 +38,147 @@ pub trait Keyring: Send + Sync {
     /// Messages d'époque inconnue, mis de côté (au plus [`MAX_QUARANTINE`]).
     fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError>;
     fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError>;
+}
+
+/// Octets nommés, rangés à l'abri par l'appli. Les noms sont courts, en ASCII
+/// (`group.json`, `exchange.key`…). Les méthodes sont synchrones et rapides.
+pub trait SecretStore: Send + Sync {
+    /// Valeur enregistrée sous `name`, `None` si elle n'existe pas.
+    fn get(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError>;
+    /// Remplace la valeur de `name` (écriture atomique).
+    fn put(&self, name: &str, value: &[u8]) -> Result<(), KeyringError>;
+    /// Efface `name` ; sans effet s'il n'existe pas.
+    fn delete(&self, name: &str) -> Result<(), KeyringError>;
+}
+
+/// Noms utilisés par [`StoreKeyring`].
+pub mod names {
+    /// Clé X25519 secrète, en base64 suivi d'un saut de ligne.
+    pub const EXCHANGE_KEY: &str = "exchange.key";
+    /// [`super::GroupKeys`] en JSON.
+    pub const GROUP: &str = "group.json";
+    /// Roster en JSON.
+    pub const ROSTER: &str = "roster.json";
+    /// Messages mis de côté, en JSON.
+    pub const QUARANTINE: &str = "quarantine.json";
+}
+
+/// [`Keyring`] rangé dans un [`SecretStore`]. Le format des valeurs est celui
+/// des fichiers de la CLI depuis l'étape 2 : une installation existante se
+/// relit sans conversion.
+#[derive(Clone)]
+pub struct StoreKeyring {
+    store: Arc<dyn SecretStore>,
+}
+
+impl StoreKeyring {
+    pub fn new(store: Arc<dyn SecretStore>) -> Self {
+        Self { store }
+    }
+
+    /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
+    pub fn forget_group(&self) -> Result<(), KeyringError> {
+        for name in [names::EXCHANGE_KEY, names::GROUP, names::ROSTER, names::QUARANTINE] {
+            self.store.delete(name)?;
+        }
+        Ok(())
+    }
+
+    fn read_json<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>, KeyringError> {
+        let Some(bytes) = self.store.get(name)? else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| KeyringError(format!("{name} est corrompu : {e}")))
+    }
+
+    fn write_json<T: Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<(), KeyringError> {
+        let bytes = serde_json::to_vec_pretty(value)
+            .map_err(|e| KeyringError(format!("sérialisation de {name} : {e}")))?;
+        self.store.put(name, &Zeroizing::new(bytes))
+    }
+}
+
+impl Keyring for StoreKeyring {
+    fn load_exchange_key(&self) -> Result<Option<ExchangeKeyPair>, KeyringError> {
+        let Some(bytes) = self.store.get(names::EXCHANGE_KEY)? else {
+            return Ok(None);
+        };
+        let text = Zeroizing::new(String::from_utf8_lossy(&bytes).into_owned());
+        let secret = Zeroizing::new(
+            b64::decode_array::<32>(text.trim())
+                .ok_or_else(|| KeyringError(format!("{} est corrompu", names::EXCHANGE_KEY)))?,
+        );
+        Ok(Some(ExchangeKeyPair::from_bytes(*secret)))
+    }
+
+    fn save_exchange_key(&self, key: &ExchangeKeyPair) -> Result<(), KeyringError> {
+        let secret = Zeroizing::new(key.to_bytes());
+        let text = Zeroizing::new(format!("{}\n", b64::encode(&*secret)));
+        self.store.put(names::EXCHANGE_KEY, text.as_bytes())
+    }
+
+    fn load_group_keys(&self) -> Result<Option<GroupKeys>, KeyringError> {
+        self.read_json(names::GROUP)
+    }
+
+    fn save_group_keys(&self, keys: &GroupKeys) -> Result<(), KeyringError> {
+        self.write_json(names::GROUP, keys)
+    }
+
+    fn load_roster(&self) -> Result<Option<Roster>, KeyringError> {
+        self.read_json(names::ROSTER)
+    }
+
+    fn save_roster(&self, roster: &Roster) -> Result<(), KeyringError> {
+        self.write_json(names::ROSTER, roster)
+    }
+
+    fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError> {
+        Ok(self.read_json(names::QUARANTINE)?.unwrap_or_default())
+    }
+
+    fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError> {
+        self.write_json(names::QUARANTINE, messages)
+    }
+}
+
+/// [`SecretStore`] en mémoire, pour les tests.
+#[derive(Default)]
+pub struct MemoryStore {
+    values: Mutex<HashMap<String, Zeroizing<Vec<u8>>>>,
+}
+
+impl MemoryStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Zeroizing<Vec<u8>>>> {
+        self.values.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Noms présents, triés.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.lock().keys().cloned().collect();
+        names.sort();
+        names
+    }
+}
+
+impl SecretStore for MemoryStore {
+    fn get(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError> {
+        Ok(self.lock().get(name).cloned())
+    }
+    fn put(&self, name: &str, value: &[u8]) -> Result<(), KeyringError> {
+        self.lock().insert(name.to_owned(), Zeroizing::new(value.to_vec()));
+        Ok(())
+    }
+    fn delete(&self, name: &str) -> Result<(), KeyringError> {
+        self.lock().remove(name);
+        Ok(())
+    }
 }
 
 /// Clés de groupe connues, de la plus ancienne à la plus récente.
@@ -203,6 +348,36 @@ mod tests {
         assert!(keys.prune(t0 + Duration::days(7)));
         assert!(keys.get(1).is_none());
         assert!(keys.current_key().is_some(), "l'époque courante n'expire jamais");
+    }
+
+    #[test]
+    fn store_keyring_roundtrip_and_format() {
+        let store = Arc::new(MemoryStore::new());
+        let keyring = StoreKeyring::new(store.clone());
+        assert!(keyring.load_exchange_key().unwrap().is_none());
+        assert!(keyring.load_quarantine().unwrap().is_empty());
+
+        let pair = ExchangeKeyPair::generate();
+        keyring.save_exchange_key(&pair).unwrap();
+        assert_eq!(keyring.load_exchange_key().unwrap().unwrap().public_key(), pair.public_key());
+        // Même format que les fichiers de la CLI à l'étape 2.
+        let text = store.get(names::EXCHANGE_KEY).unwrap().unwrap();
+        assert_eq!(&text[..], format!("{}\n", b64::encode(&pair.to_bytes())).as_bytes());
+
+        let keys = GroupKeys::new(1, GroupKey::generate());
+        keyring.save_group_keys(&keys).unwrap();
+        assert_eq!(keyring.load_group_keys().unwrap(), Some(keys));
+
+        keyring.forget_group().unwrap();
+        assert!(store.names().is_empty());
+    }
+
+    #[test]
+    fn corrupted_value_is_reported() {
+        let store = Arc::new(MemoryStore::new());
+        store.put(names::GROUP, b"pas du json").unwrap();
+        let err = StoreKeyring::new(store).load_group_keys().unwrap_err();
+        assert!(err.0.contains("group.json est corrompu"), "{err}");
     }
 
     #[test]

@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use common::*;
 use ot_core::{
-    Client, ClientError, Content, ErrorCode, Event, Events, Identity, MemoryKeyring, redeem_pairing,
+    Client, ClientError, Content, ErrorCode, Event, Events, Identity, MemoryKeyring, TlsRoots,
+    redeem_pairing,
 };
 use ot_proto::{Encoding, b64};
 use ot_server::store::Store;
@@ -38,7 +39,9 @@ fn group_changed(ev: &Event) -> bool {
 /// B s'enregistre avec le code puis envoie sa demande au parrain.
 async fn join(relay_url: &str, code: &str, name: &str) -> (TestDevice, Client, Events) {
     let identity = Identity::generate();
-    let r = within(redeem_pairing(relay_url, &identity, name, code)).await.unwrap();
+    let r = within(redeem_pairing(relay_url, &TlsRoots::default(), &identity, name, code))
+        .await
+        .unwrap();
     let dev = TestDevice {
         id: r.device_id,
         name: name.into(),
@@ -135,15 +138,28 @@ async fn wrong_code_fails_at_relay() {
     let mut forged = invitation.code.clone();
     let other = if &forged[5..6] == "a" { "b" } else { "a" };
     forged.replace_range(5..6, other);
-    let err = within(redeem_pairing(&server.url(), &Identity::generate(), "windows", &forged))
-        .await
-        .unwrap_err();
+    let err = within(redeem_pairing(
+        &server.url(),
+        &TlsRoots::default(),
+        &Identity::generate(),
+        "windows",
+        &forged,
+    ))
+    .await
+    .unwrap_err();
     assert!(
         matches!(err, ClientError::Rejected { code: ErrorCode::PairingInvalid, .. }),
         "{err:?}"
     );
     // Un code mal formé échoue avant même de contacter le relais.
-    let err = redeem_pairing(&server.url(), &Identity::generate(), "windows", "ot1-court").await;
+    let err = redeem_pairing(
+        &server.url(),
+        &TlsRoots::default(),
+        &Identity::generate(),
+        "windows",
+        "ot1-court",
+    )
+    .await;
     assert!(matches!(err, Err(ClientError::Pairing(_))));
 }
 
@@ -276,9 +292,14 @@ async fn pairing_token_expires() {
     let (ca, _ea) = online(&a, &server.url()).await;
     let invitation = within(ca.pair_create()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let err =
-        within(redeem_pairing(&server.url(), &Identity::generate(), "windows", &invitation.code))
-            .await
-            .unwrap_err();
+    let err = within(redeem_pairing(
+        &server.url(),
+        &TlsRoots::default(),
+        &Identity::generate(),
+        "windows",
+        &invitation.code,
+    ))
+    .await
+    .unwrap_err();
     assert!(matches!(err, ClientError::Rejected { code: ErrorCode::PairingInvalid, .. }));
 }

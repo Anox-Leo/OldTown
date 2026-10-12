@@ -10,6 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::Identity;
 use crate::client::{ClientError, HANDSHAKE_TIMEOUT, Ws, ws_url};
+use crate::tls::{self, TlsRoots};
 
 /// Appareil enregistré par le relais.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,14 +24,14 @@ pub struct Redeemed {
 /// du code ne quitte pas l'appareil. Le relais ferme ensuite la connexion.
 pub async fn redeem_pairing(
     server_url: &str,
+    tls: &TlsRoots,
     identity: &Identity,
     name: &str,
     code: &str,
 ) -> Result<Redeemed, ClientError> {
     let code = PairingCode::parse(code).map_err(|e| ClientError::Pairing(e.to_string()))?;
     let url = ws_url(server_url);
-    let (mut ws, _) = match timeout(HANDSHAKE_TIMEOUT, tokio_tungstenite::connect_async(&url)).await
-    {
+    let mut ws = match timeout(HANDSHAKE_TIMEOUT, tls::connect(&url, tls, None)).await {
         Ok(Ok(ok)) => ok,
         Ok(Err(e)) => return Err(ClientError::Connection(format!("{url} : {e}"))),
         Err(_) => return Err(ClientError::Connection(format!("{url} : délai dépassé"))),

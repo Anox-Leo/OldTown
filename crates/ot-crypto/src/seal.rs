@@ -20,10 +20,12 @@ const ENV_DOMAIN: &[u8] = b"ot-env-v1";
 const SIG_DOMAIN: &[u8] = b"ot-sig-v1";
 const PAIR_INFO: &[u8] = b"ot-pair-v1";
 const DEVICE_INFO: &[u8] = b"ot-device-v1";
+const PAIR_QR_INFO: &[u8] = b"ot-pair-qr-v1";
 
 const SCHEME_GROUP: u8 = 0x01;
 const SCHEME_PAIRING: u8 = 0x02;
 const SCHEME_DEVICE: u8 = 0x03;
+const SCHEME_PAIR_QR: u8 = 0x04;
 
 /// En-tête d'un `payload.data` chiffré : il dit quelle clé ouvre le message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +36,10 @@ pub enum Header {
     Pairing { token_id: [u8; 8] },
     /// `0x03` : clé dérivée d'un échange X25519 avec une clé éphémère.
     Device { ephemeral: [u8; 32] },
+    /// `0x04` : comme `0x03`, avec le secret `S` du QR inversé ajouté au
+    /// matériau de HKDF (note 0022) : il faut à la fois `S` et la clé X25519
+    /// du destinataire.
+    PairQr { ephemeral: [u8; 32] },
 }
 
 impl Header {
@@ -50,6 +56,10 @@ impl Header {
             }
             Self::Device { ephemeral } => {
                 out.push(SCHEME_DEVICE);
+                out.extend_from_slice(ephemeral);
+            }
+            Self::PairQr { ephemeral } => {
+                out.push(SCHEME_PAIR_QR);
                 out.extend_from_slice(ephemeral);
             }
         }
@@ -87,6 +97,11 @@ impl Header {
                 let ephemeral = h.try_into().map_err(|_| CryptoError::Malformed("clé éphémère"))?;
                 (Self::Device { ephemeral }, rest)
             }
+            SCHEME_PAIR_QR => {
+                let (h, rest) = take(32)?;
+                let ephemeral = h.try_into().map_err(|_| CryptoError::Malformed("clé éphémère"))?;
+                (Self::PairQr { ephemeral }, rest)
+            }
             _ => return Err(CryptoError::Malformed("schéma inconnu")),
         };
         if rest.len() < NONCE_LEN + SIG_LEN + 16 {
@@ -111,6 +126,11 @@ pub enum SealKey<'a> {
     Device {
         recipient: [u8; 32],
     },
+    /// Clé X25519 publique et secret `S` lus dans le QR inversé.
+    PairQr {
+        recipient: [u8; 32],
+        secret: &'a PairingSecret,
+    },
 }
 
 /// Clé d'ouverture, choisie par l'appelant d'après le [`Header`].
@@ -119,13 +139,15 @@ pub enum OpenKey<'a> {
     Group(&'a GroupKey),
     Pairing(&'a PairingSecret),
     Device(&'a ExchangeKeyPair),
+    /// Clé X25519 de l'appareil et secret `S` de son QR inversé.
+    PairQr(&'a ExchangeKeyPair, &'a PairingSecret),
 }
 
 /// Aléa d'un chiffrement ; fixé seulement par les vecteurs de test.
 #[derive(Clone)]
 pub struct Randomness {
     pub nonce: [u8; NONCE_LEN],
-    /// Clé X25519 éphémère (schéma `0x03` seulement).
+    /// Clé X25519 éphémère (schémas `0x03` et `0x04` seulement).
     pub ephemeral: Zeroizing<[u8; 32]>,
 }
 
@@ -184,6 +206,25 @@ fn device_key(
     Ok(hkdf(shared.as_bytes(), &[DEVICE_INFO, eph, recipient]))
 }
 
+/// `HKDF-SHA256(DH ‖ S, "ot-pair-qr-v1" ‖ éph ‖ dest)` : comme le schéma
+/// `0x03`, avec le secret du QR inversé dans le matériau d'entrée.
+fn pair_qr_key(
+    secret: &StaticSecret,
+    peer: &[u8; 32],
+    eph: &[u8; 32],
+    recipient: &[u8; 32],
+    pairing: &PairingSecret,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let shared = secret.diffie_hellman(&PublicKey::from(*peer));
+    if !shared.was_contributory() {
+        return Err(CryptoError::WeakKey);
+    }
+    let mut ikm = Zeroizing::new([0u8; 48]);
+    ikm[..32].copy_from_slice(shared.as_bytes());
+    ikm[32..].copy_from_slice(pairing.as_bytes());
+    Ok(hkdf(&ikm[..], &[PAIR_QR_INFO, eph, recipient]))
+}
+
 /// Chiffre et signe `body` pour l'enveloppe `env` (seuls ses champs de
 /// routage comptent) ; le résultat va dans `env.payload`.
 pub fn seal(env: &Envelope, key: SealKey<'_>, signer: &SigningKey, body: &Body) -> Result<Payload> {
@@ -208,6 +249,12 @@ pub fn seal_with(
             let eph_pub = PublicKey::from(&eph).to_bytes();
             let k = device_key(&eph, &recipient, &eph_pub, &recipient)?;
             (Header::Device { ephemeral: eph_pub }, k)
+        }
+        SealKey::PairQr { recipient, secret } => {
+            let eph = StaticSecret::from(*rand.ephemeral);
+            let eph_pub = PublicKey::from(&eph).to_bytes();
+            let k = pair_qr_key(&eph, &recipient, &eph_pub, &recipient, secret)?;
+            (Header::PairQr { ephemeral: eph_pub }, k)
         }
     };
     let ad = associated_data(&header, env)?;
@@ -264,6 +311,9 @@ pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
         (Header::Pairing { .. }, OpenKey::Pairing(s)) => pairing_key(s),
         (Header::Device { ephemeral }, OpenKey::Device(pair)) => {
             device_key(pair.secret(), ephemeral, ephemeral, &pair.public_key())?
+        }
+        (Header::PairQr { ephemeral }, OpenKey::PairQr(pair, secret)) => {
+            pair_qr_key(pair.secret(), ephemeral, ephemeral, &pair.public_key(), secret)?
         }
         _ => return Err(CryptoError::Decrypt),
     };

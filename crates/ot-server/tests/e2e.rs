@@ -246,3 +246,44 @@ async fn shutdown_keeps_frames_already_sent() {
     cb.shutdown().await;
     assert_eq!(server.relay.store().pending_count(&b.id, now_ms()).await.unwrap(), 0);
 }
+
+/// Étape 3, T5 : un changement de réseau relance la connexion tout de suite,
+/// sans attendre le délai de reconnexion.
+#[tokio::test]
+async fn reconnect_now_skips_the_backoff() {
+    let store = Store::in_memory().await.unwrap();
+    let a = add_device(&store, "android").await;
+    let server = TestServer::start(store, test_config()).await;
+    let mut config = a.config(&server.url());
+    config.backoff =
+        ot_core::Backoff { initial: Duration::from_secs(30), max: Duration::from_secs(60) };
+    let (client, mut events) = ot_core::Client::start(config);
+    wait_connected(&mut events).await;
+
+    client.reconnect_now();
+    match next_event(&mut events).await {
+        Event::Disconnected { reason } => assert_eq!(reason, "changement de réseau"),
+        other => panic!("déconnexion attendue, reçu {other:?}"),
+    }
+    // Bien moins que le délai de 30 s.
+    wait_connected(&mut events).await;
+}
+
+/// Correctif (étape 3) : les pings du relais suffisent à garder une session
+/// calme ouverte ; avant, elle tombait toutes les 75 s.
+#[tokio::test]
+async fn quiet_session_stays_open_thanks_to_pings() {
+    let store = Store::in_memory().await.unwrap();
+    let a = add_device(&store, "android").await;
+    let config = Config { ping_interval: Duration::from_millis(200), ..test_config() };
+    let server = TestServer::start(store, config).await;
+    let mut client_config = a.config(&server.url());
+    client_config.idle_timeout = Duration::from_millis(700);
+    let (_client, mut events) = ot_core::Client::start(client_config);
+    wait_connected(&mut events).await;
+    // Trois fois le délai d'inactivité, sans aucune trame du protocole.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(2_100);
+    if let Ok(Some(ev)) = tokio::time::timeout_at(deadline, events.next()).await {
+        panic!("la session devait rester ouverte, reçu {ev:?}");
+    }
+}

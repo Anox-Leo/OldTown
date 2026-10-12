@@ -1,9 +1,10 @@
 # ot-crypto
 
 Chiffrement de bout en bout : types de clés (`GroupKey`, `ExchangeKeyPair`,
-`PairingSecret`), `seal`/`open` pour les trois schémas de `payload.data`,
-données associées, signature, corps des messages (`Body`, `Roster`) et code
-d'appairage (`PairingCode`).
+`PairingSecret`), `seal`/`open` pour les quatre schémas de `payload.data`
+(`0x04` : QR inversé, note 0022), données associées, signature, corps des
+messages (`Body`, `Roster`), code d'appairage (`PairingCode`) et QR inversé
+(`PairingOffer`).
 
 - Aucune E/S, aucun réseau, aucun async, aucun tokio : la crate doit pouvoir
   se compiler pour Android (UniFFI) et en WebAssembly (extension, note 0017).

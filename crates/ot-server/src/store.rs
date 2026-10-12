@@ -20,6 +20,8 @@ pub enum StoreError {
     NameTaken(String),
     #[error("cette clé publique est déjà enregistrée")]
     KeyTaken,
+    #[error("cet identifiant d'appareil est déjà utilisé")]
+    IdTaken,
     #[error("msg_id déjà utilisé par un autre appareil")]
     MsgIdConflict,
     #[error("jeton d'appairage inconnu, expiré ou déjà utilisé")]
@@ -139,7 +141,20 @@ impl Store {
 
     pub async fn add_device(&self, name: &str, public_key: &[u8; 32], now: i64) -> Result<Device> {
         let mut conn = self.pool.acquire().await?;
-        insert_device(&mut conn, name, public_key, now).await
+        insert_device(&mut conn, &DeviceId::generate(), name, public_key, now).await
+    }
+
+    /// Enregistre un appareil sous l'identifiant qu'il a choisi (QR inversé :
+    /// il le connaît avant d'être enregistré).
+    pub async fn register_device(
+        &self,
+        id: &DeviceId,
+        name: &str,
+        public_key: &[u8; 32],
+        now: i64,
+    ) -> Result<Device> {
+        let mut conn = self.pool.acquire().await?;
+        insert_device(&mut conn, id, name, public_key, now).await
     }
 
     pub async fn device(&self, id: &DeviceId) -> Result<Option<Device>> {
@@ -243,7 +258,7 @@ impl Store {
         .fetch_optional(&mut *tx)
         .await?;
         let sponsor = sponsor.ok_or(StoreError::PairingInvalid)?;
-        let device = insert_device(&mut tx, name, public_key, now).await?;
+        let device = insert_device(&mut tx, &DeviceId::generate(), name, public_key, now).await?;
         sqlx::query("UPDATE pairings SET used_at = ?, device_id = ? WHERE token_hash = ?")
             .bind(now)
             .bind(device.id.as_str())
@@ -444,11 +459,11 @@ impl Store {
 
 async fn insert_device(
     conn: &mut sqlx::SqliteConnection,
+    id: &DeviceId,
     name: &str,
     public_key: &[u8; 32],
     now: i64,
 ) -> Result<Device> {
-    let id = DeviceId::generate();
     let res =
         sqlx::query("INSERT INTO devices (id, name, public_key, created_at) VALUES (?, ?, ?, ?)")
             .bind(id.as_str())
@@ -462,6 +477,8 @@ async fn insert_device(
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             return Err(if e.message().contains("public_key") {
                 StoreError::KeyTaken
+            } else if e.message().contains("devices.id") {
+                StoreError::IdTaken
             } else {
                 StoreError::NameTaken(name.to_owned())
             });
@@ -469,7 +486,7 @@ async fn insert_device(
         Err(e) => return Err(e.into()),
     }
     Ok(Device {
-        id,
+        id: id.clone(),
         name: name.to_owned(),
         public_key: *public_key,
         created_at: now,

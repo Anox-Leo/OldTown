@@ -1,3 +1,10 @@
 # Fichiers figés (golden du protocole, vecteurs chiffrés) : comparés octet par
 # octet par les tests, ils doivent rester en LF quel que soit le checkout.
 crates/*/tests/**/*.json text eol=lf
+
+# Appli Android : script Gradle en LF (exécuté sous Linux et macOS), .bat en
+# CRLF, binaires jamais convertis.
+apps/android/gradlew text eol=lf
+apps/android/gradlew.bat text eol=crlf
+*.jar binary
+*.ttf binary

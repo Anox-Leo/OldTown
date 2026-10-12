@@ -16,6 +16,7 @@ use ot_core::{
 };
 use ot_proto::{DeviceId, Frame};
 use ot_server::store::Store;
+use ot_server::tls::Tls;
 use ot_server::{Config, Relay};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -32,6 +33,8 @@ pub fn test_config() -> Config {
 pub struct TestServer {
     pub addr: SocketAddr,
     pub relay: Relay,
+    /// En TLS : l'URL est en `wss://localhost`.
+    tls: bool,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
@@ -50,11 +53,28 @@ impl TestServer {
             let _ = stopped.await;
         });
         let task = tokio::spawn(async move { serve.await.unwrap() });
-        Self { addr, relay, stop: Some(stop), task }
+        Self { addr, relay, tls: false, stop: Some(stop), task }
+    }
+
+    /// Relais en TLS (`wss://`), avec le certificat donné.
+    pub async fn start_tls(store: Store, config: Config, tls: Tls) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let relay = Relay::new(store, config);
+        let (stop, stopped) = oneshot::channel();
+        let serve = ot_server::serve_tls(relay.clone(), listener, tls, async {
+            let _ = stopped.await;
+        });
+        let task = tokio::spawn(async move { serve.await.unwrap() });
+        Self { addr, relay, tls: true, stop: Some(stop), task }
     }
 
     pub fn url(&self) -> String {
-        format!("ws://{}", self.addr)
+        if self.tls {
+            format!("wss://localhost:{}", self.addr.port())
+        } else {
+            format!("ws://{}", self.addr)
+        }
     }
 
     pub async fn stop(self) {
@@ -314,5 +334,35 @@ pub fn flip_payload(frame: Frame) -> Frame {
             Frame::Deliver { seq, env }
         }
         other => other,
+    }
+}
+
+/// Autorité de certification de test : signe des certificats pour `localhost`.
+pub struct TestCa(rcgen::CertifiedIssuer<'static, rcgen::KeyPair>);
+
+impl TestCa {
+    pub fn new(name: &str) -> Self {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.distinguished_name.push(rcgen::DnType::CommonName, name);
+        let key = rcgen::KeyPair::generate().unwrap();
+        Self(rcgen::CertifiedIssuer::self_signed(params, key).unwrap())
+    }
+
+    /// Certificat racine, en DER (à donner aux clients).
+    pub fn der(&self) -> Vec<u8> {
+        self.0.der().to_vec()
+    }
+
+    /// Écrit un certificat `localhost` signé par cette autorité et sa clé
+    /// dans `dir` ; renvoie leurs chemins.
+    pub fn write_leaf(&self, dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = params.signed_by(&key, &self.0).unwrap();
+        let (cert_path, key_path) = (dir.join("relais.crt"), dir.join("relais.key"));
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, key.serialize_pem()).unwrap();
+        (cert_path, key_path)
     }
 }

@@ -121,6 +121,16 @@ async fn auth_failed(
 /// Taille maximale d'un nom d'appareil, en caractères.
 const MAX_NAME_CHARS: usize = 64;
 
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= MAX_NAME_CHARS
+        && !name.chars().any(char::is_control)
+}
+
+fn invalid_name() -> String {
+    format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables")
+}
+
 /// Enregistre un appareil avec un jeton d'appairage, répond `pair_redeemed`
 /// puis ferme : l'appareil se reconnecte ensuite avec `auth`.
 async fn redeem(
@@ -133,12 +143,8 @@ async fn redeem(
     sig: &[u8; 64],
 ) -> Result<DeviceId, Close> {
     let name = name.trim();
-    if name.is_empty()
-        || name.chars().count() > MAX_NAME_CHARS
-        || name.chars().any(char::is_control)
-    {
-        let msg = format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables");
-        return pairing_rejected(inner, socket, ErrorCode::BadFrame, msg).await;
+    if !valid_name(name) {
+        return pairing_rejected(inner, socket, ErrorCode::BadFrame, invalid_name()).await;
     }
     let hash = auth::token_hash(token);
     if !auth::verify_redeem(public_key, nonce, &hash, sig) {
@@ -287,6 +293,9 @@ impl Active<'_> {
             }
             Frame::ListDevices => Some(devices(self.inner).await?),
             Frame::PairCreate => Some(self.pair_create().await?),
+            Frame::PairRegister { device_id, name, public_key, sig } => {
+                Some(self.pair_register(device_id, &name, &public_key, &sig).await)
+            }
             Frame::Error { code, .. } => {
                 tracing::debug!(device = %self.device, ?code, "erreur signalée par le client");
                 None
@@ -323,6 +332,51 @@ impl Active<'_> {
             OffsetDateTime::from_unix_timestamp_nanos(i128::from(expires_at) * 1_000_000)
                 .map_err(|_| Close("horloge invalide"))?;
         Ok(Frame::PairCreated { token, expires_at })
+    }
+
+    /// Parrain : enregistre l'appareil dont il a scanné le QR inversé. Le nom
+    /// n'est pas retouché : la signature porte dessus. Une erreur laisse la
+    /// session ouverte.
+    async fn pair_register(
+        &mut self,
+        device_id: DeviceId,
+        name: &str,
+        public_key: &[u8; 32],
+        sig: &[u8; 64],
+    ) -> Frame {
+        let reference = Some(device_id.to_string());
+        let reject = |metrics: &Metrics, code, message: String| {
+            Metrics::inc(&metrics.pairings_rejected);
+            Frame::error(code, message, reference.clone())
+        };
+        let m = &self.inner.metrics;
+        if !valid_name(name) || name.trim() != name {
+            return reject(m, ErrorCode::BadFrame, invalid_name());
+        }
+        if !auth::verify_register(public_key, &device_id, name, sig) {
+            tracing::warn!(sponsor = %self.device, "enregistrement : signature invalide");
+            return reject(m, ErrorCode::PairingInvalid, "signature invalide".into());
+        }
+        match self.inner.store.register_device(&device_id, name, public_key, now_ms()).await {
+            Ok(d) => {
+                Metrics::inc(&m.pairings_registered);
+                tracing::info!(device = %d.id, sponsor = %self.device, "appareil enregistré par son parrain");
+                Frame::PairRegistered { device_id: d.id }
+            }
+            Err(StoreError::KeyTaken) => {
+                reject(m, ErrorCode::PairingInvalid, "clé publique déjà enregistrée".into())
+            }
+            Err(StoreError::IdTaken) => {
+                reject(m, ErrorCode::PairingInvalid, "identifiant déjà utilisé".into())
+            }
+            Err(StoreError::NameTaken(name)) => {
+                reject(m, ErrorCode::NameTaken, format!("le nom {name:?} est déjà pris"))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "enregistrement d'un appareil");
+                reject(m, ErrorCode::Internal, "erreur interne".into())
+            }
+        }
     }
 
     async fn on_send(&mut self, env: ot_proto::Envelope) -> Result<Option<Frame>, Close> {

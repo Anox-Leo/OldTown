@@ -1,0 +1,51 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "pair_qr",
+    "recipient_secret": "ZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIU=",
+    "secret": "Hh8gISIjJCUmJygpKissLQ==",
+    "ephemeral": "MjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFE="
+  },
+  "body": {
+    "kind": "pair_welcome",
+    "keys": [
+      {
+        "epoch": 1,
+        "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+      }
+    ],
+    "roster": {
+      "epoch": 1,
+      "version": 2,
+      "members": [
+        {
+          "device_id": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+          "name": "mac",
+          "sign_key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+          "exchange_key": "VxR2nRFr92Q2rnS8eT0sMK0ZA8WaxSc4BcfiaYtBDDY=",
+          "added_epoch": 1
+        },
+        {
+          "device_id": "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0",
+          "name": "windows",
+          "sign_key": "Q83AI9ItX54QfRoGk0V9NdHRDrfSHHIRkvVvXeQGZdM=",
+          "exchange_key": "yg/0pLeJ/DBjuwaOZIkz+ESp0oTGvX9rossNRAicEAs=",
+          "added_epoch": 1
+        }
+      ]
+    }
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "BOBbGuMiAkg4CV/979hlRo3bd7FLLdJ1F16gq0KU+m16RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdaDTmFKVqnOQVLaiY9LqyTa7GAhLKc7Xy85o5HIlIoikDFHAN2DPL8/anVEIKbtsEPoST6DkovJcdQghz6TqbbikCc2m35ltV2DXbgBEpb8AXlWqEOiGfTBFmfojwBlH8nrebYM/nFIFV0Do5BVOSjkZfke0BGFu0MlhVohj3jPaEesvlbeyG7gdg3Bv609EA/WCxlQ27b1DSG/0LLtevMRtCxJ4IORosi/0z7psGil08jL9OgGbp6YvkKym3taP8vZZXdORlmRY8tUJOCzzNP0chCNhFHbQE/OrhlZXtZGOznCSz8rUnzUF3f0RRj40VrfbU9AR6hw5z/mcVGwdvLd68JfgQHLORMPNX7FwsFIlKXBf09ZTPrg8YP/0GKf3bbDyuI87gLRhdKbGIZqBU1pcLpv0x9cdQAL8h7MYF3Aeytedim6fSpzySAov9OQ5fl6d+KWY+TCWhU1bZsFAPsTxhX3QxfsKtOD9iMp/LVi6oz2orCV1kwtiSScGrWlhywj0saCGNKd2pHY+MHAExTl/ZiV9F9YF9ZYy2U+I3UgxXC9OVbsdbJNBPcW9Q6lztXWzYnLdCa3mf2BrBEu+KgLRQN0LIeEYqPYMzWBM615lhArSwWALU+gSF7CWYHG5MRND8j8yj3meRb0GVZ3dwaRxlFz+5+HMdWXHvF28Gc5IUgFPp9B1bT0+0ggbAom22NB1g+menQA/Ae1v/mhJQGQZ/oga8D11Gc56i3Vy37/CiGIvIzY908v6D6HVv3ZCl0ohL+fsDM2voOhFjd1K7iBs3IwtZXypWPYJ+BYQynWFqkO6/6PfEesWX"
+    }
+  }
+}
