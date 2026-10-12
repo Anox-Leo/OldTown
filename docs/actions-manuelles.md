@@ -16,156 +16,121 @@ Règles pour les agents :
 
 ## À faire
 
-### 1. Relais : mise à jour et TLS (laptop Ubuntu) — étape 3, T8 et T9
+### 1. Relais : mise à jour pour l'extension (laptop Ubuntu) — étape 4, T3
 
-Depuis la copie du dépôt à jour, sur le laptop :
+Le relais doit connaître la trame `ping` (note 0023) avant que l'extension
+s'y connecte. Depuis la copie du dépôt à jour (branche de l'étape 4, ou
+`main` une fois fusionnée) :
 
-1. Compiler et installer le relais et les unités :
+```sh
+cargo build --release --locked -p ot-server
+sudo install -m 0755 target/release/ot-server /usr/local/bin/
+sudo systemctl restart ot-server
+journalctl -u ot-server -n 3                 # « relais démarré », scheme=wss
+```
 
-   ```sh
-   cargo build --release --locked -p ot-server
-   sudo install -m 0755 target/release/ot-server /usr/local/bin/
-   sudo install -m 0644 deploy/ot-server.service deploy/ot-tls-renew.service deploy/ot-tls-renew.timer /etc/systemd/system/
-   sudo install -D -m 0644 README.md /usr/local/share/doc/oldtown/README.md
-   sudo systemctl daemon-reload
-   ```
+Rien d'autre ne change (ni la base, ni la configuration, ni les CLI).
 
-2. Dans la console d'administration Tailscale : *DNS* → activer *HTTPS
-   Certificates* (si ce n'est pas déjà fait).
+### 2. Téléphone : nouvel APK (pas de notification appli ouverte) — étape 4, T8b
 
-3. Nom complet du laptop dans le tailnet, puis premier certificat :
+Sur le Mac (où Android Studio et la chaîne Android sont installés), dans la
+copie du dépôt à jour, téléphone branché :
 
-   ```sh
-   sudo install -d /etc/oldtown
-   # Nom complet du laptop, lu par Tailscale (sans le point final) : rien à recopier.
-   echo "OT_TLS_DOMAIN=$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')" | sudo tee /etc/oldtown/tls.env
-   # doit afficher OT_TLS_DOMAIN=<nom>.<tailnet>.ts.net
-   sudo systemctl start ot-tls-renew.service
-   sudo ls -l /var/lib/ot-relay/tls/                   # relais.crt et relais.key, à ot-relay
-   sudo systemctl enable --now ot-tls-renew.timer
-   ```
+```sh
+cd apps/android
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-   Si `jq` manque : `sudo apt install jq`, ou lire le nom dans
-   `tailscale status`.
+Ou, après un push, l'artefact `oldtown-debug-apk` du workflow *Android*.
 
-4. Activer TLS dans la surcharge du service (`sudo systemctl edit
-   ot-server`), sous la ligne `OT_LISTEN` existante :
+### 3. Construire l'extension — étape 4
 
-   ```ini
-   Environment=OT_TLS_CERT=/var/lib/ot-relay/tls/relais.crt
-   Environment=OT_TLS_KEY=/var/lib/ot-relay/tls/relais.key
-   ```
+Au choix :
 
-   ```sh
-   sudo systemctl restart ot-server
-   journalctl -u ot-server -n 5                        # « relais démarré » avec scheme=wss
-   curl https://<nom complet>:7878/healthz             # ok
-   ```
+- **Artefact de la CI** : après le push de la branche (à faire de mon côté
+  ou à me demander), workflow *Extension* → artefact `oldtown-extension`.
+- **Sur le laptop Ubuntu**, dans la copie du dépôt à jour :
 
-   À lancer sur le laptop (ou tout appareil du tailnet). `<nom complet>` est
-   celui écrit dans `/etc/oldtown/tls.env` (`<nom>.<tailnet>.ts.net`) : le
-   certificat ne vaut que pour ce nom, ni pour l'IP ni pour le nom court. Si
-   le laptop n'utilise pas le DNS de Tailscale :
-   `curl --resolve <nom complet>:7878:$(tailscale ip -4) https://<nom complet>:7878/healthz`.
+  ```sh
+  rustup target add wasm32-unknown-unknown
+  cargo install --locked wasm-bindgen-cli --version 0.2.129
+  cd apps/extension
+  npm ci
+  npm run build                              # résultat : dist/extension
+  ```
 
-   À partir d'ici, les CLI en `ws://` ne se connectent plus : faire le lot 2
-   tout de suite.
+  puis copier le dossier `dist/extension` sur le Mac et le PC Windows (clé
+  USB, `scp`…).
 
-### 2. CLI du Mac et du PC Windows : nouvelle version et URL en `wss` — étape 3
+Sur chaque ordinateur, ranger le dossier à un endroit stable (par exemple
+`~/OldTown/extension` sur le Mac, `C:\Users\<moi>\OldTown\extension` sous
+Windows) : Chrome le relit à chaque démarrage.
 
-1. Obtenir la nouvelle CLI : après le push sur `main` (commit à faire de mon
-   côté ou à me demander), artefacts `ot-macOS-ARM64` et `ot-Windows-X64` de
-   la CI, installés comme au README (section « CLI ») ; ou, sur chaque
-   machine avec Rust : `cargo install --locked --path crates/ot-cli`.
-2. Sur chaque appareil :
+La clé qui fixe l'identifiant de l'extension a été créée dans
+`private/extension-key.pem` (laptop, jamais versionnée). Elle ne sert qu'à
+empaqueter un `.crx` : la garder avec mes autres secrets, sans urgence.
 
-   ```sh
-   ot --version
-   ot init --server wss://<nom complet>:7878
-   ot devices                                          # connexion en TLS
-   ```
+### 4. Installer et appairer l'extension (Mac, puis PC Windows) — étape 4, T9
 
-### 3. Mac : Android Studio et chaîne Rust pour Android — étape 3, T3
+Sur chaque ordinateur, Tailscale connecté, dans Brave (ou Chrome) :
 
-1. Installer Android Studio (developer.android.com/studio), puis au premier
-   lancement l'assistant standard (SDK compris).
-2. Rust sur le Mac, s'il n'y est pas : `curl --proto '=https' --tlsv1.2 -sSf
-   https://sh.rustup.rs | sh`, puis rouvrir le terminal.
-3. Cibles Android et `cargo-ndk` :
+1. `brave://extensions` (`chrome://extensions` dans Chrome) → *Mode
+   développeur* (en haut à droite) →
+   *Charger l'extension non empaquetée* → le dossier de l'étape 4.
+   L'identifiant affiché doit être `fiblpidpjopjpinfgonlkblkonllpgfb`.
+2. Épingler l'icône d'OldTown (pièce de puzzle → épingle).
+3. Ouvrir la popup : URL du relais `wss://<nom complet>:7878` (le même nom
+   que dans `/etc/oldtown/tls.env`), nom proposé (`Chrome Mac`,
+   `Chrome Windows` ; `Brave Mac`… avec la nouvelle version) ou un autre,
+   puis *Afficher un QR à scanner*.
+4. Sur le téléphone : *Groupe* → *Ajouter un appareil*, viser le QR, vérifier
+   le nom, confirmer. La popup doit passer à l'écran principal.
+5. Mac seulement : *Réglages Système* → *Notifications* → *Brave Browser*
+   (ou *Google Chrome*) → autoriser.
 
-   ```sh
-   rustup target add aarch64-linux-android x86_64-linux-android
-   cargo install --locked cargo-ndk
-   ```
+### 5. Essai réel de l'étape 4 — étape 4, T9
 
-4. NDK : *Settings* → *Languages & Frameworks* → *Android SDK* → onglet
-   *SDK Tools* → cocher *Show Package Details* → *NDK (Side by side)* →
-   **29.0.14206865** → *Apply*. Gradle ne le télécharge pas seul pour le
-   cœur Rust (`cargo ndk`).
-5. Android Studio : *File* → *Open* → le dossier `apps/android` du dépôt.
-   Accepter la synchronisation Gradle : elle télécharge la plateforme
-   Android 37 si besoin. JDK de Gradle : celui d'Android Studio
-   (*Settings* → *Build, Execution, Deployment* → *Build Tools* → *Gradle* →
-   *Gradle JDK* : `jbr-21`).
-6. Facultatif, dans `apps/android/local.properties` (créé par Android
-   Studio, jamais versionné) :
+Dérouler, puis me transmettre le résultat de chaque ligne :
 
-   ```properties
-   oldtown.abis=arm64-v8a
-   ```
+1. Sur le PC Windows, clic droit sur un lien → *Envoyer à OldTown* →
+   téléphone : notification sur le téléphone ?
+2. Sur le téléphone, *Partager* une page → *Chrome Mac* : notification
+   Chrome sur le Mac ; un clic ouvre le lien dans un onglet ?
+3. Même envoi avec la popup du Mac ouverte : pas de notification, l'élément
+   apparaît dans la liste ? Puis avec l'appli Android ouverte au premier
+   plan, un envoi depuis le Mac : pas de notification, l'élément dans la
+   liste ?
+4. Sélectionner un texte sur le Mac → clic droit → *Envoyer à OldTown* →
+   *Chrome Windows* : arrive sur le PC ? *Copier* sur la notification
+   remplit le presse-papiers ?
+5. `Alt+Maj+S` sur un onglet : l'adresse part au dernier destinataire choisi ?
+6. Laisser Chrome ouvert sans y toucher une heure, puis envoyer depuis le
+   téléphone : reçu tout de suite ? (popup → l'état doit être « Connecté »)
+7. Fermer Chrome, envoyer deux messages depuis le téléphone, rouvrir Chrome :
+   les deux arrivent ?
+8. Réglages de l'extension (clic droit sur l'icône → *Options*) : état
+   « Connecté », version affichée.
 
-   (ne compile que pour le téléphone : build deux fois plus court). Si le
-   build dit « cargo introuvable » : ajouter `cargo.dir=/Users/<moi>/.cargo/bin`.
-7. Compiler : *Build* → *Generate App Bundles or APKs* → *Generate APKs*
-   (ou `./gradlew assembleDebug` dans `apps/android`). Le premier build
-   compile le cœur Rust (quelques minutes). APK :
-   `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
+### 6. Essai des retours d'essai (Brave) — étape 4, note 0024
 
-### 4. Téléphone : installation et appairage — étape 3
+Après avoir rechargé la nouvelle version de l'extension (`brave://extensions`
+→ *Actualiser*) et réinstallé l'APK (lot 2) :
 
-1. Tailscale installé et connecté sur le téléphone ; vérifier dans un
-   navigateur du téléphone : `https://<nom complet>:7878/healthz` → `ok`.
-2. Installer l'APK : téléphone branché en USB avec le débogage USB activé
-   (*Paramètres* → *À propos* → toucher 7 fois *Numéro de build*, puis
-   *Options pour les développeurs* → *Débogage USB*), puis *Run* dans
-   Android Studio, ou :
+1. Brave au premier plan, popup fermée : un lien envoyé du téléphone s'ouvre
+   dans un nouvel onglet, sans notification ; un texte ouvre la popup.
+2. Brave en arrière-plan (autre appli devant) : notification ; un clic sur
+   la notification d'un texte ouvre la popup (ou une petite fenêtre
+   OldTown si Brave refuse d'ouvrir la popup) ; celle d'un lien ouvre le
+   lien.
+3. `Alt+Maj+V` : le presse-papiers part au dernier destinataire (coche brève
+   sur l'icône). À vérifier en particulier : c'est la seule lecture du
+   presse-papiers que je n'ai pas pu tester ici.
+4. Popup : *Entrée* envoie, *Maj+Entrée* va à la ligne ; bouton presse-papiers
+   à côté du bouton d'envoi ; icône de réglages ; le groupe est dans les
+   réglages.
+5. Téléphone : appli ouverte, un message reçu n'affiche pas de notification ;
+   en ouvrant l'appli, les notifications de messages déjà affichées
+   disparaissent ; appli fermée, cinq messages d'affilée → trois
+   notifications au plus, les plus récentes.
 
-   ```sh
-   ~/Library/Android/sdk/platform-tools/adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
-   ```
-
-3. Sur le Mac : `ot pair new --qr`. Sur le téléphone : ouvrir OldTown, nom
-   (ex. `android` ; il ne doit pas être déjà pris sur le relais), *Scanner le
-   QR*, autoriser la caméra.
-4. Accepter les notifications, puis le bandeau *Optimisation de batterie* →
-   *Corriger* → autoriser.
-5. Vérifier : sur le Mac, `ot group show` liste le téléphone ; dans l'appli,
-   *Groupe* montre les mêmes empreintes.
-
-Garder la même clé de signature d'APK ensuite : passer d'un APK de debug à
-un APK signé autrement oblige à désinstaller l'appli, donc à la réappairer.
-
-### 5. Essai réel (critères de fin de l'étape 3) — étape 3, T11
-
-Noter les résultats et me les transmettre (je remplirai le tableau de
-`docs/etape-3.md`) :
-
-1. Chrome sur le téléphone → *Partager* → OldTown → `mac` ; sur le Mac,
-   `ot listen` affiche le lien (moins de 2 s ?). Essayer aussi le raccourci
-   Direct Share « mac » proposé en haut du menu *Partager*.
-2. Téléphone verrouillé, sur le Mac : `ot send "code 4821"` → notification ;
-   *Copier* → coller ailleurs sur le téléphone.
-3. QR inversé : sur le laptop,
-   `ot --home /tmp/ot-essai pair join --qr --server wss://<nom complet>:7878 --name essai` ;
-   sur le téléphone, *Groupe* → *Ajouter un appareil* → scanner → *Ajouter* ;
-   le terminal affiche « Groupe rejoint ». Nettoyer ensuite : dans l'appli,
-   *Groupe* → corbeille sur `essai`, puis sur le laptop
-   `ots device revoke essai` et `rm -rf /tmp/ot-essai`.
-4. Une nuit en veille : noter le pourcentage de batterie le soir et le
-   matin, et envoyer quelques messages pendant la nuit depuis le Mac (ils
-   doivent être là au réveil, sans doublon). Consommation de l'appli :
-   *Paramètres* → *Batterie*.
-5. Redémarrer le téléphone sans ouvrir l'appli : la notification
-   « Connecté » revient seule, et un `ot send` arrive.
-6. Passer du Wi-Fi à la 4G (couper le Wi-Fi) : un `ot send` arrive en moins
-   de 10 s.

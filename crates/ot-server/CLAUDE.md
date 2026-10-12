@@ -9,7 +9,9 @@ parrain authentifié (`pair_register`, QR inversé, note 0022). Binaire
 
 - Ne dépend que de `ot-proto`. **Ne lit jamais `payload`**, pas même
   `payload.enc`, et ne dépendra jamais de `ot-crypto`.
-- Une session par appareil (registre `registry.rs`, note 0009). Les
+- Une session par appareil (registre `registry.rs`, note 0009). `ping`
+  (session authentifiée) reçoit `pong` : maintien de l'extension Chrome,
+  dont le service worker s'arrête après 30 s sans message (note 0023). Les
   transferts de fichiers HTTP (étape 5) s'authentifient sans y entrer.
 - SQLite : migrations versionnées dans `migrations/`, jamais modifiées une fois
   livrées (on en ajoute une) ; écritures en `BEGIN IMMEDIATE` (note 0007) ;

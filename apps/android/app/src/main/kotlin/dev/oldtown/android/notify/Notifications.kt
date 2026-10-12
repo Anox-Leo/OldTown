@@ -138,6 +138,29 @@ object Notifications {
                 .setContentIntent(openApp(context))
                 .build(),
         )
+        trimMessages(context)
+    }
+
+    /** Messages affichés : (identifiant, date de publication), sans le résumé du groupe. */
+    private fun shownMessages(context: Context): List<Pair<Int, Long>> =
+        context.getSystemService(NotificationManager::class.java).activeNotifications
+            .filter { it.notification.channelId == CHANNEL_MESSAGES && it.id != SUMMARY_ID }
+            .map { it.id to it.postTime }
+
+    /** Au plus [MAX_SHOWN_MESSAGES] : les plus anciennes laissent la place. */
+    private fun trimMessages(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        for (id in oldestBeyond(shownMessages(context), MAX_SHOWN_MESSAGES)) manager.cancel(id)
+    }
+
+    /**
+     * Écran principal ouvert : les éléments sont dans la liste, les
+     * notifications de messages n'ont plus lieu d'être (étape 4, T8b).
+     */
+    fun clearMessages(context: Context) {
+        val manager = NotificationManagerCompat.from(context)
+        for ((id, _) in shownMessages(context)) manager.cancel(id)
+        manager.cancel(SUMMARY_ID)
     }
 
     fun cancel(context: Context, notificationId: Int) {

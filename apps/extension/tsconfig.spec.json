@@ -1,0 +1,8 @@
+/* Tests de l'interface (ng test, Vitest). */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vitest/globals", "chrome"]
+  },
+  "include": ["src/app/**/*.d.ts", "src/app/**/*.spec.ts", "src/shared/**/*.ts"]
+}

@@ -7,10 +7,12 @@ relais ne stocke que des octets chiffrés et les clients refusent tout message
 en clair.
 
 **État** : étapes 1 (relais et CLI) et 2 (chiffrement et appairage) terminées ;
-étape 3 (appli Android, `wss`, appairage par QR) livrée, en essai réel.
-Clients : la CLI `ot` sous macOS, Windows et Linux, et l'appli Android
-(APK à compiler, voir [Téléphone Android](#5-téléphone-android)). L'extension
-Chrome (étape 4) est à venir.
+étape 3 (appli Android, `wss`, appairage par QR) livrée, en essai réel ;
+étape 4 (extension Chrome) livrée, en essai réel.
+Clients : la CLI `ot` sous macOS, Windows et Linux, l'appli Android
+(APK à compiler, voir [Téléphone Android](#5-téléphone-android)) et
+l'extension Chrome (à charger en mode développeur, voir
+[Extension Chrome](#6-extension-chrome-macos-windows-linux)).
 
 Sommaire :
 [Architecture](#architecture) ·
@@ -20,6 +22,7 @@ Sommaire :
 [Premier appareil](#3-premier-appareil) ·
 [Appareils suivants](#4-appareils-suivants) ·
 [Téléphone Android](#5-téléphone-android) ·
+[Extension Chrome](#6-extension-chrome-macos-windows-linux) ·
 [Utilisation](#utilisation) ·
 [Administration du relais](#administration-du-relais) ·
 [Mise à jour](#mise-à-jour) ·
@@ -43,7 +46,9 @@ Sommaire :
 | `crates/ot-server` | Relais (axum + SQLite) et administration des appareils |
 | `crates/ot-cli` | Binaire `ot` |
 | `crates/ot-ffi` | Pont UniFFI vers l'appli Android (liaisons Kotlin générées au build) |
+| `crates/ot-wasm` | Cœur sans réseau (`ot-core` sans tokio) en WebAssembly pour l'extension |
 | `apps/android` | Appli Android (Kotlin, Jetpack Compose) |
+| `apps/extension` | Extension Chrome (Manifest V3, Angular, client du protocole en TypeScript) |
 
 Le relais ne dépend que de `ot-proto` et ne lit jamais `payload` ; il ne
 dépend jamais de `ot-crypto` (vérifié en CI).
@@ -304,6 +309,47 @@ de n'importe quelle appli (et ses raccourcis par appareil), et parraine les
 nouveaux appareils par QR. Les clés sont chiffrées par une clé du Keystore
 Android et exclues des sauvegardes.
 
+### 6. Extension Chrome (macOS, Windows, Linux)
+
+Brave ou Chrome (Chromium 120 au moins, 127 pour l'ouverture automatique de
+la popup), Tailscale connecté sur l'ordinateur. L'extension tient
+elle-même la connexion au relais : rien d'autre à installer. Elle se charge
+en mode développeur (pas de Chrome Web Store) ; son identifiant est fixé par
+la clé publique du manifeste (`fiblpidpjopjpinfgonlkblkonllpgfb`).
+
+1. Obtenir l'extension construite : l'artefact `oldtown-extension` de la CI
+   (workflow *Extension*), dézippé dans un dossier qui ne bougera plus ; ou
+   la construire (voir [Développement](#développement)) :
+   `apps/extension/dist/extension`.
+2. `brave://extensions` (ou `chrome://extensions`) → activer le *Mode
+   développeur* → *Charger l'extension non empaquetée* → choisir ce dossier.
+3. Ouvrir la popup d'OldTown (icône des flèches ; l'épingler dans la barre) :
+   URL du relais (`wss://relais.exemple.ts.net:7878`, le nom complet du
+   certificat), nom de l'ordinateur, puis *Afficher un QR à scanner*.
+4. Sur le téléphone : *Groupe* → *Ajouter un appareil*, viser le QR. La popup
+   passe à l'écran principal dès que le groupe est reçu (10 minutes au plus).
+   Sans téléphone : *J'ai un code d'appairage* et coller le code de
+   `ot pair new` (ou le texte de son QR).
+5. macOS : autoriser les notifications du navigateur (*Réglages Système* →
+   *Notifications* → *Brave Browser* ou *Google Chrome*).
+
+Envoyer : clic droit sur une page, un lien ou une sélection → *Envoyer à
+OldTown* → l'appareil ; `Alt+Maj+S` envoie l'adresse de l'onglet, et
+`Alt+Maj+V` le presse-papiers, au dernier destinataire choisi (raccourcis
+modifiables dans `brave://extensions/shortcuts`) ; ou la popup (*Entrée*
+envoie, *Maj+Entrée* va à la ligne ; bouton « coller et envoyer »).
+Recevoir : navigateur au premier plan, un lien s'ouvre dans un nouvel onglet
+et un texte ouvre la popup, sans notification ; sinon une notification (clic :
+le lien, ou la popup ; *Copier*). Les 50 derniers éléments sont dans la popup
+(pas de notification tant qu'elle est ouverte). Les réglages (clic droit sur l'icône → *Options*)
+montrent l'état de la connexion, l'URL du relais, les membres du groupe (et
+la nouvelle clé de groupe), et permettent d'oublier l'appareil. Chrome fermé, rien n'est reçu : le relais garde les messages
+7 jours et l'extension les reçoit à la réouverture.
+
+Les clés sont rangées dans le profil Chrome, chiffrées par une clé WebCrypto
+non exportable : moins bien protégées qu'un coffre de l'OS (voir
+[`SECURITY.md`](SECURITY.md)).
+
 ## Utilisation
 
 ```sh
@@ -400,8 +446,15 @@ sans sauvegarde, la liste des appareils.
 - **Android** : réinstaller l'APK (`adb install -r …`) ; clés et groupe sont
   gardés. L'URL du relais se change dans *Réglages*.
 
+- **Extension Chrome** : remplacer le contenu du dossier chargé par la
+  nouvelle version, puis *Actualiser* l'extension dans `brave://extensions`.
+  Clés, groupe et historique sont gardés (ils sont dans le profil Chrome,
+  liés à l'identifiant fixe de l'extension).
+
 Le QR inversé (étape 3) demande un relais et des clients de l'étape 3 ; le
-reste du protocole est inchangé.
+reste du protocole est inchangé. L'extension (étape 4) demande un relais de
+l'étape 4 (trames `ping`/`pong`, note 0023) : avec un relais plus ancien, elle
+se reconnecte toutes les 75 s.
 
 ## Développement
 
@@ -451,6 +504,22 @@ liaisons Kotlin (`uniffi-bindgen`) ; Android Studio ouvre directement
 `apps/android`. Réglages locaux dans `apps/android/local.properties` (jamais
 versionné) : `cargo.dir` si `cargo` n'est pas dans `~/.cargo/bin`,
 `oldtown.abis=arm64-v8a` pour ne compiler que pour le téléphone.
+
+**Extension Chrome** (`apps/extension`, détails dans
+[`apps/extension/CLAUDE.md`](apps/extension/CLAUDE.md)) : Node 24, la cible
+Rust WebAssembly et le générateur `wasm-bindgen` de la même version que la
+crate (voir `Cargo.lock`) :
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked wasm-bindgen-cli --version 0.2.129
+cargo build -p ot-server -p ot-cli      # relais et CLI du test de bout en bout
+cd apps/extension
+npm ci
+npm test            # construit le WebAssembly, puis tests (vrai relais compris)
+npm run lint
+npm run build       # extension non empaquetée : dist/extension
+```
 
 ## Dépannage
 
