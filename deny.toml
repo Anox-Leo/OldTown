@@ -30,9 +30,12 @@ exceptions = [
     # `wss` (note 0022).
     { crate = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
     # UniFFI (pont Android, étape 3) : MPL-2.0, utilisée sans modification ;
-    # le copyleft porte sur ses fichiers seulement (note 0022). Le générateur
-    # (option `bindgen` d'ot-ffi) n'est pas dans le graphe vérifié.
+    # le copyleft porte sur ses fichiers seulement (note 0022). uniffi_bindgen
+    # et uniffi_udl (générateur, option `bindgen` d'ot-ffi) n'apparaissent
+    # qu'avec --all-features, comme dans la CI.
     { crate = "uniffi", allow = ["MPL-2.0"] },
+    { crate = "uniffi_bindgen", allow = ["MPL-2.0"] },
+    { crate = "uniffi_udl", allow = ["MPL-2.0"] },
     { crate = "uniffi_core", allow = ["MPL-2.0"] },
     { crate = "uniffi_internal_macros", allow = ["MPL-2.0"] },
     { crate = "uniffi_macros", allow = ["MPL-2.0"] },
