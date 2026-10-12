@@ -111,15 +111,12 @@ fun GroupScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
                 )
             }
 
-            SectionLabel("Membres · époque ${group.epoch} · clé ${group.keyFingerprint}")
             OtCard(padding = PaddingValues(0.dp)) {
                 group.members.forEachIndexed { i, m ->
                     if (i > 0) Divider()
                     val online = devices?.firstOrNull { it.deviceId == m.deviceId }?.online
                     ListRow(
                         title = if (m.isSelf) "${m.name}  (ce téléphone)" else m.name,
-                        subtitle = m.signFingerprint,
-                        subtitleMono = true,
                         leading = OtIcons.Laptop,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -134,12 +131,6 @@ fun GroupScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
                     }
                 }
             }
-            Text(
-                "Comparez ces empreintes avec « ot group show » sur un ordinateur : elles doivent être identiques.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Ot.colors.muted,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
 
             val strangers = devices?.filterNot { it.member }.orEmpty()
             if (strangers.isNotEmpty()) {

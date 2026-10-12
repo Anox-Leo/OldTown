@@ -62,7 +62,6 @@ import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
 import dev.oldtown.android.ui.components.OtTextField
 import dev.oldtown.android.ui.components.SectionLabel
-import dev.oldtown.android.ui.components.StatusPill
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.android.ui.theme.OtShapes
 import dev.oldtown.core.ContentKind
@@ -105,9 +104,6 @@ fun HomeScreen(hub: HubState, open: (Screen) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("OldTown", style = MaterialTheme.typography.titleMedium, color = Ot.colors.foreground)
-            Spacer(Modifier.width(12.dp))
-            val (label, color) = connectionLabel(hub)
-            StatusPill(label, color, pulsing = hub.connection !is Connection.Connected)
             Spacer(Modifier.weight(1f))
             GhostIcon(OtIcons.Users, "Groupe", { open(Screen.Group) })
             GhostIcon(OtIcons.Settings, "Réglages", { open(Screen.Settings) })

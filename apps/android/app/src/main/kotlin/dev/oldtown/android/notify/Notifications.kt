@@ -24,18 +24,26 @@ import dev.oldtown.core.Received
 object Notifications {
     const val CONNECTION_ID = 1
     private const val SUMMARY_ID = 2
-    private const val CHANNEL_CONNECTION = "connection"
+    /**
+     * Notification imposée par Android au service de premier plan : importance
+     * minimale (ni icône dans la barre d'état, ni son, repliée en bas du
+     * volet). Nouvel identifiant, car l'importance d'un canal existant ne
+     * change plus ; l'ancien (`connection`, importance basse) est supprimé.
+     */
+    private const val CHANNEL_CONNECTION = "connection_quiet"
+    private const val OLD_CHANNEL_CONNECTION = "connection"
     private const val CHANNEL_MESSAGES = "messages"
     private const val GROUP = "dev.oldtown.android.MESSAGES"
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
+        manager.deleteNotificationChannel(OLD_CHANNEL_CONNECTION)
         manager.createNotificationChannels(
             listOf(
                 NotificationChannel(
                     CHANNEL_CONNECTION,
                     context.getString(R.string.channel_connection),
-                    NotificationManager.IMPORTANCE_LOW,
+                    NotificationManager.IMPORTANCE_MIN,
                 ).apply {
                     description = context.getString(R.string.channel_connection_desc)
                     setShowBadge(false)
@@ -77,6 +85,7 @@ object Notifications {
             .setContentIntent(openApp(context))
             .setOngoing(true)
             .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
