@@ -5,6 +5,15 @@ quelle appli vers mes autres appareils, recevoir une notification avec
 « Copier » et « Ouvrir », et appairer en scannant un QR code : le téléphone
 rejoint le groupe, puis parraine les autres appareils.
 
+**État (11 octobre 2026)** : code livré (T0 à T10) ; précisions et écarts
+dans la note [0022](decisions/0022-etape-3-wss-qr-inverse-ffi.md). Validé en
+local : tests Rust, `./gradlew lint test assembleDebug`, tests instrumentés
+sur émulateur Android 16, et essai de bout en bout sur émulateur (appairage
+par code, réception et notification, Copier, Partager vers la CLI, reprise
+d'un appairage interrompu, oubli de l'appareil). Reste T11 : l'essai réel
+sur le téléphone, dont le QR par la caméra, la nuit en veille et le passage
+Wi-Fi → 4G ([actions manuelles](actions-manuelles.md)).
+
 Références : jalon « 3. Android : partage » de la [conception](design.md),
 [revue après l'étape 1](revue-etapes-0-1.md), note 0009 (un seul processus
 tient la connexion), 0013 (QR dans les deux sens), 0015 (`wss`), 0016
@@ -127,14 +136,14 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   Fini quand : le job `Tests (windows-latest)` passe, et les jobs qui en
   dépendent (vérification `ot-server` sans `ot-crypto`, binaire `ot`) tournent.
 
-- [ ] **T1. `SecretStore` dans `ot-core`.**
+- [x] **T1. `SecretStore` dans `ot-core`.**
   Fichiers : `crates/ot-core/src/keyring.rs`, `crates/ot-cli/src/files.rs`.
   Faire : faire reposer le `Keyring` de l'étape 2 sur un trait `SecretStore`
   minimal (`get`/`put`/`delete` d'octets nommés) ; la CLI l'implémente sur ses
   fichiers `0600`.
   Tests : les tests de l'étape 2 passent sans changement de comportement.
 
-- [ ] **T2. Crate `ot-ffi`.**
+- [x] **T2. Crate `ot-ffi`.**
   Fichiers : `crates/ot-ffi/` (nouvelle), `Cargo.toml`, `deny.toml`.
   Faire : l'API du tableau ci-dessus avec UniFFI ; runtime tokio interne ;
   erreurs converties en une énumération simple (`Offline`, `AuthFailed`,
@@ -143,7 +152,7 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   `uniffi-bindgen generate` produit du Kotlin sans erreur (en CI).
   Fini quand : `ot-ffi` compile pour `aarch64-linux-android` avec `cargo ndk`.
 
-- [ ] **T3. Squelette de l'appli et build.**
+- [x] **T3. Squelette de l'appli et build.**
   Fichiers : `apps/android/` (Gradle Kotlin DSL, catalogue de versions),
   `apps/android/CLAUDE.md`, `.github/workflows/android.yml`.
   Faire : projet Compose vide, tâche Gradle qui appelle `cargo ndk` puis
@@ -152,29 +161,30 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   debug.
   Fini quand : l'APK de debug s'installe et affiche la version du cœur Rust.
 
-- [ ] **T4. `SecretStore` Keystore.**
+- [x] **T4. `SecretStore` Keystore.**
   Fichiers : `apps/android/app/src/main/java/.../secrets/`.
   Faire : clé AES-256-GCM non exportable dans le Keystore, secrets chiffrés
   dans le stockage privé (`noBackupFilesDir`, exclus des sauvegardes Android).
   Tests : test instrumenté aller-retour ; un secret effacé disparaît.
 
-- [ ] **T5. `RelayService`.**
+- [x] **T5. `RelayService`.** *(Code et tests instrumentés faits ; l'essai
+  d'une nuit fait partie de T11.)*
   Faire : service de premier plan `specialUse`, notification permanente avec
   l'état, démarrage au boot, `NetworkCallback`, boucle `next_event()`,
   persistance des `msg_id` vus, demande d'exemption batterie.
   Tests : test instrumenté de démarrage et d'arrêt ; essai manuel d'une nuit.
 
-- [ ] **T6. Notifications de réception.**
+- [x] **T6. Notifications de réception.**
   Faire : canal « Messages », actions Copier / Ouvrir / Partager, groupe de
   notifications, liste des 50 derniers éléments dans l'écran principal.
   Tests : test unitaire du choix des actions selon le `kind`.
 
-- [ ] **T7. Cible de partage et Direct Share.**
+- [x] **T7. Cible de partage et Direct Share.**
   Faire : `ShareActivity`, feuille de choix du destinataire (tous ou un
   membre), envoi par le service, confirmation brève ; raccourcis par appareil.
   Tests : test instrumenté d'un `Intent` `ACTION_SEND`.
 
-- [ ] **T8. `wss` sur le relais et dans `ot-core`** (note 0015 ; à faire
+- [x] **T8. `wss` sur le relais et dans `ot-core`** (note 0015 ; à faire
   avant T5).
   Fichiers : `crates/ot-server/src/main.rs`, `src/lib.rs`,
   `crates/ot-core/src/client.rs`, `deploy/` (minuterie de renouvellement),
@@ -189,7 +199,7 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   refusé ; rechargement du certificat ; `ws://` toujours possible sans
   configuration TLS.
 
-- [ ] **T9. Appairage par QR, dans les deux sens** (note 0013).
+- [x] **T9. Appairage par QR, dans les deux sens** (note 0013).
   Fichiers : `crates/ot-proto/src/frame.rs`, `tests/golden/`,
   `crates/ot-server/src/session.rs`, `src/store.rs`, `crates/ot-crypto/`
   (vecteurs), `crates/ot-core/src/pairing.rs`, `crates/ot-cli/src/main.rs`
@@ -209,7 +219,8 @@ Chaque tâche finit par les validations de `CLAUDE.md` (Rust) et par
   Fini quand : un PC rejoint le groupe en affichant un QR scanné par le
   téléphone, sans rien taper.
 
-- [ ] **T10. Réglages et état.**
+- [x] **T10. Réglages et état.** *(Le nom de l'appareil est affiché mais
+  fixé à l'appairage : le roster ne prévoit pas de renommage, note 0022.)*
   Faire : nom de l'appareil, URL du relais, état de connexion avec aide
   « vérifier Tailscale », version.
 
