@@ -172,7 +172,9 @@ fn write_atomic(path: &Path, data: &[u8], private: bool) -> Result<()> {
 mod tests {
     use super::*;
     use ot_core::Keyring;
-    use ot_core::names::{EXCHANGE_KEY, GROUP, QUARANTINE, ROSTER};
+    use ot_core::names::GROUP;
+    #[cfg(unix)]
+    use ot_core::names::{EXCHANGE_KEY, QUARANTINE, ROSTER};
 
     #[test]
     fn roundtrip() {
