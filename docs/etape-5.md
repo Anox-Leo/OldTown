@@ -15,10 +15,8 @@ après le premier essai, réception dans l'extension refaite (T8, note
 popup en conversation par canal (note
 [0030](decisions/0030-extension-conversation-par-canal.md)). Validé en
 local et sur un relais de dépannage (le Mac) : tests Rust, `npm run lint &&
-npm test`, `./gradlew lint test assembleDebug`, et essai réel des envois du
-téléphone vers l'extension. Non essayés explicitement : 500 Mo avec coupure
-du Wi-Fi (couvert par les tests de bout en bout) et les tests instrumentés
-Android avec l'APK corrigée (`docs/actions-manuelles.md`).
+npm test`, `./gradlew lint test assembleDebug`, tests instrumentés Android
+sur le téléphone, et essai réel : tous les critères sont concluants.
 
 Références : jalon « 5. Fichiers » de la [conception](design.md), notes 0009
 (un transfert n'ouvre pas de session), 0014 (RustCrypto), 0017 (extension
@@ -346,11 +344,11 @@ avec la barre de téléchargement du navigateur.
 
 | Scénario | Attendu | Vérifié par | Résultat (15 oct. 2026) |
 | --- | --- | --- | --- |
-| 500 Mo téléphone → Mac avec coupure | Reprise, fichier identique (SHA-256) | Essai réel | Non essayé ; coupure simulée OK (`transfers_resume_after_network_cuts`) |
-| Photo Mac → téléphone | Dans `Download/OldTown`, « Ouvrir » l'affiche | Essai réel | Non confirmé |
+| 500 Mo téléphone → Mac avec coupure | Reprise, fichier identique (SHA-256) | Essai réel | OK |
+| Photo Mac → téléphone | Dans `Download/OldTown`, « Ouvrir » l'affiche | Essai réel | OK |
 | Image ou PDF reçu, navigateur au premier plan | S'ouvre dans le lecteur du navigateur (note 0029) | Essai réel | OK |
 | Photos téléphone → extension | Déposées, annoncées, ouvertes | Essai réel | OK (après l'autorisation d'accès au relais) |
-| Téléchargement depuis l'extension | Téléchargement natif du navigateur | Essai réel | Corrigé après l'essai (navigation, note 0029) |
+| Téléchargement depuis l'extension | Téléchargement natif du navigateur | Essai réel | OK (après le correctif : navigation, note 0029) |
 | Morceau altéré ou fichier tronqué | Rejeté à la réception | Test `ot-crypto` | OK |
 | Transfert pendant que l'appli reçoit | La session WebSocket n'est pas coupée | Test E2E | OK |
 | Relais redémarré pendant un dépôt | Le dépôt reprend | Test E2E | OK |

@@ -8,3 +8,5 @@
 seen.json
 .env
 .env.*
+.DS_Store
+gradle-daemon-jvm.properties

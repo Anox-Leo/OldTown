@@ -16,36 +16,18 @@ Règles pour les agents :
 
 ## À faire
 
-### 1. Étape 5 : fin des vérifications (notes 0026 à 0030)
+### 1. Relais de retour sur le laptop Ubuntu (une fois réparé)
 
-Le relais de dépannage (le Mac), l'extension et l'appli sont à jour. Restent :
+Le relais tourne pour l'instant sur le Mac, lancé à la main.
 
-1. **Node** (sur le Mac), pour `npm run deploy` et les builds de
-   l'extension :
-
-   ```sh
-   brew upgrade node
-   node --version                                              # v24.15 ou plus
-   ```
-
-2. **Tests instrumentés Android**, téléphone branché, avec une APK construite
-   après le correctif du 14 octobre (les tests qui oublient l'appareil sont
-   désormais sautés sur un téléphone appairé) :
+1. Sur le laptop : déployer la version à jour du relais (README, « Mise à
+   jour »), puis vérifier la place pour le quota de 20 Gio des fichiers :
 
    ```sh
-   cd apps/android
-   ./gradlew assembleDebug
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
-   ./gradlew connectedDebugAndroidTest
+   df -h /var/lib/ot-relay                                     # 25 Go libres au moins
    ```
 
-3. **Essais non faits** : une vidéo d'environ 500 Mo du téléphone vers le
-   Mac avec une coupure du Wi-Fi au milieu (la reprise est automatique) ;
-   une photo du Mac vers le téléphone (*Téléchargements/OldTown*, puis
-   *Ouvrir*).
-
-4. **Quand le laptop Ubuntu sera réparé** : y déployer le relais (README,
-   « Mise à jour », puis `df -h /var/lib/ot-relay` : 25 Go libres au moins
-   pour le quota de 20 Gio), puis repointer les appareils vers lui
-   (`ot init --server wss://<nom du relais>:7878` sur la CLI, URL du relais
-   dans les réglages de l'extension et de l'appli).
+2. Repointer les appareils vers lui : `ot init --server wss://<nom du
+   relais>:7878` sur la CLI, URL du relais dans les réglages de l'extension
+   et de l'appli.
+3. Arrêter le relais de dépannage du Mac.
