@@ -7,8 +7,9 @@
 //! `OT_REGENERATE_VECTORS=1 cargo test -p ot-crypto --test vectors`.
 
 use ot_crypto::{
-    Body, EpochKey, ExchangeKeyPair, GroupKey, Member, OpenKey, PairingCode, PairingOffer,
-    PairingSecret, Randomness, Roster, SealKey, SigningKey, open, seal_with, token_id,
+    Body, EpochKey, ExchangeKeyPair, FILE_CHUNK_SIZE, FileCipher, FileKey, GroupKey, Member,
+    OpenKey, PairingCode, PairingOffer, PairingSecret, Randomness, Roster, SealKey, SigningKey,
+    chunk_count, open, seal_with, token_id,
 };
 use ot_proto::{DeviceId, Encoding, Envelope, Payload, Ulid, b64};
 use serde_json::{Value, json};
@@ -19,6 +20,7 @@ const A: &str = "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5";
 const B: &str = "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0";
 const C: &str = "dev_01J9Z3P0A2B4C6D8E0F2G4H6J8";
 const MSG: &str = "01J9Z3Q5RT8YB6ZK4C2D7E9F1G";
+const BLOB: &str = "blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V";
 
 fn dev(s: &str) -> DeviceId {
     s.parse().unwrap()
@@ -118,6 +120,22 @@ fn vectors() -> Vec<Vector> {
             body: Body::PairWelcome {
                 keys: vec![EpochKey { epoch: 1, key: GroupKey::from_bytes(bytes(10)) }],
                 roster: roster(1, 2),
+            },
+        },
+        Vector {
+            name: "group_file",
+            key: json!({"scheme": "group", "epoch": 1, "key": b64::encode(&bytes::<32>(10))}),
+            to: &[B],
+            body: Body::File {
+                blob_id: BLOB.parse().unwrap(),
+                name: "été 2026.jpg".into(),
+                mime: "image/jpeg".into(),
+                size: 2_500_000,
+                chunk_size: FILE_CHUNK_SIZE,
+                chunks: 3,
+                key: FileKey::from_bytes(bytes(80)),
+                nonce: bytes(120),
+                sha256: bytes(140),
             },
         },
     ]
@@ -280,4 +298,48 @@ fn frozen_pairing_offer() {
     let doc: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(doc["qr"].as_str().unwrap(), &*text, "format du QR inversé modifié");
     assert_eq!(PairingOffer::parse(doc["qr"].as_str().unwrap()).unwrap(), offer);
+}
+
+/// Morceaux d'un fichier (note 0026) : STREAM `StreamBE32<XChaCha20Poly1305>`,
+/// données associées `"ot-file-v1"`. Morceaux de 16 octets pour garder le
+/// vecteur lisible : le format ne dépend pas de la taille des morceaux.
+#[test]
+fn frozen_file_chunks() {
+    const CHUNK: u32 = 16;
+    let key = FileKey::from_bytes(bytes(80));
+    let nonce = bytes::<19>(120);
+    let plain: Vec<u8> = (0..40).collect();
+    let cipher = FileCipher::new(&key, &nonce);
+    let chunks = chunk_count(plain.len() as u64, CHUNK).unwrap();
+    let sealed: Vec<String> = plain
+        .chunks(CHUNK as usize)
+        .enumerate()
+        .map(|(i, c)| {
+            let i = i as u32;
+            b64::encode(&cipher.seal_chunk(i, i == chunks - 1, c).unwrap())
+        })
+        .collect();
+    let file = path("file_chunks");
+    if std::env::var_os("OT_REGENERATE_VECTORS").is_some() {
+        let doc = json!({
+            "key": b64::encode(key.as_bytes()),
+            "nonce": b64::encode(&nonce),
+            "chunk_size": CHUNK,
+            "plaintext": b64::encode(&plain),
+            "chunks": sealed,
+        });
+        std::fs::write(&file, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+        return;
+    }
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let frozen: Vec<String> = serde_json::from_value(doc["chunks"].clone()).unwrap();
+    assert_eq!(frozen, sealed, "format chiffré des fichiers modifié");
+    let mut opened = Vec::new();
+    for (i, c) in frozen.iter().enumerate() {
+        let i = i as u32;
+        opened.extend_from_slice(
+            &cipher.open_chunk(i, i == chunks - 1, &b64::decode(c).unwrap()).unwrap(),
+        );
+    }
+    assert_eq!(opened, plain);
 }

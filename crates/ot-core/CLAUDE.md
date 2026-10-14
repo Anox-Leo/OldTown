@@ -6,8 +6,9 @@ note 0023) : identité, connexion au relais, authentification, reconnexion
 avec backoff, file d'envoi, dédoublonnage ; à partir de l'étape 2,
 chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
 
-- **Fonction `net`** (par défaut) : `Client`, `redeem_pairing`, TLS, et les
-  dépendances tokio, tokio-tungstenite, rustls. Sans elle, le crate se
+- **Fonction `net`** (par défaut) : `Client`, `redeem_pairing`, TLS, les
+  transferts de fichiers (`transfer.rs`, `http.rs`, client `hyper`), et les
+  dépendances tokio, tokio-tungstenite, rustls, hyper. Sans elle, le crate se
   compile en WebAssembly : rien de ce qui reste ne doit dépendre du réseau,
   d'un runtime ou de l'OS. Les types communs vivent dans `types.rs`.
   `Secure` (et `Effect`) est public pour `ot-wasm`, qui refait en TypeScript
@@ -37,6 +38,16 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   vient de `ot-crypto` ; aucune primitive crypto n'est appelée directement ici.
 - Aucun envoi en clair : `Client::send` chiffre toujours et refuse sans
   groupe ; `send_envelope` ne sert qu'aux tests.
+- Fichiers (étape 5, note 0026) : `files.rs` (sans réseau) range les offres
+  reçues (`files.json`) et les dépôts en cours (`uploads.json`) dans le
+  `Keyring`, clés comprises, et signe les requêtes HTTP ; `Secure` traite le
+  corps `file` (offre rangée **avant** l'acquittement, puis `Event::File`
+  sans clé). Toute écriture de cet état passe par la tâche du client
+  (`Command::WithSecure`) : jamais d'accès concurrent. `transfer.rs` fait les
+  transferts en parallèle (4), réessaie tant que le transfert progresse, et
+  lit et écrit par `ChunkSource` et `ChunkSink`, fournis par l'appli et
+  appelés hors du runtime (`spawn_blocking`). Un retrait n'est finalisé
+  (`ChunkSink::finish`) qu'après la vérification du SHA-256.
 - Jamais de contenu, de clé ni de jeton dans les logs `tracing`.
 - Tests : unitaires dans le crate ; les scénarios avec un vrai relais vivent
   dans `crates/ot-server/tests/` (relais en processus).

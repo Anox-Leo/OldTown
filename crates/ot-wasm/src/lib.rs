@@ -78,6 +78,44 @@ pub fn parse_join(text: &str) -> Result<String, JsError> {
     to_json(&join)
 }
 
+/// SHA-256 en flux, pour hacher un gros fichier morceau par morceau.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct Hasher(sha2::Sha256);
+
+#[wasm_bindgen]
+impl Hasher {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        sha2::Digest::update(&mut self.0, data);
+    }
+
+    /// Empreinte finale (32 octets) ; le hacheur repart de zéro.
+    pub fn finish(&mut self) -> Vec<u8> {
+        sha2::Digest::finalize_reset(&mut self.0).to_vec()
+    }
+}
+
+/// Géométrie d'un fichier de `size` octets en morceaux de `chunk_size` :
+/// `{"size", "chunk_size", "chunks", "sealed_size", "sealed_chunk_size"}`.
+#[wasm_bindgen(js_name = fileGeometry)]
+pub fn file_geometry(size: f64, chunk_size: u32) -> Result<String, JsError> {
+    to_json(&crate::core::Geometry::new(exact_u64(size)?, chunk_size).map_err(js)?)
+}
+
+/// Entier positif exact passé par le JavaScript (taille de fichier).
+fn exact_u64(n: f64) -> Result<u64, JsError> {
+    if n.fract() != 0.0 || !(0.0..=9_007_199_254_740_991.0).contains(&n) {
+        return Err(js("taille invalide"));
+    }
+    // Entier exact, vérifié juste au-dessus.
+    Ok(n as u64)
+}
+
 /// Modules d'un QR code (`size` × `size`, ligne par ligne, 1 = noir).
 #[wasm_bindgen]
 pub struct QrCode {
@@ -205,6 +243,31 @@ impl Vault {
         .to_json())
     }
 
+    /// En-têtes d'une requête HTTP de fichiers signée par cet appareil
+    /// (étape 5) : objet JSON `{nom: valeur}`.
+    #[wasm_bindgen(js_name = signHttp)]
+    pub fn sign_http(
+        &self,
+        device_id: &str,
+        method: &str,
+        path: &str,
+        body: &[u8],
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let identity = self.inner.identity().map_err(js)?.ok_or_else(|| js("identité absente"))?;
+        let device_id: DeviceId = device_id.parse().map_err(js)?;
+        let headers = ot_core::files::signed_headers(
+            &identity,
+            &device_id,
+            method,
+            path,
+            body,
+            exact_u64(now_ms)?,
+        );
+        let map: std::collections::BTreeMap<_, _> = headers.into_iter().collect();
+        to_json(&map)
+    }
+
     /// Crée un groupe dont cet appareil est le seul membre (premier appareil,
     /// et tests). Refuse d'écraser un groupe existant.
     #[wasm_bindgen(js_name = initGroup)]
@@ -275,6 +338,95 @@ impl Core {
     #[wasm_bindgen(js_name = startJoin)]
     pub fn start_join(&mut self, code: &str, sponsor: &str, name: &str) -> Result<String, JsError> {
         to_json(&self.state.start_join(code, sponsor, name).map_err(js)?)
+    }
+
+    /// Dépôt en cours de cette source (`{"blob_id", "expires_at", …géométrie}`),
+    /// `undefined` sinon.
+    pub fn upload(&self, source_id: &str, size: f64) -> Result<Option<String>, JsError> {
+        self.state.upload(source_id, exact_u64(size)?).map_err(js)?.map(|u| to_json(&u)).transpose()
+    }
+
+    /// Nouveau dépôt après `POST /v1/blobs` ; la clé reste ici.
+    #[wasm_bindgen(js_name = startUpload)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_upload(
+        &self,
+        source_id: &str,
+        name: &str,
+        mime: &str,
+        size: f64,
+        chunk_size: u32,
+        sha256: &[u8],
+        to: Vec<String>,
+        blob_id: &str,
+        expires_at: &str,
+    ) -> Result<String, JsError> {
+        let up = self
+            .state
+            .start_upload(
+                source_id,
+                name,
+                mime,
+                exact_u64(size)?,
+                chunk_size,
+                sha256,
+                &to,
+                blob_id,
+                expires_at,
+            )
+            .map_err(js)?;
+        to_json(&up)
+    }
+
+    /// Morceau `index` chiffré, prêt à déposer.
+    #[wasm_bindgen(js_name = sealChunk)]
+    pub fn seal_chunk(
+        &self,
+        source_id: &str,
+        index: u32,
+        plain: &[u8],
+    ) -> Result<Vec<u8>, JsError> {
+        self.state.seal_chunk(source_id, index, plain).map_err(js)
+    }
+
+    /// Annonce (enveloppe JSON) d'un dépôt terminé.
+    #[wasm_bindgen(js_name = sealFile)]
+    pub fn seal_file(&self, source_id: &str) -> Result<String, JsError> {
+        to_json(&self.state.seal_file(source_id).map_err(js)?)
+    }
+
+    /// Oublie le dépôt de cette source (annonce acceptée, ou abandon).
+    #[wasm_bindgen(js_name = forgetUpload)]
+    pub fn forget_upload(&self, source_id: &str) -> Result<(), JsError> {
+        self.state.forget_upload(source_id).map_err(js)
+    }
+
+    /// Fichiers annoncés encore téléchargeables (JSON, sans clé).
+    pub fn files(&self) -> Result<String, JsError> {
+        to_json(&self.state.files().map_err(js)?)
+    }
+
+    /// Géométrie d'un fichier annoncé.
+    #[wasm_bindgen(js_name = fileGeometry)]
+    pub fn file_geometry(&self, blob_id: &str) -> Result<String, JsError> {
+        to_json(&self.state.file_geometry(blob_id).map_err(js)?)
+    }
+
+    /// Morceau `index` déchiffré et vérifié.
+    #[wasm_bindgen(js_name = openChunk)]
+    pub fn open_chunk(&self, blob_id: &str, index: u32, sealed: &[u8]) -> Result<Vec<u8>, JsError> {
+        self.state.open_chunk(blob_id, index, sealed).map_err(js)
+    }
+
+    /// Le fichier reçu a-t-il le SHA-256 annoncé ?
+    #[wasm_bindgen(js_name = checkFile)]
+    pub fn check_file(&self, blob_id: &str, sha256: &[u8]) -> Result<bool, JsError> {
+        self.state.check_file(blob_id, sha256).map_err(js)
+    }
+
+    #[wasm_bindgen(js_name = forgetFile)]
+    pub fn forget_file(&self, blob_id: &str) -> Result<(), JsError> {
+        self.state.forget_file(blob_id).map_err(js)
     }
 
     /// Rotation : `{"epoch": n, "events": […], "sends": [group_key…]}`.

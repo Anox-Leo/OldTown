@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>OldTown : envoyer un fichier</title>
+    <link rel="stylesheet" href="page.css" />
+    <script type="module" src="send.js"></script>
+  </head>
+  <body>
+    <h1 id="title">Envoyer un fichier</h1>
+    <div class="card">
+      <p id="ask" class="muted" hidden></p>
+      <input id="files" type="file" multiple aria-label="Fichiers à envoyer" />
+      <div class="row">
+        <select id="to" class="grow" aria-label="Destinataire">
+          <option value="">Tous mes appareils</option>
+        </select>
+        <button id="go" class="primary" disabled>Envoyer</button>
+      </div>
+      <p id="status" class="muted" role="status"></p>
+      <p id="error" class="error" role="alert"></p>
+    </div>
+  </body>
+</html>

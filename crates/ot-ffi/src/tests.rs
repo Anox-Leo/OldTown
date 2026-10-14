@@ -48,7 +48,10 @@ async fn relay() -> (String, Store) {
     let store = Store::in_memory().await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    let relay = Relay::new(store.clone(), Config::default());
+    // Dossier des fichiers propre à chaque relais de test, sous le dossier
+    // temporaire du système.
+    let blobs = std::env::temp_dir().join(format!("ot-ffi-test-{}", ot_core::Ulid::generate()));
+    let relay = Relay::new(store.clone(), Config { blob_dir: blobs, ..Config::default() });
     tokio::spawn(ot_server::serve(relay, listener, std::future::pending()));
     (url, store)
 }
@@ -184,6 +187,128 @@ async fn phone_sponsors_by_reverse_qr() {
     assert_eq!((received.from_name.as_str(), received.body.as_str()), ("windows", "merci"));
 }
 
+/// Fichier en mémoire, comme le lirait Kotlin.
+struct MemSource(Vec<u8>);
+
+impl FileSource for MemSource {
+    fn size(&self) -> u64 {
+        self.0.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u32) -> Result<Vec<u8>, StoreError> {
+        let start = (offset as usize).min(self.0.len());
+        Ok(self.0[start..(start + len as usize).min(self.0.len())].to_vec())
+    }
+}
+
+#[derive(Default)]
+struct MemSink(Mutex<Vec<u8>>);
+
+impl FileSink for MemSink {
+    fn write_at(&self, offset: u64, data: Vec<u8>) -> Result<(), StoreError> {
+        let mut buf = self.0.lock().unwrap();
+        let end = buf.len().max(offset as usize + data.len());
+        buf.resize(end, 0);
+        buf[offset as usize..offset as usize + data.len()].copy_from_slice(&data);
+        Ok(())
+    }
+    fn finish(&self) -> Result<String, StoreError> {
+        Ok("content://media/downloads/7".into())
+    }
+    fn abort(&self) {
+        self.0.lock().unwrap().clear();
+    }
+}
+
+struct Quiet;
+
+impl TransferListener for Quiet {
+    fn on_progress(&self, _done: u64, _total: u64) {}
+}
+
+#[tokio::test]
+async fn files_both_ways() {
+    let (url, relay_store) = relay().await;
+    let a_store = phone(&url, &relay_store).await;
+    let a = OtClient::start(a_store.clone()).unwrap();
+    next(&a, connected).await;
+    // Un PC rejoint le groupe par QR inversé.
+    let pc_id = Identity::generate();
+    let mut pc = ClientConfig::new(
+        url.clone(),
+        ot_core::DeviceId::generate(),
+        pc_id,
+        Arc::new(MemoryKeyring::new()),
+    );
+    pc.backoff =
+        ot_core::Backoff { initial: Duration::from_millis(50), max: Duration::from_millis(200) };
+    let (pc, mut pc_events) = Client::start(pc);
+    a.sponsor(within(pc.pair_offer("windows")).await.unwrap()).await.unwrap();
+    within(async {
+        while !matches!(pc_events.next().await, Some(ot_core::Event::GroupChanged { .. })) {}
+    })
+    .await;
+
+    // Téléphone → PC.
+    let photo: Vec<u8> = (0..1_500_000u32).map(|i| (i % 251) as u8).collect();
+    let source = Arc::new(MemSource(photo.clone()));
+    let msg = a
+        .send_file(
+            source,
+            "content://media/images/1".into(),
+            "IMG_0001.jpg".into(),
+            "image/jpeg".into(),
+            vec![],
+            Arc::new(Quiet),
+        )
+        .await
+        .unwrap();
+    let file = within(async {
+        loop {
+            if let Some(ot_core::Event::File(f)) = pc_events.next().await {
+                return f.file;
+            }
+        }
+    })
+    .await;
+    assert_eq!((file.msg_id.to_string(), file.name.as_str()), (msg, "IMG_0001.jpg"));
+
+    // PC → téléphone : rangé dans l'historique, téléchargé, URI notée.
+    let source = Arc::new(MemSource(photo.clone()));
+    let pc_file = ot_core::OutgoingFile {
+        source_id: "/home/x/scan.pdf".into(),
+        name: "scan.pdf".into(),
+        mime: "application/pdf".into(),
+        to: vec![],
+    };
+    let none = Arc::new(|_: u64, _: u64| {});
+    within(pc.send_file(pc_file, Arc::new(crate::files::Source(source)), none)).await.unwrap();
+    let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
+        unreachable!()
+    };
+    assert_eq!((received.kind, received.body.as_str()), (ContentKind::File, "scan.pdf"));
+    let item = received.file.clone().unwrap();
+    assert_eq!(
+        (item.mime.as_str(), item.size, item.saved_uri.clone()),
+        ("application/pdf", photo.len() as u64, None)
+    );
+    let sink = Arc::new(MemSink::default());
+    let saved = a.download(received.msg_id.clone(), sink.clone(), Arc::new(Quiet)).await.unwrap();
+    assert!(*sink.0.lock().unwrap() == photo);
+    assert_eq!(saved.saved_uri.as_deref(), Some("content://media/downloads/7"));
+    let history = history(a_store.clone()).unwrap();
+    assert_eq!(history[0].file.as_ref().unwrap().saved_uri, saved.saved_uri);
+    // Aucune clé de fichier dans l'historique rangé par le pont.
+    let raw = String::from_utf8(a_store.0.lock().unwrap()["history.json"].clone()).unwrap();
+    assert!(!raw.contains("\"key\"") && !raw.contains("nonce"), "{raw}");
+}
+
+#[test]
+fn old_history_without_files_still_reads() {
+    let old = r#"[{"msg_id":"m","from_id":"d","from_name":"mac","created_at_ms":1,"kind":"text","body":"x","sensitive":false}]"#;
+    let items: Vec<Received> = serde_json::from_str(old).unwrap();
+    assert_eq!(items[0].file, None);
+}
+
 #[tokio::test]
 async fn bad_join_inputs_are_refused_before_contact() {
     let store = Arc::new(TestStore::default());
@@ -233,6 +358,7 @@ fn history_keeps_the_last_fifty() {
             kind: ContentKind::Text,
             body: format!("{i}"),
             sensitive: false,
+            file: None,
         };
         local.push_history(item).unwrap();
     }

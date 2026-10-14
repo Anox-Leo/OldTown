@@ -28,16 +28,29 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   « Messages » ; actions choisies par `notify/actionsFor` (testée sans
   Android). « Copier » relit l'élément par son `msg_id` : le texte ne passe
   pas par l'`Intent`. « Ouvrir » seulement pour `http(s)://`.
-- **Partage** : `share/ShareActivity` (feuille du bas, `text/plain` ;
-  fichiers refusés jusqu'à l'étape 5) et un raccourci Direct Share par membre
-  (`share/Shortcuts`).
+- **Partage** : `share/ShareActivity` (feuille du bas : texte, ou fichiers
+  `SEND`/`SEND_MULTIPLE`, URI `content://` seulement) et un raccourci Direct
+  Share par membre (`share/Shortcuts`).
+- **Fichiers** (étape 5, notes 0027 et 0028) : envoi par le menu *Partager*
+  ou le trombone de l'écran d'accueil (sélecteur `OpenMultipleDocuments`) ;
+  les transferts tournent dans `RelayService` (actions `SEND_FILES`,
+  `DOWNLOAD`), qui garde l'accès aux URI
+  partagées et survit aux écrans ; `files/` : `UriSource` (lecture à un
+  décalage par un `ContentResolver`), `DownloadSink` (MediaStore,
+  `Download/OldTown`, `IS_PENDING` jusqu'à la vérification), `FileTransfers`
+  (progression, notification « Transferts »), règles pures `FileRules`
+  (téléchargement d'office sous 20 Mo sur réseau non facturé).
 - **UI** : thème de T3 Code (`ui/theme`, sombre et clair), composants
   maison dans `ui/components` (pas de Material Icons : icônes au trait
   d'après Lucide), textes en français. Navigation par une pile d'écrans
   dans `MainActivity`.
 - **Tests** : unitaires JVM dans `app/src/test` (logique pure : actions,
-  partage) ; instrumentés dans `app/src/androidTest` (Keystore, service,
-  feuille de partage). Ce qui touche au protocole se teste en Rust.
+  partage, règles des fichiers) ; instrumentés dans `app/src/androidTest`
+  (Keystore, service, feuille de partage, écriture MediaStore). Ce qui
+  touche au protocole se teste en Rust. Les tests instrumentés tournent avec
+  les vraies données de l'appli : un test qui oublie ou remplace l'appareil
+  commence par `assumeNoRealDevice` (sauté sur un téléphone appairé), et son
+  `@After` n'efface rien si le test a été sauté.
 - Nouvelle dépendance : licence compatible, version dans
   `gradle/libs.versions.toml`, justifiée dans le compte rendu. Polices et
   icônes tierces : licence dans `third_party/`.

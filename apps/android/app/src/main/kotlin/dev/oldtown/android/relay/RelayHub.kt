@@ -43,6 +43,17 @@ sealed interface Notice {
     data class Problem(val message: String) : Notice
 }
 
+/** Fichier en cours d'envoi ou de réception (étape 5). */
+data class Transfer(
+    /** URI de la source (envoi) ou `msg_id` de l'élément (réception). */
+    val id: String,
+    val name: String,
+    val upload: Boolean,
+    val done: Long,
+    val total: Long,
+    val error: String? = null,
+)
+
 data class HubState(
     /** Appareil enregistré ; `null` avant l'appairage. */
     val device: DeviceState? = null,
@@ -51,6 +62,7 @@ data class HubState(
     val group: Group? = null,
     val history: List<Received> = emptyList(),
     val loaded: Boolean = false,
+    val transfers: List<Transfer> = emptyList(),
 )
 
 /**
@@ -131,6 +143,40 @@ object RelayHub {
     }
 
     fun setHistory(items: List<Received>) = _state.update { it.copy(history = items) }
+
+    /** Remplace un élément de l'historique (fichier enregistré). */
+    internal fun replace(item: Received) = _state.update { s ->
+        s.copy(history = s.history.map { if (it.msgId == item.msgId) item else it })
+    }
+
+    internal fun setTransfer(t: Transfer) = _state.update { s ->
+        s.copy(transfers = s.transfers.filterNot { it.id == t.id } + t)
+    }
+
+    internal fun removeTransfer(id: String) = _state.update { s ->
+        s.copy(transfers = s.transfers.filterNot { it.id == id })
+    }
+
+    /** Envoie des fichiers partagés, par le service (qui garde l'accès aux URI). */
+    fun sendFiles(context: Context, uris: List<android.net.Uri>, to: List<String>) {
+        if (uris.isEmpty()) return
+        val clip = android.content.ClipData.newRawUri(null, uris.first())
+        for (u in uris.drop(1)) clip.addItem(android.content.ClipData.Item(u))
+        val intent = Intent(context, RelayService::class.java)
+            .setAction(RelayService.ACTION_SEND_FILES)
+            .putStringArrayListExtra(RelayService.EXTRA_TO, ArrayList(to))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.clipData = clip
+        ContextCompat.startForegroundService(context, intent)
+    }
+
+    /** Télécharge le fichier d'un élément, par le service (survit à l'écran). */
+    fun download(context: Context, msgId: String) {
+        val intent = Intent(context, RelayService::class.java)
+            .setAction(RelayService.ACTION_DOWNLOAD)
+            .putExtra(RelayService.EXTRA_MSG_ID, msgId)
+        ContextCompat.startForegroundService(context, intent)
+    }
 
     internal fun notify(notice: Notice) {
         _notices.tryEmit(notice)

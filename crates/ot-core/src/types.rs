@@ -5,6 +5,8 @@
 use ot_proto::{Content, DeviceId, ErrorCode, Ulid};
 use time::OffsetDateTime;
 
+use crate::files::ReceivedFile;
+
 /// Message reçu, déchiffré, d'un membre du roster dont la signature est
 /// vérifiée, et pas encore vu.
 #[derive(Debug, Clone)]
@@ -32,6 +34,9 @@ pub enum Event {
         message: String,
     },
     Message(Received),
+    /// Fichier annoncé (étape 5) : sa clé est rangée dans le keyring, le
+    /// téléchargement se demande par son `blob_id`.
+    File(ReceivedFile),
     /// Message rejeté (en clair, expéditeur hors roster, signature fausse,
     /// déchiffrement impossible…) ; il est quand même acquitté.
     Rejected {
@@ -90,4 +95,9 @@ pub enum ClientError {
     Connection(String),
     #[error("{0}")]
     Invalid(String),
+    /// Fichier supprimé du relais (expiré, annulé ou déjà retiré par tous).
+    #[error("fichier expiré : il n'est plus sur le relais")]
+    Expired,
+    #[error("transfert : {0}")]
+    Transfer(String),
 }

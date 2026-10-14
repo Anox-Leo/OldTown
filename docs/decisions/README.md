@@ -33,3 +33,8 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0023](0023-extension-wasm-et-transport-ts.md) | Extension : cœur de groupe en WebAssembly, transport en TypeScript, `ping`/`pong` | 4 | Acceptée |
 | [0024](0024-retours-essai-extension-brave.md) | Retours d'essai : Brave, ouverture directe des éléments reçus, raccourci presse-papiers, notifications Android | 4 | Acceptée |
 | [0025](0025-diagnostic-du-relais.md) | Diagnostic du relais envoyé par un membre dédié `relais-diag` | Hors jalon | Acceptée |
+| [0026](0026-relecture-etape-5.md) | Relecture de l'étape 5 : `aead-stream`, accès direct aux morceaux, clés de fichier en Rust, API HTTP, permissions de l'extension | 5 | Acceptée |
+| [0027](0027-image-par-domaine-transferts-android.md) | Images des pages autorisées domaine par domaine ; transferts Android dans le service (D25, D26) | 5 | Acceptée |
+| [0028](0028-etape-5-realisation.md) | Étape 5 : reprise du retrait limitée à l'appli ouverte, géométrie chiffrée, état des fichiers sérialisé, choix de la CLI, de l'extension et d'Android | 5 | Acceptée |
+| [0029](0029-extension-fichiers-ouverts-par-le-navigateur.md) | Extension : fichiers reçus ouverts par le navigateur, téléchargement sur un geste, trombone qui ouvre le sélecteur (D27) | 5 | Acceptée |
+| [0030](0030-extension-conversation-par-canal.md) | Extension : la popup devient une conversation par canal (« Tous », un par appareil) | 5 | Acceptée |

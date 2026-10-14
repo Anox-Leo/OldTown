@@ -1,7 +1,8 @@
 # ot-proto
 
 Types du protocole partagés par le relais et les clients : trames WebSocket
-(`Frame`), enveloppe (`Envelope`, `Payload`), codes d'erreur, constantes
+(`Frame`), enveloppe (`Envelope`, `Payload`), identifiants (`DeviceId`,
+`BlobId` pour les fichiers de l'étape 5), codes d'erreur, constantes
 (version, tailles maximales, préfixe d'authentification).
 
 - Aucune logique réseau, aucune E/S, aucune crypto de contenu : seulement des

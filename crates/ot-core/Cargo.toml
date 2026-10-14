@@ -15,10 +15,15 @@ default = ["net"]
 # Connexion au relais (tokio, WebSocket, TLS). Sans elle, le cœur se compile
 # en WebAssembly pour l'extension (note 0023).
 net = [
+    "dep:bytes",
     "dep:futures-util",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:hyper-util",
     "dep:rustls",
     "dep:rustls-pki-types",
     "dep:tokio",
+    "dep:tokio-rustls",
     "dep:tokio-tungstenite",
     "dep:webpki-roots",
 ]
@@ -26,16 +31,22 @@ net = [
 [dependencies]
 ot-proto.workspace = true
 ot-crypto.workspace = true
+bytes = { workspace = true, optional = true }
 ed25519-dalek.workspace = true
 futures-util = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 time.workspace = true
 getrandom.workspace = true
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 tracing.workspace = true
 webpki-roots = { workspace = true, optional = true }

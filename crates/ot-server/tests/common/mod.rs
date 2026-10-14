@@ -366,3 +366,202 @@ impl TestCa {
         (cert_path, key_path)
     }
 }
+
+/// Réponse HTTP brute : code et corps.
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// Corps JSON d'une réponse.
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
+        serde_json::from_slice(&self.body).unwrap_or_else(|e| {
+            panic!("JSON attendu ({e}) : {}", String::from_utf8_lossy(&self.body))
+        })
+    }
+
+    /// Code d'erreur de l'API.
+    pub fn error(&self) -> ot_proto::http::HttpErrorCode {
+        self.json::<ot_proto::http::HttpError>().error
+    }
+}
+
+/// Requête HTTP/1.1 minimale (`Connection: close`).
+pub async fn http(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> HttpResponse {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let mut head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
+    s.write_all(head.as_bytes()).await.unwrap();
+    s.write_all(body).await.unwrap();
+    let mut buf = Vec::new();
+    within(s.read_to_end(&mut buf)).await.unwrap();
+    let split = buf.windows(4).position(|w| w == b"\r\n\r\n").expect("réponse HTTP");
+    let status = std::str::from_utf8(&buf[9..12]).unwrap().parse().unwrap();
+    HttpResponse { status, body: buf[split + 4..].to_vec() }
+}
+
+/// En-têtes d'authentification d'une requête signée par `dev`, à l'heure
+/// `time_ms` avec `nonce`.
+pub fn signed_headers(
+    dev: &TestDevice,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    time_ms: i64,
+    nonce: [u8; 16],
+) -> Vec<(&'static str, String)> {
+    use ed25519_dalek::Signer;
+    use ot_proto::http::*;
+    use sha2::Digest;
+    let hash: [u8; 32] = sha2::Sha256::digest(body).into();
+    let msg = http_request_message(method, path, time_ms as u64, &nonce, &hash);
+    let key = ed25519_dalek::SigningKey::from_bytes(&dev.identity.to_bytes());
+    vec![
+        (HEADER_DEVICE, dev.id.to_string()),
+        (HEADER_TIME, time_ms.to_string()),
+        (HEADER_NONCE, ot_proto::b64::encode(&nonce)),
+        (HEADER_SIGNATURE, ot_proto::b64::encode(&key.sign(&msg).to_bytes())),
+    ]
+}
+
+/// Requête signée par `dev`, à l'heure courante, avec un nonce neuf.
+pub async fn signed(
+    server: &TestServer,
+    dev: &TestDevice,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> HttpResponse {
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).unwrap();
+    let headers = signed_headers(dev, method, path, body, ot_server::now_ms(), nonce);
+    http(server.addr, method, path, &headers, body).await
+}
+
+/// Interrupteur TCP devant le relais : `cut` coupe les connexions ouvertes
+/// et refuse les nouvelles, `restore` les laisse repasser (coupure réseau).
+pub struct Gate {
+    pub addr: SocketAddr,
+    open: Arc<std::sync::atomic::AtomicBool>,
+    conns: Arc<std::sync::Mutex<Vec<tokio::task::AbortHandle>>>,
+}
+
+impl Gate {
+    pub async fn start(target: SocketAddr) -> Self {
+        use std::sync::atomic::Ordering;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let conns = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (o, c) = (open.clone(), conns.clone());
+        tokio::spawn(async move {
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                if !o.load(Ordering::SeqCst) {
+                    continue;
+                }
+                let task = tokio::spawn(async move {
+                    if let Ok(mut outbound) = TcpStream::connect(target).await {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    }
+                });
+                c.lock().unwrap().push(task.abort_handle());
+            }
+        });
+        Self { addr, open, conns }
+    }
+
+    pub fn url(&self) -> String {
+        format!("ws://{}", self.addr)
+    }
+
+    pub fn cut(&self) {
+        self.open.store(false, std::sync::atomic::Ordering::SeqCst);
+        for c in self.conns.lock().unwrap().drain(..) {
+            c.abort();
+        }
+    }
+
+    pub fn restore(&self) {
+        self.open.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Fichier en mémoire, comme source d'envoi.
+pub struct MemSource {
+    pub data: Vec<u8>,
+    pub reads: std::sync::atomic::AtomicU64,
+}
+
+impl MemSource {
+    pub fn new(data: Vec<u8>) -> Arc<Self> {
+        Arc::new(Self { data, reads: Default::default() })
+    }
+}
+
+impl ot_core::ChunkSource for MemSource {
+    fn size(&self) -> u64 {
+        self.data.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u32) -> Result<Vec<u8>, String> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let start = (offset as usize).min(self.data.len());
+        let end = (start + len as usize).min(self.data.len());
+        Ok(self.data[start..end].to_vec())
+    }
+}
+
+/// Destination en mémoire : ce qui est écrit, et s'il a été finalisé ou
+/// abandonné.
+#[derive(Default)]
+pub struct MemSink {
+    pub data: std::sync::Mutex<Vec<u8>>,
+    pub finished: std::sync::atomic::AtomicBool,
+    pub aborted: std::sync::atomic::AtomicBool,
+}
+
+impl ot_core::ChunkSink for MemSink {
+    fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), String> {
+        let mut buf = self.data.lock().unwrap();
+        let end = offset as usize + data.len();
+        if buf.len() < end {
+            buf.resize(end, 0);
+        }
+        buf[offset as usize..end].copy_from_slice(data);
+        Ok(())
+    }
+    fn finish(&self) -> Result<(), String> {
+        self.finished.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+    fn abort(&self) {
+        self.aborted.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.data.lock().unwrap().clear();
+    }
+}
+
+/// Octets pseudo-aléatoires reproductibles.
+pub fn sample(len: usize) -> Vec<u8> {
+    let mut x: u32 = 0x1234_5678;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as u8
+        })
+        .collect()
+}

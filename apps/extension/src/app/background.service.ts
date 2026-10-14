@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 
 import {
+  HISTORY_LEN,
   type Item,
   POPUP_PORT,
   type Push,
@@ -31,7 +32,7 @@ export class BackgroundService {
       if (push.type === 'state') this.state.set(push.state);
       else
         this.items.update((items) =>
-          [push.item, ...items.filter((i) => i.msgId !== push.item.msgId)].slice(0, 50),
+          [push.item, ...items.filter((i) => i.msgId !== push.item.msgId)].slice(0, HISTORY_LEN),
         );
     });
     port.onDisconnect.addListener(() => {

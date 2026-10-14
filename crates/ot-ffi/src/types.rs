@@ -24,6 +24,13 @@ pub enum OtError {
     /// Donnée saisie invalide (URL, nom…).
     #[error("{message}")]
     Invalid { message: String },
+    /// Fichier plus disponible sur le relais (expiré, annulé).
+    #[error("{message}")]
+    Expired { message: String },
+    /// Transfert de fichier en échec (réseau, fichier altéré, stockage) ;
+    /// le relancer reprend là où il s'est arrêté.
+    #[error("{message}")]
+    Transfer { message: String },
     #[error("{message}")]
     Internal { message: String },
 }
@@ -43,6 +50,8 @@ impl From<ClientError> for OtError {
             | ClientError::Pairing(_) => Self::Pairing { message },
             ClientError::NoGroup | ClientError::NotMember(_) => Self::NotInGroup { message },
             ClientError::Invalid(_) => Self::Invalid { message },
+            ClientError::Expired => Self::Expired { message },
+            ClientError::Transfer(_) => Self::Transfer { message },
             ClientError::Rejected { .. } | ClientError::Crypto(_) => Self::Internal { message },
         }
     }
@@ -83,6 +92,8 @@ pub struct DeviceState {
 pub enum ContentKind {
     Text,
     Link,
+    /// Fichier (étape 5) : détails dans `Received::file`.
+    File,
 }
 
 impl From<ot_core::ContentKind> for ContentKind {
@@ -110,6 +121,9 @@ pub struct Received {
     /// l'étape 6, qui apporte le marquage.
     #[serde(default)]
     pub sensitive: bool,
+    /// Fichier annoncé (`kind` vaut `File`, `body` son nom).
+    #[serde(default)]
+    pub file: Option<crate::FileItem>,
 }
 
 /// Événement du client, dans l'ordre d'arrivée.

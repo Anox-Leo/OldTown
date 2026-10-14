@@ -1,4 +1,4 @@
-/* Service worker et document offscreen (esbuild ne vérifie pas les types). */
+/* Service worker, document offscreen et pages simples (esbuild ne vérifie pas les types). */
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -8,6 +8,7 @@
   "include": [
     "src/background/**/*.ts",
     "src/offscreen/**/*.ts",
+    "src/pages/**/*.ts",
     "src/shared/**/*.ts",
     "src/wasm/*.d.ts"
   ]

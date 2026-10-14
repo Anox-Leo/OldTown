@@ -4,10 +4,12 @@
 
 use std::sync::Arc;
 
+use ot_core::crypto::{CHUNK_TAG_LEN, chunk_count, chunk_len, sealed_size};
 use ot_core::crypto::{PairingCode, PairingSecret};
+use ot_core::files::new_file_meta;
 use ot_core::{
-    ClientError, Content, ContentKind, DeviceId, Effect, Event, GroupInfo, SecretStore, Secure,
-    StoreKeyring,
+    BlobId, ClientError, Content, ContentKind, DeviceId, Effect, Event, FileInfo, GroupInfo,
+    PendingUpload, SecretStore, Secure, StoreKeyring,
 };
 use ot_proto::{Envelope, b64};
 use serde::{Deserialize, Serialize};
@@ -65,6 +67,83 @@ pub enum EventOut {
     KeyringError {
         message: String,
     },
+    /// Fichier annoncé (étape 5) ; sa clé reste dans le coffre.
+    File {
+        seq: i64,
+        #[serde(flatten)]
+        file: FileOut,
+    },
+}
+
+/// Fichier annoncé, sans clé.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct FileOut {
+    pub msg_id: String,
+    pub from: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    pub blob_id: String,
+    pub name: String,
+    pub mime: String,
+    pub size: u64,
+}
+
+impl From<FileInfo> for FileOut {
+    fn from(f: FileInfo) -> Self {
+        Self {
+            msg_id: f.msg_id.to_string(),
+            from: f.from.to_string(),
+            created_at: f.created_at,
+            blob_id: f.blob_id.to_string(),
+            name: f.name,
+            mime: f.mime,
+            size: f.size,
+        }
+    }
+}
+
+/// Géométrie d'un fichier, pour le relais (tailles chiffrées) et la boucle
+/// de transfert (tailles en clair).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct Geometry {
+    pub size: u64,
+    pub chunk_size: u32,
+    pub chunks: u32,
+    pub sealed_size: u64,
+    pub sealed_chunk_size: u32,
+}
+
+impl Geometry {
+    pub fn new(size: u64, chunk_size: u32) -> Result<Self, String> {
+        let too_big = || "fichier trop gros".to_owned();
+        Ok(Self {
+            size,
+            chunk_size,
+            chunks: chunk_count(size, chunk_size).ok_or_else(too_big)?,
+            sealed_size: sealed_size(size, chunk_size).ok_or_else(too_big)?,
+            sealed_chunk_size: chunk_size + CHUNK_TAG_LEN,
+        })
+    }
+}
+
+/// Dépôt en cours, sans clé.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct UploadOut {
+    pub blob_id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
+    #[serde(flatten)]
+    pub geometry: Geometry,
+}
+
+impl UploadOut {
+    fn new(p: &PendingUpload) -> Result<Self, String> {
+        Ok(Self {
+            blob_id: p.meta.blob_id.to_string(),
+            expires_at: p.expires_at,
+            geometry: Geometry::new(p.meta.size, p.meta.chunk_size)?,
+        })
+    }
 }
 
 impl EventOut {
@@ -90,6 +169,7 @@ impl EventOut {
                 Self::PairingCompleted { device_id: device_id.to_string(), name }
             }
             Event::KeyringError { message } => Self::KeyringError { message },
+            Event::File(f) => Self::File { seq: f.seq, file: f.file.into() },
             Event::Connected { .. } | Event::Disconnected { .. } | Event::AuthFailed { .. } => {
                 return None;
             }
@@ -329,6 +409,120 @@ impl CoreState {
         Ok(env)
     }
 
+    // --- Fichiers (étape 5, note 0026) --------------------------------------
+
+    /// Dépôt en cours de cette source, s'il reste valable.
+    pub fn upload(&self, source_id: &str, size: u64) -> Result<Option<UploadOut>, String> {
+        let now = OffsetDateTime::now_utc();
+        self.secure
+            .upload(source_id, size, now)
+            .map_err(err)?
+            .as_ref()
+            .map(UploadOut::new)
+            .transpose()
+    }
+
+    /// Nouveau dépôt, après la création du blob par le relais : tire la clé
+    /// du fichier et la range dans le coffre.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_upload(
+        &self,
+        source_id: &str,
+        name: &str,
+        mime: &str,
+        size: u64,
+        chunk_size: u32,
+        sha256: &[u8],
+        to: &[String],
+        blob_id: &str,
+        expires_at: &str,
+    ) -> Result<UploadOut, String> {
+        let sha256: [u8; 32] = sha256.try_into().map_err(|_| "SHA-256 de 32 octets attendu")?;
+        let blob: BlobId = blob_id.parse().map_err(err)?;
+        let to =
+            to.iter().map(|id| id.parse::<DeviceId>().map_err(err)).collect::<Result<_, _>>()?;
+        let expires_at =
+            OffsetDateTime::parse(expires_at, &time::format_description::well_known::Rfc3339)
+                .map_err(err)?;
+        let meta =
+            new_file_meta(blob, name, mime, size, chunk_size, sha256).ok_or("fichier trop gros")?;
+        let pending = PendingUpload { source_id: source_id.to_owned(), to, expires_at, meta };
+        let out = UploadOut::new(&pending)?;
+        self.secure.save_upload(pending, OffsetDateTime::now_utc()).map_err(err)?;
+        Ok(out)
+    }
+
+    fn pending_upload(&self, source_id: &str) -> Result<PendingUpload, String> {
+        self.secure
+            .uploads_of(source_id)
+            .map_err(err)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "aucun envoi en cours pour ce fichier".to_owned())
+    }
+
+    /// Chiffre le morceau `index` d'un dépôt en cours.
+    pub fn seal_chunk(&self, source_id: &str, index: u32, plain: &[u8]) -> Result<Vec<u8>, String> {
+        let p = self.pending_upload(source_id)?;
+        let m = &p.meta;
+        if chunk_len(m.size, m.chunk_size, index) != Some(plain.len() as u32) {
+            return Err(format!("morceau {index} de taille inattendue"));
+        }
+        let cipher = ot_core::crypto::FileCipher::new(&m.key, &m.nonce);
+        cipher.seal_chunk(index, index + 1 == m.chunks, plain).map_err(err)
+    }
+
+    /// Annonce (enveloppe chiffrée) d'un dépôt terminé. Le dépôt reste
+    /// noté jusqu'à [`Self::forget_upload`], une fois l'annonce acceptée.
+    pub fn seal_file(&self, source_id: &str) -> Result<Envelope, String> {
+        let p = self.pending_upload(source_id)?;
+        self.secure.seal_file(&p.meta, p.to).map_err(err)
+    }
+
+    pub fn forget_upload(&self, source_id: &str) -> Result<(), String> {
+        self.secure.forget_upload(source_id).map_err(err)
+    }
+
+    /// Fichiers annoncés encore téléchargeables.
+    pub fn files(&self) -> Result<Vec<FileOut>, String> {
+        Ok(self.secure.files().map_err(err)?.into_iter().map(FileOut::from).collect())
+    }
+
+    fn stored(&self, blob_id: &str) -> Result<ot_core::StoredFile, String> {
+        let blob: BlobId = blob_id.parse().map_err(err)?;
+        self.secure.file(&blob).map_err(err)?.ok_or_else(|| "fichier inconnu".to_owned())
+    }
+
+    /// Géométrie d'un fichier annoncé.
+    pub fn file_geometry(&self, blob_id: &str) -> Result<Geometry, String> {
+        let f = self.stored(blob_id)?;
+        Geometry::new(f.size, f.chunk_size)
+    }
+
+    /// Déchiffre le morceau `index` d'un fichier annoncé ; refuse un morceau
+    /// altéré, déplacé ou de taille inattendue.
+    pub fn open_chunk(&self, blob_id: &str, index: u32, sealed: &[u8]) -> Result<Vec<u8>, String> {
+        let f = self.stored(blob_id)?;
+        let plain = f
+            .cipher()
+            .open_chunk(index, index + 1 == f.chunks, sealed)
+            .map_err(|_| format!("morceau {index} altéré"))?;
+        if chunk_len(f.size, f.chunk_size, index) != Some(plain.len() as u32) {
+            return Err(format!("morceau {index} incohérent"));
+        }
+        Ok(plain.to_vec())
+    }
+
+    /// Le SHA-256 du fichier reçu est-il celui annoncé ?
+    pub fn check_file(&self, blob_id: &str, sha256: &[u8]) -> Result<bool, String> {
+        Ok(self.stored(blob_id)?.sha256 == sha256)
+    }
+
+    pub fn forget_file(&self, blob_id: &str) -> Result<(), String> {
+        let blob: BlobId = blob_id.parse().map_err(err)?;
+        self.secure.forget_file(&blob).map_err(err)
+    }
+
     /// Nouvelle clé de groupe sans les membres `exclude`. Les `group_key` à
     /// envoyer sont dans `sends`.
     pub fn rotate(&mut self, exclude: &[String]) -> Result<(u32, Output), String> {
@@ -431,6 +625,84 @@ mod tests {
             [EventOut::Message { kind: "text", body, seq: 3, .. }] if body == "bonjour"
         ));
         assert!(core.seal_text("  ", &[]).is_err());
+    }
+
+    #[test]
+    fn file_upload_and_download_keep_keys_inside() {
+        let mut phone = sponsor();
+        let (vault, id) = extension();
+        let (mut core, _) = CoreState::open(vault.clone(), &id).unwrap();
+        let offer = core.offer("chrome").unwrap();
+        core.process(1, welcome(&mut phone, &offer.qr));
+
+        // L'extension envoie un fichier de 40 octets en morceaux de 16.
+        let data: Vec<u8> = (0..40).collect();
+        let sha: [u8; 32] = {
+            use sha2::Digest;
+            sha2::Sha256::digest(&data).into()
+        };
+        let blob = BlobId::generate().to_string();
+        let up = core
+            .start_upload(
+                "f",
+                "a.bin",
+                "application/x",
+                40,
+                16,
+                &sha,
+                &[],
+                &blob,
+                "2099-01-01T00:00:00Z",
+            )
+            .unwrap();
+        assert_eq!((up.geometry.chunks, up.geometry.sealed_size), (3, 40 + 48));
+        assert_eq!(core.upload("f", 40).unwrap(), Some(up));
+        let sealed: Vec<Vec<u8>> = (0..3u32)
+            .map(|i| {
+                core.seal_chunk("f", i, &data[i as usize * 16..(i as usize * 16 + 16).min(40)])
+                    .unwrap()
+            })
+            .collect();
+        assert!(core.seal_chunk("f", 0, &data[..3]).is_err());
+        let env = core.seal_file("f").unwrap();
+        core.forget_upload("f").unwrap();
+        assert_eq!(core.upload("f", 40).unwrap(), None);
+
+        // Le téléphone reçoit l'annonce ; puis renvoie la même au cœur de
+        // l'extension pour tester le retrait.
+        let fx = phone.secure.process(2, env, OffsetDateTime::now_utc());
+        let Some(Effect::Emit(Event::File(f))) = fx.into_iter().next() else {
+            panic!("fichier attendu")
+        };
+        let stored = phone.secure.file(&f.file.blob_id).unwrap().unwrap();
+        let meta = ot_core::FileMeta {
+            blob_id: stored.blob_id.clone(),
+            name: stored.name.clone(),
+            mime: stored.mime.clone(),
+            size: stored.size,
+            chunk_size: stored.chunk_size,
+            chunks: stored.chunks,
+            key: stored.key.clone(),
+            nonce: stored.nonce,
+            sha256: stored.sha256,
+        };
+        let back = phone.secure.seal_file(&meta, vec![]).unwrap();
+        let out = core.process(3, back);
+        assert!(matches!(&out.events[..], [EventOut::File { file, .. }] if file.name == "a.bin"));
+        assert_eq!(core.files().unwrap().len(), 1);
+        let mut plain = Vec::new();
+        for (i, c) in sealed.iter().enumerate() {
+            plain.extend(core.open_chunk(&blob, i as u32, c).unwrap());
+        }
+        assert_eq!(plain, data);
+        assert!(core.open_chunk(&blob, 1, &sealed[0]).is_err());
+        assert!(core.check_file(&blob, &sha).unwrap());
+        assert!(!core.check_file(&blob, &[0; 32]).unwrap());
+        core.forget_file(&blob).unwrap();
+        assert!(core.files().unwrap().is_empty());
+        // Ce qui sort vers le JavaScript ne contient aucune clé.
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(!json.contains("\"key\"") && !json.contains("nonce"), "{json}");
     }
 
     #[test]

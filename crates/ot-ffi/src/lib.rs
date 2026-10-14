@@ -12,12 +12,15 @@ use std::sync::LazyLock;
 use tokio::runtime::Runtime;
 
 mod client;
+mod files;
 mod local;
 mod types;
 
 pub use client::OtClient;
+pub use files::{FileItem, FileSink, FileSource, TransferListener};
 pub use local::{
-    clear_history, device_state, forget_device, group_snapshot, history, join, set_server_url,
+    clear_history, device_state, forget_device, group_snapshot, history, join, set_file_uri,
+    set_server_url,
 };
 pub use types::*;
 

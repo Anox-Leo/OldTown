@@ -9,10 +9,14 @@ use ot_crypto::{
     Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened,
     PairingCode, PairingOffer, PairingSecret, Roster, SealKey, fingerprint, open, seal,
 };
-use ot_proto::{Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
+use ot_proto::{BlobId, Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
 use time::OffsetDateTime;
 
 use crate::Identity;
+use crate::files::{
+    FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile, add_offer, prune_offers,
+    stored_from_body,
+};
 use crate::keyring::{
     GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, Quarantined, RETIRED_KEY_LIFETIME,
 };
@@ -293,6 +297,85 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
+    /// Chiffre l'annonce d'un fichier déposé (corps `file`, étape 5) sous
+    /// l'époque courante, pour des membres du roster (vide : tous).
+    pub fn seal_file(&self, meta: &FileMeta, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
+        let (keys, roster) = self.group()?;
+        if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
+            return Err(ClientError::NotMember(id.clone()));
+        }
+        let key = keys.current_key().ok_or(ClientError::NoGroup)?;
+        self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &meta.body()).map_err(crypto)
+    }
+
+    /// Offre reçue pour ce blob, avec sa clé (pour le téléchargement).
+    pub fn file(&self, blob_id: &BlobId) -> Result<Option<StoredFile>, ClientError> {
+        let files = self.keyring.load_files().map_err(keyring_err)?;
+        Ok(files.into_iter().find(|f| &f.blob_id == blob_id))
+    }
+
+    /// Fichiers annoncés encore connus, du plus ancien au plus récent.
+    pub fn files(&self) -> Result<Vec<FileInfo>, ClientError> {
+        let mut files = self.keyring.load_files().map_err(keyring_err)?;
+        prune_offers(&mut files, OffsetDateTime::now_utc());
+        Ok(files.iter().map(StoredFile::info).collect())
+    }
+
+    /// Oublie une offre (fichier téléchargé, ou expiré sur le relais).
+    pub fn forget_file(&self, blob_id: &BlobId) -> Result<(), ClientError> {
+        let mut files = self.keyring.load_files().map_err(keyring_err)?;
+        let before = files.len();
+        files.retain(|f| &f.blob_id != blob_id);
+        if files.len() != before {
+            self.keyring.save_files(&files).map_err(keyring_err)?;
+        }
+        Ok(())
+    }
+
+    /// Dépôt en cours pour cette source, s'il n'a pas expiré et si la taille
+    /// n'a pas changé.
+    pub fn upload(
+        &self,
+        source_id: &str,
+        size: u64,
+        now: OffsetDateTime,
+    ) -> Result<Option<PendingUpload>, ClientError> {
+        let uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        Ok(uploads
+            .into_iter()
+            .find(|u| u.source_id == source_id && u.meta.size == size && u.expires_at > now))
+    }
+
+    /// Tous les dépôts en cours de cette source, expirés compris.
+    pub fn uploads_of(&self, source_id: &str) -> Result<Vec<PendingUpload>, ClientError> {
+        let uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        Ok(uploads.into_iter().filter(|u| u.source_id == source_id).collect())
+    }
+
+    /// Enregistre un dépôt en cours (remplace celui de la même source) et
+    /// oublie les dépôts expirés.
+    pub fn save_upload(
+        &self,
+        upload: PendingUpload,
+        now: OffsetDateTime,
+    ) -> Result<(), ClientError> {
+        let mut uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        uploads.retain(|u| u.source_id != upload.source_id && u.expires_at > now);
+        uploads.push(upload);
+        self.keyring.save_uploads(&uploads).map_err(keyring_err)
+    }
+
+    /// Oublie le dépôt en cours de cette source (terminé ou abandonné).
+    pub fn forget_upload(&self, source_id: &str) -> Result<(), ClientError> {
+        let mut uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        let before = uploads.len();
+        uploads.retain(|u| u.source_id != source_id);
+        if uploads.len() != before {
+            self.keyring.save_uploads(&uploads).map_err(keyring_err)?;
+        }
+        Ok(())
+    }
+
     /// Le relais a créé un jeton : tire le secret et attend la demande.
     pub fn sponsor(
         &mut self,
@@ -534,6 +617,7 @@ impl Secure {
                     Body::Text { body } => Content::text(body),
                     Body::Link { body } => Content::link(body),
                     Body::Roster { roster } => return self.on_roster(env, epoch, roster, fx),
+                    body @ Body::File { .. } => return self.on_file(seq, env, body, now, fx),
                     other => {
                         return Err(Reject::Reason(format!(
                             "{} inattendu sous la clé de groupe",
@@ -593,6 +677,26 @@ impl Secure {
 
     /// Parrain : vérifie la demande, ajoute l'appareil, lui envoie la clé et
     /// le roster, puis le roster à tous.
+    /// Fichier annoncé : l'offre (clé comprise) est rangée avant que le
+    /// message soit acquitté, puis signalée à l'appli sans la clé.
+    fn on_file(
+        &mut self,
+        seq: i64,
+        env: &Envelope,
+        body: Body,
+        now: OffsetDateTime,
+        fx: &mut Vec<Effect>,
+    ) -> Result<Handled, Reject> {
+        let stored = stored_from_body(env.msg_id, env.from.clone(), env.created_at, now, body)
+            .ok_or("corps de fichier attendu")?;
+        let file = stored.info();
+        let mut files = self.keyring.load_files().map_err(|e| Reject::Reason(e.0))?;
+        add_offer(&mut files, stored, now);
+        self.keyring.save_files(&files).map_err(|e| Reject::Reason(e.0))?;
+        fx.push(Effect::Emit(Event::File(ReceivedFile { seq, file })));
+        Ok(Handled::Done)
+    }
+
     fn on_pair_request(
         &mut self,
         i: usize,
@@ -789,6 +893,11 @@ impl Secure {
             fx.push(Effect::Emit(Event::KeyringError { message: e.0 }));
         }
     }
+}
+
+/// Erreur du keyring, remontée telle quelle à l'appli.
+fn keyring_err(e: KeyringError) -> ClientError {
+    ClientError::Invalid(e.to_string())
 }
 
 fn crypto(e: CryptoError) -> ClientError {

@@ -16,9 +16,14 @@
 //!
 //! Le clair est `signature Ed25519 (64 o) ‖ corps JSON` ; la signature porte
 //! sur `"ot-sig-v1" ‖ données associées ‖ corps`.
+//!
+//! Les fichiers (étape 5) sont chiffrés à part, morceau par morceau, sous une
+//! clé propre au fichier ([`FileCipher`]) ; le message `file` n'emporte que
+//! la référence et la clé.
 
 mod body;
 mod code;
+mod file;
 mod keys;
 mod offer;
 mod seal;
@@ -26,6 +31,10 @@ mod seal;
 pub use body::{Body, EpochKey, Member, Roster};
 pub use code::{PairingCode, TOKEN_LEN, token_hash, token_id};
 pub use ed25519_dalek::SigningKey;
+pub use file::{
+    CHUNK_TAG_LEN, FILE_CHUNK_SIZE, FILE_NONCE_LEN, FileCipher, FileKey, MAX_CHUNK_SIZE,
+    check_layout, chunk_count, chunk_len, new_file_nonce, sanitize_file_name, sealed_size,
+};
 pub use keys::{ExchangeKeyPair, GroupKey, PairingSecret, fingerprint};
 pub use offer::{OFFER_PREFIX, PairingOffer};
 pub use ot_proto::{MAX_NAME_CHARS, valid_device_name};

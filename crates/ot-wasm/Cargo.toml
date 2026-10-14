@@ -24,6 +24,8 @@ getrandom = { workspace = true, features = ["wasm_js"] }
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# SHA-256 en flux des fichiers (WebCrypto ne hache qu'en une fois).
+sha2.workspace = true
 # Horloge JavaScript en WebAssembly (`OffsetDateTime::now_utc`).
 time = { workspace = true, features = ["wasm-bindgen"] }
 wasm-bindgen.workspace = true

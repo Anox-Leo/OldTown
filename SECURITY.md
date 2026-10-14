@@ -7,10 +7,10 @@ Internet**, et rester prudent avec les données sensibles.
 
 ## Modèle de menace
 
-| Acteur | Ce qu'il peut faire aujourd'hui (étape 3) | Cible |
+| Acteur | Ce qu'il peut faire aujourd'hui (étape 5) | Cible |
 | --- | --- | --- |
 | Réseau entre appareil et relais | Rien : le relais n'écoute que sur Tailscale (WireGuard), en `wss` (certificat `tailscale cert`, autorités de Mozilla côté clients), et le contenu est chiffré de bout en bout | Inchangé ; limites de connexions avant de sortir de Tailscale |
-| Relais ou qui lit sa base | Voir les métadonnées : qui écrit à qui, quand, la taille des messages, les noms d'appareils. Ni lire, ni modifier, ni rejouer sous un autre `msg_id`, ni rediriger un contenu (données associées), ni fabriquer un message (signature d'un membre du roster) | Inchangé : les métadonnées restent visibles |
+| Relais ou qui lit sa base | Voir les métadonnées : qui écrit à qui, quand, la taille des messages et des fichiers (au morceau de 1 Mio près), les noms d'appareils. Ni lire, ni modifier, ni rejouer sous un autre `msg_id`, ni rediriger un contenu (données associées), ni fabriquer un message (signature d'un membre du roster). Pour un fichier : ni son nom, ni son type, ni son contenu ; un morceau altéré, déplacé, retiré ou ajouté est refusé à la réception (STREAM, SHA-256) | Inchangé : les métadonnées restent visibles |
 | Relais malveillant pendant un appairage | Refuser l'appairage. Pas l'usurper : sans le secret du code ou du QR inversé (128 bits), il ne lit pas la demande et ne fabrique pas de réponse. Au QR inversé, enregistrer une autre clé sous l'identifiant du nouvel appareil ne lui donne rien : la réponse est scellée pour la clé X25519 lue dans le QR, et le roster porte la vraie clé | Inchangé |
 | Relais qui ajoute un appareil à lui | Le faire apparaître dans `ot devices` (signalé « hors du groupe ») ; il ne reçoit rien de lisible et ses messages sont rejetés | Inchangé |
 | Appareil du tailnet non enregistré | Ouvrir des connexions, échouer à l'authentification, essayer des jetons d'appairage (80 bits, 10 minutes, usage unique) | Limites de connexions et de débit |
@@ -54,6 +54,31 @@ Ce qui est déjà en place :
   reçu d'un membre s'ouvre seul dans un onglet (`http(s)` seulement, note
   0024). Limite : un instant en clair dans le JavaScript pour passer à
   WebCrypto.
+- Fichiers (étape 5, notes 0026 et 0027) : chiffrés par morceaux sous une
+  clé propre au fichier, par la construction STREAM de RustCrypto
+  (`aead-stream`, `StreamBE32<XChaCha20Poly1305>`) : un fichier tronqué,
+  réordonné ou altéré est refusé, et son SHA-256 est vérifié avant que le
+  fichier devienne visible. Nom, type, taille en clair et clé ne voyagent que
+  dans le message chiffré et signé ; la clé reste dans le Rust (jamais dans
+  Kotlin ni dans le JavaScript, sauf un instant pour être chiffrée au repos
+  dans l'extension, comme les autres secrets). Requêtes HTTP signées par
+  l'appareil (Ed25519, heure à ±60 s, nonce à usage unique), sans session :
+  seul l'expéditeur dépose et annule, seuls les destinataires retirent. Le
+  relais vérifie la longueur de chaque morceau, écrit chaque morceau sous un
+  nom temporaire puis le renomme (`0600`, dossier `0700`), borne la taille
+  d'un fichier et le total (quota), et efface tout après 48 h au plus. Le
+  nom reçu est nettoyé avant d'être écrit (dernier composant, ni contrôle,
+  ni caractère bidirectionnel, ni nom réservé de Windows). Android n'envoie
+  que des URI `content://` (une URI `file://` pourrait désigner ses clés).
+  L'extension demande l'accès à l'origine du relais, puis à chaque domaine
+  d'image un par un (`<all_urls>` optionnel, jamais accordé d'un bloc), lit
+  les images sans cookies, et la permission `downloads`. Dans l'extension, un fichier
+  reçu n'est gardé que chiffré (copie de ses morceaux dans l'OPFS, clé dans
+  le coffre), déchiffré au fil de sa lecture par le service worker et servi
+  sous l'origine de l'extension en `Content-Security-Policy: sandbox` (sauf
+  PDF), sans SVG ni HTML affichés (note 0029). Limite : un fichier
+  enregistré (Téléchargements, `Download/OldTown` sur Android) est en clair,
+  comme n'importe quel fichier téléchargé.
 - Appairage par QR inversé (note 0022) : enregistrement par le parrain
   seulement depuis une session authentifiée, signature du nouvel appareil
   vérifiée par le parrain et par le relais, réponse authentifiée par `S` et

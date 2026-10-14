@@ -4,6 +4,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.text.format.DateUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +47,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import dev.oldtown.android.files.FileAction
+import dev.oldtown.android.files.FileTransfers
+import dev.oldtown.android.files.fileActions
+import dev.oldtown.android.files.humanSize
 import dev.oldtown.android.notify.Clipboard
 import dev.oldtown.android.notify.MessageAction
 import dev.oldtown.android.notify.Notifications
@@ -52,6 +58,7 @@ import dev.oldtown.android.notify.actionsFor
 import dev.oldtown.android.relay.Connection
 import dev.oldtown.android.relay.HubState
 import dev.oldtown.android.relay.RelayHub
+import dev.oldtown.android.relay.Transfer
 import dev.oldtown.android.ui.components.Banner
 import dev.oldtown.android.ui.components.BannerKind
 import dev.oldtown.android.ui.components.ButtonKind
@@ -116,6 +123,7 @@ fun HomeScreen(hub: HubState, open: (Screen) -> Unit) {
         ) {
             item { Alerts(hub, notifications, battery) }
             item { Composer(hub) }
+            if (hub.transfers.isNotEmpty()) item { Transfers(hub.transfers) }
             item { SectionLabel("Reçus", Modifier.padding(top = 8.dp)) }
             if (hub.history.isEmpty()) {
                 item { EmptyHistory() }
@@ -179,6 +187,14 @@ private fun Composer(hub: HubState) {
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     val others = hub.group?.members?.filterNot { it.isSelf }.orEmpty()
     val toName = others.firstOrNull { it.deviceId == to }?.name ?: "Tous mes appareils"
+    // Sélecteur de fichiers d'Android : envoi confié au service, comme un partage.
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        FileTransfers.keepAccess(context, uris)
+        RelayHub.sendFiles(context, uris, listOfNotNull(to))
+        val what = if (uris.size == 1) "Envoi" else "Envoi de ${uris.size} fichiers"
+        result = true to "$what à ${if (to == null) "tous vos appareils" else toName} lancé"
+    }
 
     OtCard {
         OtTextField(
@@ -213,6 +229,9 @@ private fun Composer(hub: HubState) {
                 }
             }
             Spacer(Modifier.weight(1f))
+            GhostIcon(OtIcons.Paperclip, "Envoyer un fichier", {
+                pickFiles.launch(arrayOf("*/*"))
+            }, tint = Ot.colors.muted, enabled = hub.group != null)
             GhostIcon(OtIcons.Copy, "Coller", {
                 val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
                 clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.let { text = it.toString() }
@@ -259,6 +278,42 @@ private fun Composer(hub: HubState) {
     }
 }
 
+/** Fichiers en cours d'envoi ou de réception. */
+@Composable
+private fun Transfers(transfers: List<Transfer>) {
+    OtCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (t in transfers) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (if (t.upload) "↑ " else "↓ ") + t.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Ot.colors.foreground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        if (t.total > 0) "${t.done * 100 / t.total} %" else "",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Ot.colors.muted,
+                    )
+                }
+                if (t.error != null) {
+                    Text(t.error, style = MaterialTheme.typography.bodySmall, color = Ot.colors.dangerForeground)
+                } else {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { if (t.total > 0) t.done.toFloat() / t.total else 0f },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Ot.colors.primary,
+                        trackColor = Ot.colors.groupedCard,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun EmptyHistory() {
     OtCard {
@@ -298,16 +353,30 @@ private fun ReceivedRow(item: Received, onOpen: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(3.dp))
+            val file = item.file
             Text(
-                item.body.trim(),
+                if (file != null) "📎 ${file.name} · ${humanSize(file.size.toLong())}" else item.body.trim(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (item.kind == ContentKind.LINK) Ot.colors.primaryText else Ot.colors.foreground,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        GhostIcon(OtIcons.Copy, "Copier", { Clipboard.copy(context, item.body, item.sensitive) }, tint = Ot.colors.muted)
+        val file = item.file
+        val saved = file?.savedUri
+        when {
+            file == null ->
+                GhostIcon(OtIcons.Copy, "Copier", { Clipboard.copy(context, item.body, item.sensitive) }, tint = Ot.colors.muted)
+            saved != null ->
+                GhostIcon(OtIcons.External, "Ouvrir", { openFile(context, saved, file.mime) }, tint = Ot.colors.muted)
+            else ->
+                GhostIcon(OtIcons.Download, "Télécharger", { RelayHub.download(context, item.msgId) }, tint = Ot.colors.muted)
+        }
     }
+}
+
+private fun openFile(context: Context, uri: String, mime: String) {
+    runCatching { context.startActivity(FileTransfers.openIntent(uri, mime)) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -328,6 +397,11 @@ private fun ItemSheet(item: Received, onDismiss: () -> Unit) {
                 color = Ot.colors.muted,
             )
             Spacer(Modifier.height(10.dp))
+            val file = item.file
+            if (file != null) {
+                FileSheetBody(item, file, onDismiss)
+                return@Column
+            }
             androidx.compose.foundation.text.selection.SelectionContainer {
                 Text(
                     item.body,
@@ -353,6 +427,37 @@ private fun ItemSheet(item: Received, onDismiss: () -> Unit) {
                         }, Modifier.weight(1f), kind = ButtonKind.Secondary, icon = OtIcons.Share)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileSheetBody(item: Received, file: dev.oldtown.core.FileItem, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    Text(file.name, style = MaterialTheme.typography.bodyLarge, color = Ot.colors.foreground)
+    Text(
+        "${humanSize(file.size.toLong())} · ${file.mime}",
+        style = MaterialTheme.typography.bodySmall,
+        color = Ot.colors.muted,
+    )
+    Spacer(Modifier.height(20.dp))
+    val saved = file.savedUri
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (action in fileActions(saved != null)) {
+            when (action) {
+                FileAction.DOWNLOAD -> OtButton("Télécharger", {
+                    RelayHub.download(context, item.msgId)
+                    onDismiss()
+                }, Modifier.weight(1f), icon = OtIcons.Download)
+                FileAction.OPEN -> OtButton("Ouvrir", {
+                    if (saved != null) openFile(context, saved, file.mime)
+                    onDismiss()
+                }, Modifier.weight(1f), icon = OtIcons.External)
+                FileAction.SHARE -> OtButton("Partager", {
+                    if (saved != null) context.startActivity(FileTransfers.shareIntent(saved, file.mime))
+                    onDismiss()
+                }, Modifier.weight(1f), kind = ButtonKind.Secondary, icon = OtIcons.Share)
             }
         }
     }

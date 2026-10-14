@@ -2,13 +2,16 @@
 //! et les livre à leurs destinataires. Il ne lit jamais `payload`.
 
 mod auth;
+pub mod blobs;
 pub mod metrics;
 mod registry;
 mod session;
 pub mod store;
 pub mod tls;
 
+use std::collections::HashSet;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -20,6 +23,8 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
+use crate::auth::NonceCache;
+use crate::blobs::BlobDir;
 use crate::metrics::Metrics;
 use crate::registry::Registry;
 use crate::store::{PurgeStats, Store};
@@ -40,7 +45,18 @@ pub struct Config {
     pub pairing_ttl: Duration,
     /// Intervalle de vérification du certificat TLS (rechargé s'il a changé).
     pub tls_reload_interval: Duration,
+    /// Dossier des morceaux de fichiers (étape 5), créé au premier dépôt.
+    pub blob_dir: PathBuf,
+    /// Taille maximale d'un fichier, en clair.
+    pub max_file_size: u64,
+    /// Somme maximale des tailles chiffrées des fichiers en transit.
+    pub blob_quota: u64,
+    /// Durée de vie d'un fichier déposé.
+    pub blob_ttl: Duration,
 }
+
+/// Nombre maximal de nonces HTTP retenus pendant la fenêtre.
+const MAX_HTTP_NONCES: usize = 100_000;
 
 impl Default for Config {
     fn default() -> Self {
@@ -51,6 +67,10 @@ impl Default for Config {
             auth_timeout: Duration::from_secs(30),
             pairing_ttl: Duration::from_secs(10 * 60),
             tls_reload_interval: Duration::from_secs(10 * 60),
+            blob_dir: PathBuf::from("blobs"),
+            max_file_size: 2 << 30,
+            blob_quota: 20 << 30,
+            blob_ttl: Duration::from_secs(48 * 3600),
         }
     }
 }
@@ -67,6 +87,8 @@ struct Inner {
     registry: Registry,
     metrics: Metrics,
     shutdown: watch::Sender<bool>,
+    blob_dir: BlobDir,
+    nonces: NonceCache,
 }
 
 impl Relay {
@@ -74,6 +96,8 @@ impl Relay {
         Self {
             inner: Arc::new(Inner {
                 store,
+                blob_dir: BlobDir::new(config.blob_dir.clone()),
+                nonces: NonceCache::new(MAX_HTTP_NONCES),
                 config,
                 registry: Registry::default(),
                 metrics: Metrics::default(),
@@ -91,10 +115,12 @@ impl Relay {
             .route(ot_proto::WS_PATH, get(ws_handler))
             .route("/healthz", get(healthz))
             .route("/metrics", get(metrics_handler))
+            .merge(blobs::router())
             .with_state(self.clone())
     }
 
-    /// Lance une purge et met à jour les compteurs.
+    /// Lance une purge (messages, jetons, fichiers) et met à jour les
+    /// compteurs. Renvoie les chiffres des messages et des jetons.
     pub async fn purge_once(&self) -> store::Result<PurgeStats> {
         let stats = self.inner.store.purge(now_ms()).await?;
         let m = &self.inner.metrics;
@@ -108,12 +134,44 @@ impl Relay {
                 "purge"
             );
         }
+        let blobs = self.inner.store.purge_blobs(now_ms()).await?;
+        for id in &blobs {
+            self.inner.blob_dir.remove(id).await;
+        }
+        if !blobs.is_empty() {
+            m.blobs_purged.fetch_add(blobs.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!(blobs = blobs.len(), "purge des fichiers");
+        }
         Ok(stats)
     }
 
+    /// Supprime un blob et ses morceaux (`reason` : `done`, `cancelled`).
+    pub(crate) async fn remove_blob(
+        &self,
+        id: &ot_proto::BlobId,
+        reason: &str,
+    ) -> store::Result<()> {
+        if self.inner.store.delete_blob(id).await? {
+            self.inner.blob_dir.remove(id).await;
+            let m = &self.inner.metrics;
+            Metrics::inc(if reason == "done" { &m.blobs_done } else { &m.blobs_cancelled });
+            tracing::info!(blob = %id, reason, "fichier supprimé");
+        }
+        Ok(())
+    }
+
+    /// Efface les morceaux sur disque que la base ne connaît plus (arrêt
+    /// brutal pendant une suppression) et les fichiers temporaires.
+    pub async fn clean_blob_dir(&self) -> std::io::Result<usize> {
+        let ids = self.inner.store.blob_ids().await.map_err(std::io::Error::other)?;
+        self.inner.blob_dir.clean(ids.into_iter().collect::<HashSet<_>>()).await
+    }
+
     pub async fn metrics_text(&self) -> store::Result<String> {
-        let pending = self.inner.store.total_pending(now_ms()).await?;
-        Ok(self.inner.metrics.render(pending))
+        let now = now_ms();
+        let pending = self.inner.store.total_pending(now).await?;
+        let blob_bytes = self.inner.store.blob_bytes(now).await?;
+        Ok(self.inner.metrics.render(pending, blob_bytes))
     }
 
     /// Ferme la session ouverte d'un appareil (après révocation, par exemple).
@@ -169,6 +227,11 @@ where
     L: axum::serve::Listener,
     L::Addr: std::fmt::Debug,
 {
+    match relay.clean_blob_dir().await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(removed = n, "dossiers de fichiers orphelins effacés"),
+        Err(e) => tracing::error!(error = %e, "nettoyage du dossier des fichiers impossible"),
+    }
     let purge = {
         let relay = relay.clone();
         tokio::spawn(async move {

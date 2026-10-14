@@ -52,6 +52,44 @@ async fn wss_exchange_with_trusted_certificate() {
     assert_eq!(next_message(&mut eb).await.content, Content::text("par TLS"));
 }
 
+/// Étape 5 : les fichiers passent par HTTPS sur la même écoute.
+#[tokio::test]
+async fn file_over_https() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca = TestCa::new("ca de test");
+    let (cert, key) = ca.write_leaf(dir.path());
+    let store = Store::in_memory().await.unwrap();
+    let (a, b) = (add_device(&store, "mac").await, add_device(&store, "android").await);
+    make_group(&[&a, &b]);
+    let config = ot_server::Config { blob_dir: dir.path().join("blobs"), ..test_config() };
+    let server = TestServer::start_tls(store, config, Tls::load(&cert, &key).unwrap()).await;
+    let start = |dev: &TestDevice| {
+        let mut config = dev.config(&server.url());
+        config.tls = trusting(&ca);
+        ot_core::Client::start(config)
+    };
+    let (ca_client, mut ea) = start(&a);
+    let (cb, mut eb) = start(&b);
+    wait_connected(&mut ea).await;
+    wait_connected(&mut eb).await;
+
+    let data = sample(300_000);
+    let file = ot_core::OutgoingFile {
+        source_id: "photo".into(),
+        name: "photo.jpg".into(),
+        mime: "image/jpeg".into(),
+        to: vec![],
+    };
+    let none = std::sync::Arc::new(|_: u64, _: u64| {});
+    within(ca_client.send_file(file, MemSource::new(data.clone()), none.clone())).await.unwrap();
+    let Event::File(f) = wait_for(&mut eb, |e| matches!(e, Event::File(_))).await else {
+        unreachable!()
+    };
+    let sink = std::sync::Arc::new(MemSink::default());
+    within(cb.download(&f.file.blob_id, sink.clone(), none)).await.unwrap();
+    assert!(*sink.data.lock().unwrap() == data);
+}
+
 #[tokio::test]
 async fn untrusted_certificate_is_refused() {
     let dir = tempfile::tempdir().unwrap();

@@ -1,16 +1,22 @@
 //! Tests « golden » : chaque fichier de `tests/golden` fige le format d'une
 //! trame. Un changement de format casse ces tests volontairement.
 
+use ot_proto::http::{
+    BlobCreated, BlobStatus, CreateBlob, HttpError, HttpErrorCode, http_request_message,
+};
 use ot_proto::{
-    Content, DecodeError, DeviceId, DeviceInfo, Encoding, Envelope, ErrorCode, Frame,
+    BlobId, Content, DecodeError, DeviceId, DeviceInfo, Encoding, Envelope, ErrorCode, Frame,
     MAX_ENVELOPE_BYTES, Payload, Ulid, auth_message, pair_redeem_message, pair_register_message,
     valid_device_name,
 };
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use time::macros::datetime;
 
 const A: &str = "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5";
 const B: &str = "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0";
 const MSG: &str = "01J9Z3Q5RT8YB6ZK4C2D7E9F1G";
+const BLOB: &str = "blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V";
 
 fn dev(s: &str) -> DeviceId {
     s.parse().unwrap()
@@ -95,6 +101,68 @@ fn golden_frames() {
             Some(MSG.into()),
         ),
     );
+}
+
+/// Corps JSON de l'API HTTP des fichiers (sans `v` ni `t` : ce ne sont pas
+/// des trames).
+fn check_http<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(name: &str, value: T) {
+    let text = golden(name);
+    assert_eq!(serde_json::from_str::<T>(&text).unwrap(), value, "décodage de {name}");
+    assert_eq!(serde_json::to_string(&value).unwrap(), text, "encodage de {name}");
+}
+
+#[test]
+fn golden_http() {
+    let blob: BlobId = BLOB.parse().unwrap();
+    check_http(
+        "http_create_blob",
+        CreateBlob { size: 2_500_048, chunk_size: 1_048_592, chunks: 3, to: vec![dev(B)] },
+    );
+    check_http(
+        "http_blob_created",
+        BlobCreated { blob_id: blob.clone(), expires_at: datetime!(2026-10-12 08:00:00 UTC) },
+    );
+    check_http(
+        "http_blob_status",
+        BlobStatus {
+            blob_id: blob,
+            size: 2_500_048,
+            chunk_size: 1_048_592,
+            chunks: 3,
+            missing: vec![1, 2],
+            complete: false,
+            expires_at: datetime!(2026-10-12 08:00:00 UTC),
+        },
+    );
+    check_http(
+        "http_error",
+        HttpError {
+            error: HttpErrorCode::QuotaExceeded,
+            message: "quota du relais atteint".into(),
+        },
+    );
+    // `to` absent vaut « tous les autres appareils ».
+    let all: CreateBlob =
+        serde_json::from_str(r#"{"size":16,"chunk_size":1048592,"chunks":1}"#).unwrap();
+    assert!(all.to.is_empty());
+    assert!(
+        serde_json::from_str::<CreateBlob>(r#"{"size":16,"chunk_size":16,"chunks":1,"x":1}"#)
+            .is_err()
+    );
+    let futur: HttpError = serde_json::from_str(r#"{"error":"futur","message":"x"}"#).unwrap();
+    assert_eq!(futur.error, HttpErrorCode::Unknown);
+}
+
+#[test]
+fn http_request_message_layout() {
+    let msg =
+        http_request_message("PUT", "/v1/blobs/x/chunks/0", 1_760_000_000_000, &[9; 16], &[3; 32]);
+    let head = b"ot-http-v1\0PUT\0/v1/blobs/x/chunks/0\0";
+    assert_eq!(&msg[..head.len()], head);
+    let rest = &msg[head.len()..];
+    assert_eq!(&rest[..8], &1_760_000_000_000u64.to_be_bytes());
+    assert_eq!(&rest[8..24], &[9; 16]);
+    assert_eq!(&rest[24..], &[3; 32]);
 }
 
 #[test]

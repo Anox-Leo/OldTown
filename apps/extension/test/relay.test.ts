@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { Engine } from '../src/background/engine';
 import { IndexedDbKeySource } from '../src/background/secrets';
-import type { Item } from '../src/shared/api';
+import { type Item, channelOf } from '../src/shared/api';
 import { Cli, MemoryKV, Relay, eventually, loadWasm } from './support';
 
 const FAST = { backoffInitial: 50, backoffMax: 300, pingEvery: 200, idleTimeout: 2_000 };
@@ -75,6 +75,13 @@ describe('extension contre ot-server', () => {
         body: 'https://exemple.org/page',
         from_name: 'chrome',
       });
+      // Conversation (note 0030) : l'envoi est rangé dans l'historique, à
+      // tous, et n'est plus « en cours » une fois accepté par le relais.
+      const sent = await eventually('envoi accepté', async () =>
+        (await engine.history()).find((i) => i.outgoing && i.pending === false),
+      );
+      expect(sent).toMatchObject({ kind: 'link', body: 'https://exemple.org/page', to: [] });
+      expect(channelOf(sent, engine.state().device?.id)).toBe('');
     } finally {
       listen.stop();
     }
@@ -89,6 +96,9 @@ describe('extension contre ot-server', () => {
       fromName: 'telephone',
     });
     expect((await engine.history())[0]?.body).toBe('bonjour depuis le téléphone');
+    // Reçu de la CLI, adressé à tous : canal « Tous ».
+    expect(item.to).toEqual([]);
+    expect(channelOf(item, engine.state().device?.id)).toBe('');
   });
 
   it('rien de lisible dans le profil Chrome', async () => {

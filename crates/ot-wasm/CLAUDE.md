@@ -3,8 +3,11 @@
 `ot-core` sans réseau (fonction `net` désactivée) et `ot-proto`, compilés en
 WebAssembly pour l'extension Chrome (note 0023). Exposé par `wasm-bindgen` :
 `Vault` (coffre en mémoire, `SecretStore` du cœur, avec relevé des
-changements), `Core` (`ot_core::Secure` : sceller, ouvrir, roster,
-quarantaine, appairage, rotation), `decodeFrame`, `parseJoin`, `qrCode`.
+changements, signature des requêtes HTTP `signHttp`), `Core`
+(`ot_core::Secure` : sceller, ouvrir, roster, quarantaine, appairage,
+rotation ; fichiers : `upload`, `startUpload`, `sealChunk`, `sealFile`,
+`openChunk`, `checkFile`…), `Hasher` (SHA-256 en flux), `fileGeometry`,
+`decodeFrame`, `parseJoin`, `qrCode`.
 
 - Aucune clé ne sort d'ici, sauf par `Vault::take_changes` pour être
   chiffrée et rangée aussitôt par le service worker.
