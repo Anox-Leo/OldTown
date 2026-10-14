@@ -165,6 +165,18 @@ impl Local {
         self.write_json(HISTORY, &items)
     }
 
+    /// Note l'URI d'un fichier téléchargé dans son élément d'historique.
+    pub fn set_file_uri(&self, msg_id: &str, uri: &str) -> Result<(), OtError> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        for item in items.iter_mut().filter(|i| i.msg_id == msg_id) {
+            if let Some(file) = item.file.as_mut() {
+                file.saved_uri = Some(uri.to_owned());
+            }
+        }
+        self.write_json(HISTORY, &items)
+    }
+
     pub fn clear_history(&self) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         self.delete(HISTORY)
@@ -291,6 +303,16 @@ pub fn history(store: Arc<dyn SecretStore>) -> Result<Vec<Received>, OtError> {
 #[uniffi::export]
 pub fn clear_history(store: Arc<dyn SecretStore>) -> Result<(), OtError> {
     Local::new(store).clear_history()
+}
+
+/// Note où un fichier reçu a été enregistré (pour « Ouvrir »).
+#[uniffi::export]
+pub fn set_file_uri(
+    store: Arc<dyn SecretStore>,
+    msg_id: String,
+    uri: String,
+) -> Result<(), OtError> {
+    Local::new(store).set_file_uri(&msg_id, &uri)
 }
 
 /// Noms gardés à côté du keyring : pour les tests, la liste complète.

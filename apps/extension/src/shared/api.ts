@@ -48,6 +48,38 @@ export interface StateView {
   recipient: string;
   /** Envois pas encore acceptés par le relais. */
   pendingSends: number;
+  /** Fichiers en cours d'envoi ou de réception. */
+  transfers: TransferView[];
+  /**
+   * Accès HTTP à l'origine du relais accordé (note 0027) : sans lui, le
+   * navigateur bloque les fichiers (CORS). Toujours vrai hors de Chrome.
+   */
+  relayAccess: boolean;
+}
+
+/** Fichier annoncé (étape 5) : jamais de clé, seulement de quoi l'afficher. */
+export interface FileView {
+  blobId: string;
+  name: string;
+  mime: string;
+  size: number;
+  /**
+   * Copie chiffrée complète et vérifiée dans l'OPFS (note 0029) : le fichier
+   * s'ouvre sans le relais.
+   */
+  cached?: boolean;
+  /** Dernier échec (expiré, réseau, accès au relais…). */
+  error?: string;
+}
+
+export interface TransferView {
+  /** `msg_id` de l'élément (réception) ou chemin de la source (envoi). */
+  id: string;
+  direction: 'up' | 'down';
+  name: string;
+  done: number;
+  total: number;
+  error?: string;
 }
 
 export interface Item {
@@ -55,8 +87,30 @@ export interface Item {
   from: string;
   fromName: string;
   createdAt: string;
-  kind: 'text' | 'link';
+  kind: 'text' | 'link' | 'file';
+  /** Texte, lien, ou nom du fichier. */
   body: string;
+  file?: FileView;
+  /** Envoyé par cet appareil (sinon reçu). */
+  outgoing?: boolean;
+  /** Destinataires ; vide : tous les appareils (canal « Tous »). */
+  to?: string[];
+  /** Envoyé, pas encore accepté par le relais. */
+  pending?: boolean;
+}
+
+/** Derniers éléments gardés, reçus et envoyés (note 0030). */
+export const HISTORY_LEN = 100;
+
+/**
+ * Canal d'un élément (note 0030) : `''` pour « Tous », sinon l'autre appareil
+ * d'une conversation à deux. Envoyé : son unique destinataire. Reçu : son
+ * expéditeur s'il m'était adressé à moi seul. Le reste va dans « Tous ».
+ */
+export function channelOf(item: Item, me: string | undefined): string {
+  const to = item.to ?? [];
+  if (item.outgoing) return to.length === 1 ? (to[0] ?? '') : '';
+  return to.length === 1 && to[0] === me ? item.from : '';
 }
 
 export interface RelayDevice {
@@ -80,7 +134,9 @@ export type Request =
   | { type: 'devices' }
   | { type: 'rotate'; exclude: string[] }
   | { type: 'set-server-url'; url: string }
-  | { type: 'forget' };
+  | { type: 'forget' }
+  /** Fichier déjà copié dans l'OPFS (`path`) par la page d'envoi. */
+  | { type: 'send-file'; path: string; name: string; mime: string; size: number; to: string };
 
 export type Reply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 

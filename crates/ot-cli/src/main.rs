@@ -1,4 +1,5 @@
 mod files;
+mod transfer;
 
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
@@ -8,14 +9,15 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use ot_core::{
-    Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, GroupInfo, Identity,
-    Received, TlsRoots,
+    BlobId, Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, FileInfo, GroupInfo,
+    Identity, OutgoingFile, Received, TlsRoots,
 };
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::files::{Config, Home};
+use crate::transfer::{FileSink, FileSource, guess_mime, human_size, source_id};
 
 /// Délai maximal d'une commande ponctuelle (send, devices).
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
@@ -51,19 +53,38 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Envoie un texte ou un lien (lu sur l'entrée standard si absent).
+    /// Envoie un texte ou un lien (lu sur l'entrée standard si absent), ou
+    /// un fichier avec --file.
     Send {
         text: Vec<String>,
         /// Destinataire (nom d'un membre du groupe), répétable ; par défaut
         /// tous les autres.
         #[arg(long = "to")]
         to: Vec<String>,
+        /// Fichier à envoyer. Relancer la même commande reprend un envoi
+        /// interrompu.
+        #[arg(long, conflicts_with = "text")]
+        file: Option<PathBuf>,
     },
     /// Affiche les messages reçus au fil de l'eau.
     Listen {
         /// Une ligne JSON par message.
         #[arg(long)]
         json: bool,
+        /// Télécharge les fichiers reçus dans ce dossier ; sans cette option,
+        /// ils sont seulement annoncés (`ot download`).
+        #[arg(long)]
+        download_dir: Option<PathBuf>,
+    },
+    /// Liste les fichiers reçus pas encore téléchargés.
+    Files,
+    /// Télécharge un fichier reçu (identifiant donné par `ot files`).
+    Download {
+        /// Identifiant `blob_…`.
+        blob: String,
+        /// Dossier de destination (par défaut le dossier courant).
+        #[arg(long)]
+        to: Option<PathBuf>,
     },
     /// Liste les appareils enregistrés sur le relais et signale ceux qui ne
     /// sont pas membres du groupe.
@@ -141,8 +162,13 @@ fn main() -> Result<()> {
             Command::Init { server, name, device_id, force } => {
                 init(&home, server, name, device_id, force)
             }
-            Command::Send { text, to } => send(&home, text, to).await,
-            Command::Listen { json } => listen(&home, json, offset).await,
+            Command::Send { file: Some(path), to, .. } => send_file(&home, &path, to).await,
+            Command::Send { text, to, file: None } => send(&home, text, to).await,
+            Command::Listen { json, download_dir } => {
+                listen(&home, json, download_dir, offset).await
+            }
+            Command::Files => list_files(&home, offset).await,
+            Command::Download { blob, to } => download(&home, &blob, to).await,
             Command::Devices => devices(&home).await,
             Command::Group(GroupCommand::Init { force }) => group_init(&home, force),
             Command::Group(GroupCommand::Show) => group_show(&home),
@@ -275,6 +301,87 @@ async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+async fn send_file(home: &Home, path: &std::path::Path, to: Vec<String>) -> Result<()> {
+    let group = group(home)?;
+    let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
+    let source = Arc::new(FileSource::open(path)?);
+    let name =
+        path.file_name().and_then(|n| n.to_str()).context("nom de fichier illisible")?.to_owned();
+    let size = ot_core::ChunkSource::size(&*source);
+    let file = OutgoingFile {
+        source_id: source_id(path)?,
+        name: name.clone(),
+        mime: guess_mime(path).to_owned(),
+        to: recipients,
+    };
+
+    let (client, mut events) = start(home)?;
+    connected(&mut events).await?;
+    eprintln!("envoi de {name} ({})…", human_size(size));
+    let res = client.send_file(file, source, progress_bar()).await;
+    client.shutdown().await;
+    let accepted = res.map_err(|e| {
+        anyhow!("{e}\nRelancer la même commande reprend l'envoi là où il s'est arrêté.")
+    })?;
+    eprintln!("\rfichier envoyé ({})", accepted.msg_id);
+    Ok(())
+}
+
+/// Pourcentage sur la sortie d'erreur, si c'est un terminal.
+fn progress_bar() -> Arc<dyn ot_core::Progress> {
+    let tty = std::io::stderr().is_terminal();
+    Arc::new(move |done: u64, total: u64| {
+        if tty && total > 0 {
+            eprint!("\r{:>3} % ({} / {})", done * 100 / total, human_size(done), human_size(total));
+        }
+    })
+}
+
+async fn list_files(home: &Home, offset: UtcOffset) -> Result<()> {
+    let (client, _events) = start(home)?;
+    let files = client.files().await;
+    client.shutdown().await;
+    let files = files?;
+    if files.is_empty() {
+        eprintln!("aucun fichier en attente");
+    }
+    let group = ot_core::group_info(&home.keyring()).ok().flatten();
+    let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]");
+    for f in files {
+        let when = f.created_at.to_offset(offset).format(&fmt)?;
+        let from = name_of(group.as_ref(), &f.from);
+        println!("{}  [{when}] {from} : {} ({})", f.blob_id, f.name, human_size(f.size));
+    }
+    Ok(())
+}
+
+async fn download(home: &Home, blob: &str, to: Option<PathBuf>) -> Result<()> {
+    let blob: BlobId = blob.parse().map_err(|e| anyhow!("{e}"))?;
+    let dir = match to {
+        Some(dir) => dir,
+        None => std::env::current_dir()?,
+    };
+    let (client, _events) = start(home)?;
+    let res = fetch(&client, &blob, &dir).await;
+    client.shutdown().await;
+    let path = res?;
+    eprintln!("\renregistré : {}", path.display());
+    Ok(())
+}
+
+/// Télécharge un fichier annoncé dans `dir` ; renvoie son chemin final.
+async fn fetch(client: &Client, blob: &BlobId, dir: &std::path::Path) -> Result<PathBuf> {
+    let files = client.files().await?;
+    let info = files
+        .iter()
+        .find(|f| &f.blob_id == blob)
+        .context("fichier inconnu sur cet appareil (voir `ot files`)")?;
+    let sink = Arc::new(FileSink::create(dir, &info.name)?);
+    client.download(blob, sink.clone(), progress_bar()).await?;
+    let saved = sink.saved.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    saved.context("fichier non enregistré")
+}
+
 async fn within<T, E: std::error::Error + Send + Sync + 'static>(
     fut: impl Future<Output = Result<T, E>>,
 ) -> Result<T> {
@@ -320,8 +427,39 @@ fn print_event(
             print_message(m, name_of(group, &m.from), json, offset)?;
             return Ok(true);
         }
+        Event::File(f) => {
+            print_file(&f.file, name_of(group, &f.file.from), json, offset)?;
+            return Ok(true);
+        }
     }
     Ok(false)
+}
+
+fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+    if json {
+        let line = serde_json::json!({
+            "msg_id": f.msg_id.to_string(),
+            "from": f.from,
+            "from_name": from,
+            "created_at": f.created_at.format(&Rfc3339)?,
+            "kind": "file",
+            "blob_id": f.blob_id,
+            "name": f.name,
+            "mime": f.mime,
+            "size": f.size,
+        });
+        println!("{line}");
+    } else {
+        let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+        let when = f.created_at.to_offset(offset).format(&fmt)?;
+        println!(
+            "[{when}] {from} 📎 {} ({}) : ot download {}",
+            f.name,
+            human_size(f.size),
+            f.blob_id
+        );
+    }
+    Ok(())
 }
 
 fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
@@ -346,7 +484,12 @@ fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Res
     Ok(())
 }
 
-async fn listen(home: &Home, json: bool, offset: UtcOffset) -> Result<()> {
+async fn listen(
+    home: &Home,
+    json: bool,
+    download_dir: Option<PathBuf>,
+    offset: UtcOffset,
+) -> Result<()> {
     let (client, mut events) = start(home)?;
     let mut seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, home.load_seen());
     let mut group = ot_core::group_info(&home.keyring()).ok().flatten();
@@ -365,10 +508,25 @@ async fn listen(home: &Home, json: bool, offset: UtcOffset) -> Result<()> {
         {
             group = g;
         }
+        if let (Event::File(f), Some(dir)) = (&event, &download_dir) {
+            // Téléchargement en tâche de fond : la réception continue.
+            let (client, dir, blob) = (client.clone(), dir.clone(), f.file.blob_id.clone());
+            tokio::spawn(async move {
+                match fetch(&client, &blob, &dir).await {
+                    Ok(path) => eprintln!("\rfichier enregistré : {}", path.display()),
+                    Err(e) => eprintln!("\r⚠ fichier {blob} non téléchargé : {e:#}"),
+                }
+            });
+        }
+        let msg_id = match &event {
+            Event::Message(m) => Some(m.msg_id),
+            Event::File(f) => Some(f.file.msg_id),
+            _ => None,
+        };
         if print_event(&event, group.as_ref(), json, offset)?
-            && let Event::Message(m) = &event
+            && let Some(msg_id) = msg_id
         {
-            seen.insert(m.msg_id);
+            seen.insert(msg_id);
             if let Err(e) = home.save_seen(seen.iter()) {
                 eprintln!("état non sauvegardé : {e:#}");
             }

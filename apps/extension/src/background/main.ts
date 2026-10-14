@@ -6,7 +6,11 @@
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
 import { POPUP_PORT } from '../shared/api';
-import { Engine } from './engine';
+import { humanSize } from '../shared/format';
+import * as opfs from '../shared/opfs';
+import { relayOrigin } from '../shared/origins';
+import { AUTO_CACHE_MAX, fileUrl, isViewable, parseFilePath } from '../shared/files';
+import { Engine, type FileStorage } from './engine';
 import { type KeyValue, IndexedDbKeySource } from './secrets';
 
 const KEEPALIVE_ALARM = 'keepalive';
@@ -35,6 +39,16 @@ const storage: KeyValue = {
   remove: (keys) => chrome.storage.local.remove(keys),
 };
 
+/** Fichiers dans l'OPFS de l'extension (note 0026). */
+const files: FileStorage = {
+  source: (path) => opfs.source(path),
+  remove: (path) => opfs.remove(path),
+  getChunk: (blobId, index) => opfs.getChunk(blobId, index),
+  putChunk: (blobId, index, sealed) => opfs.putChunk(blobId, index, sealed),
+  removeCache: (blobId) => opfs.removeCache(blobId),
+  listCache: () => opfs.listCache(),
+};
+
 let opening: Promise<Engine> | undefined;
 const popups = new Set<chrome.runtime.Port>();
 
@@ -42,7 +56,13 @@ const popups = new Set<chrome.runtime.Port>();
 function engine(): Promise<Engine> {
   opening ??= (async () => {
     await init({ module_or_path: chrome.runtime.getURL('wasm/ot_wasm_bg.wasm') });
-    const e = await Engine.open({ kv: storage, keys: new IndexedDbKeySource(), log });
+    const e = await Engine.open({
+      kv: storage,
+      keys: new IndexedDbKeySource(),
+      files,
+      relayAllowed: (url) => chrome.permissions.contains({ origins: [relayOrigin(url)] }),
+      log,
+    });
     e.onChange((push) => onPush(e, push));
     await updateMenus(e.state());
     return e;
@@ -53,7 +73,44 @@ function engine(): Promise<Engine> {
   return opening;
 }
 
+// Permission d'accès au relais accordée (ou retirée) : les fichiers en
+// attente repartent.
+chrome.permissions.onAdded.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
+chrome.permissions.onRemoved.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
+
 // --- Démarrage, réveil ---
+
+/** Requête `fetch` reçue par le service worker (types absents de la lib DOM). */
+interface FetchLike {
+  readonly request: globalThis.Request;
+  respondWith(response: Promise<Response> | Response): void;
+}
+
+/**
+ * Fichiers reçus (note 0029) : le service worker répond lui-même aux adresses
+ * `chrome-extension://<id>/f/<blob_id>/<nom>`, en flux, déchiffrées dans le
+ * WebAssembly ; le navigateur les affiche ou les télécharge. Ces adresses ne
+ * sont pas accessibles aux pages web (pas de `web_accessible_resources`).
+ */
+(self as unknown as EventTarget).addEventListener('fetch', (event) => {
+  const fetchEvent = event as unknown as FetchLike;
+  const url = new URL(fetchEvent.request.url);
+  if (url.origin !== new URL(chrome.runtime.getURL('')).origin) return;
+  const file = parseFilePath(url);
+  if (!file) return;
+  const range = fetchEvent.request.headers.get('range');
+  fetchEvent.respondWith(
+    engine()
+      .then((e) => e.fileResponse(file.blobId, { download: file.download, range }))
+      .catch((err: unknown) => {
+        log('fichier reçu', err);
+        return new Response('Fichier indisponible.', {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+      }),
+  );
+});
 
 chrome.runtime.onInstalled.addListener(() => void wake());
 chrome.runtime.onStartup.addListener(() => void wake());
@@ -79,7 +136,7 @@ async function wake(): Promise<void> {
 function onPush(e: Engine, push: Push): void {
   for (const port of popups) port.postMessage(push);
   if (push.type === 'state') void updateMenus(push.state);
-  if (push.type === 'item') void deliver(push.item);
+  if (push.type === 'item') void deliverItem(e, push.item);
   if (push.type === 'state') void updateBadge(e.state());
 }
 
@@ -153,6 +210,15 @@ async function handle(req: Request): Promise<unknown> {
       return e.rotate(req.exclude);
     case 'set-server-url':
       return e.setServerUrl(req.url);
+    case 'send-file':
+      await e.setRecipient(req.to);
+      return e.sendFile({
+        path: req.path,
+        name: req.name,
+        mime: req.mime,
+        size: req.size,
+        to: req.to,
+      });
   }
 }
 
@@ -174,7 +240,7 @@ async function updateMenus(state: StateView): Promise<void> {
   const contexts: [
     `${chrome.contextMenus.ContextType}`,
     ...`${chrome.contextMenus.ContextType}`[],
-  ] = ['page', 'link', 'selection'];
+  ] = ['page', 'link', 'selection', 'image'];
   chrome.contextMenus.create({ id: MENU_ROOT, title: 'Envoyer à OldTown', contexts });
   for (const [id, name] of others) {
     chrome.contextMenus.create({ id: `to:${id}`, parentId: MENU_ROOT, title: name, contexts });
@@ -193,10 +259,62 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const id = String(info.menuItemId);
   if (!id.startsWith('to:')) return;
   const to = id.slice(3);
+  if (info.mediaType === 'image' && info.srcUrl) {
+    void sendImage(info.srcUrl, to);
+    return;
+  }
   // Sélection, sinon lien, sinon la page.
   const text = info.selectionText ?? info.linkUrl ?? info.pageUrl ?? tab?.url;
   if (text) void sendFromBrowser(text, to);
 });
+
+/**
+ * « Envoyer l'image » (note 0027) : lue sans cookies. Si le site ne
+ * l'autorise pas (CORS) et que son domaine n'a pas encore été accordé, la
+ * page d'envoi demande l'accès à ce seul domaine, sur un clic.
+ */
+async function sendImage(src: string, to: string): Promise<void> {
+  try {
+    const res = await fetch(src, { credentials: 'omit' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const path = `outgoing/${crypto.randomUUID()}`;
+    await opfs.writeBlob(path, blob);
+    const e = await engine();
+    await e.setRecipient(to);
+    await flashSent();
+    await e.sendFile({
+      path,
+      name: imageName(src, blob.type),
+      mime: blob.type,
+      size: blob.size,
+      to,
+    });
+  } catch (err) {
+    log('lecture de l’image', err);
+    // Le domaine n'est pas (encore) accordé : la page d'envoi le demande.
+    const query = new URLSearchParams({ image: src, to });
+    await chrome.windows.create({
+      url: `send.html?${query.toString()}`,
+      type: 'popup',
+      width: 420,
+      height: 360,
+    });
+  }
+}
+
+/** Nom de l'image d'après son URL, avec une extension d'après son type. */
+function imageName(src: string, mime: string): string {
+  let base = 'image';
+  try {
+    const last = new URL(src).pathname.split('/').pop();
+    if (last) base = decodeURIComponent(last);
+  } catch {
+    // URL `data:` ou illisible : nom générique.
+  }
+  const ext = /^image\/(\w+)/.exec(mime)?.[1]?.replace('jpeg', 'jpg');
+  return ext && !base.toLowerCase().endsWith(`.${ext}`) ? `${base}.${ext}` : base;
+}
 
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === COMMAND_SEND_PAGE) {
@@ -302,25 +420,98 @@ async function deliver(item: Item): Promise<void> {
   await notify(item);
 }
 
+/**
+ * Annonce d'un élément. Fichier (note 0029), à sa première annonce seulement
+ * (les mises à jour, copie terminée ou erreur, ne disent rien) : popup
+ * ouverte, rien ; navigateur au premier plan et élément récent, un petit
+ * fichier que le navigateur sait afficher s'ouvre dans un onglet, un gros
+ * ouvre la popup ; sinon, et pour un type que le navigateur ne sait pas
+ * afficher, notification. Rien n'arrive sur le disque sans geste.
+ */
+async function deliverItem(e: Engine, item: Item): Promise<void> {
+  // Un élément envoyé d'ici (note 0030) n'est annoncé nulle part.
+  if (item.outgoing) return;
+  const file = item.file;
+  if (!file) {
+    await deliver(item);
+    return;
+  }
+  if (file.cached || file.error || popups.size > 0) return;
+  const recent = Date.now() - Date.parse(item.createdAt) < AUTO_OPEN_MAX_AGE;
+  const win = recent ? await focusedWindow() : undefined;
+  if (win && e.state().relayAccess) {
+    if (file.size > AUTO_CACHE_MAX) {
+      if (await openPopup(win.id)) return;
+    } else if (isViewable(file.mime)) {
+      await chrome.tabs.create({
+        url: fileUrl(file.blobId, file.name),
+        active: true,
+        windowId: win.id,
+      });
+      return;
+    }
+  }
+  await notify(item);
+}
+
+/** Ce qu'un clic sur un fichier fait : l'ouvrir, le télécharger, ou montrer la popup. */
+function fileAction(item: Item): 'open' | 'download' | 'popup' {
+  const file = item.file;
+  if (!file || file.size > AUTO_CACHE_MAX) return 'popup';
+  return isViewable(file.mime) ? 'open' : 'download';
+}
+
 /** Notification d'un élément reçu ; l'identifiant est son `msg_id`. */
 async function notify(item: Item): Promise<void> {
+  const file = item.file;
+  const hint = {
+    open: 'Cliquer pour ouvrir',
+    download: 'Cliquer pour télécharger',
+    popup: 'Cliquer pour voir dans OldTown',
+  };
   await chrome.notifications.create(item.msgId, {
     type: 'basic',
     iconUrl: 'icons/icon-128.png',
     title: item.fromName,
-    message: item.body.slice(0, 500),
-    contextMessage: isWebLink(item) ? 'Cliquer pour ouvrir' : undefined,
-    buttons: [{ title: 'Copier' }],
+    message: file ? `📎 ${file.name} (${humanSize(file.size)})` : item.body.slice(0, 500),
+    contextMessage: file
+      ? hint[fileAction(item)]
+      : isWebLink(item)
+        ? 'Cliquer pour ouvrir'
+        : undefined,
+    buttons: file ? undefined : [{ title: 'Copier' }],
   });
+}
+
+/**
+ * Fichier depuis le service worker (clic sur une notification) : ouvert dans
+ * un onglet, ou téléchargé par un onglet en arrière-plan, que le navigateur
+ * referme une fois le téléchargement lancé.
+ */
+async function openFileItem(item: Item): Promise<void> {
+  const file = item.file;
+  if (!file) return;
+  const action = fileAction(item);
+  if (action === 'popup') {
+    await showExtension();
+    return;
+  }
+  const download = action === 'download';
+  await chrome.tabs.create({ url: fileUrl(file.blobId, file.name, download), active: !download });
 }
 
 chrome.notifications.onClicked.addListener((id) => {
   void (async () => {
     await chrome.notifications.clear(id);
-    const item = await (await engine()).item(id);
+    const e = await engine();
+    const item = await e.item(id);
     // « Ouvrir » seulement pour un lien http(s), comme sur Android.
     if (item && isWebLink(item)) {
       await chrome.tabs.create({ url: item.body });
+      return;
+    }
+    if (item?.file) {
+      await openFileItem(item);
       return;
     }
     await showExtension();

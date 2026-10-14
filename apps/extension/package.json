@@ -7,7 +7,8 @@
     "lint": "ng lint && prettier --check . && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "npm run wasm && vitest run --config vitest.worker.config.mts && ng test --watch=false",
     "test:worker": "vitest run --config vitest.worker.config.mts",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "deploy": "bash scripts/deploy.sh"
   },
   "private": true,
   "packageManager": "npm@11.19.0",

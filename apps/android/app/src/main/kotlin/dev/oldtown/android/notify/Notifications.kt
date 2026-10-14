@@ -13,13 +13,20 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import dev.oldtown.android.R
+import dev.oldtown.android.files.FileAction
+import dev.oldtown.android.files.FileTransfers
+import dev.oldtown.android.files.fileActions
+import dev.oldtown.android.files.humanSize
 import dev.oldtown.android.relay.Connection
+import dev.oldtown.android.relay.RelayService
+import dev.oldtown.android.relay.Transfer
 import dev.oldtown.android.ui.MainActivity
 import dev.oldtown.core.Received
 
 /**
- * Deux canaux : « Connexion » (notification permanente du service, discrète)
- * et « Messages » (un élément reçu par notification, groupées).
+ * Trois canaux : « Connexion » (notification permanente du service,
+ * discrète), « Messages » (un élément reçu par notification, groupées) et
+ * « Transferts » (progression des fichiers, étape 5).
  */
 object Notifications {
     const val CONNECTION_ID = 1
@@ -33,6 +40,7 @@ object Notifications {
     private const val CHANNEL_CONNECTION = "connection_quiet"
     private const val OLD_CHANNEL_CONNECTION = "connection"
     private const val CHANNEL_MESSAGES = "messages"
+    private const val CHANNEL_TRANSFERS = "transfers"
     private const val GROUP = "dev.oldtown.android.MESSAGES"
 
     fun createChannels(context: Context) {
@@ -53,6 +61,14 @@ object Notifications {
                     context.getString(R.string.channel_messages),
                     NotificationManager.IMPORTANCE_HIGH,
                 ).apply { description = context.getString(R.string.channel_messages_desc) },
+                NotificationChannel(
+                    CHANNEL_TRANSFERS,
+                    context.getString(R.string.channel_transfers),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = context.getString(R.string.channel_transfers_desc)
+                    setShowBadge(false)
+                },
             ),
         )
     }
@@ -104,6 +120,10 @@ object Notifications {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) return
+        if (item.file != null) {
+            showFile(context, item)
+            return
+        }
         val id = idOf(item.msgId)
         val text = if (item.sensitive) context.getString(R.string.sensitive_hidden) else preview(item.body)
         val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
@@ -140,6 +160,114 @@ object Notifications {
         )
         trimMessages(context)
     }
+
+    /**
+     * Fichier reçu : proposé (« Télécharger », par le service) ou enregistré
+     * dans `Download/OldTown` (un appui l'ouvre).
+     */
+    private fun showFile(context: Context, item: Received) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val file = item.file ?: return
+        val id = idOf(item.msgId)
+        val saved = file.savedUri
+        val text = if (saved != null) {
+            context.getString(R.string.file_saved, file.name)
+        } else {
+            context.getString(R.string.file_offered, file.name, humanSize(file.size.toLong()))
+        }
+        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_oldtown)
+            .setContentTitle(item.fromName)
+            .setContentText(text)
+            .setWhen(item.createdAtMs)
+            .setShowWhen(true)
+            .setAutoCancel(true)
+            .setGroup(GROUP)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAllowSystemGeneratedContextualActions(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(
+                if (saved != null) {
+                    PendingIntent.getActivity(
+                        context, id, FileTransfers.openIntent(saved, file.mime), PendingIntent.FLAG_IMMUTABLE,
+                    )
+                } else {
+                    openApp(context)
+                },
+            )
+        for (action in fileActions(saved != null)) {
+            val (label, intent) = when (action) {
+                FileAction.DOWNLOAD -> R.string.action_download to PendingIntent.getForegroundService(
+                    context,
+                    id,
+                    Intent(context, RelayService::class.java)
+                        .setAction(RelayService.ACTION_DOWNLOAD)
+                        .putExtra(RelayService.EXTRA_MSG_ID, item.msgId),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                FileAction.OPEN -> R.string.action_open to PendingIntent.getActivity(
+                    context, id, FileTransfers.openIntent(saved ?: continue, file.mime), PendingIntent.FLAG_IMMUTABLE,
+                )
+                FileAction.SHARE -> R.string.action_share to PendingIntent.getActivity(
+                    context, id + 1, FileTransfers.shareIntent(saved ?: continue, file.mime), PendingIntent.FLAG_IMMUTABLE,
+                )
+            }
+            builder.addAction(0, context.getString(label), intent)
+        }
+        val manager = NotificationManagerCompat.from(context)
+        manager.notify(id, builder.build())
+        trimMessages(context)
+    }
+
+    /** Progression d'un transfert (notification silencieuse, en cours). */
+    fun transferProgress(context: Context, t: Transfer) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val title = context.getString(if (t.upload) R.string.transfer_up else R.string.transfer_down, t.name)
+        val percent = if (t.total > 0) (t.done * 100 / t.total).toInt() else 0
+        NotificationManagerCompat.from(context).notify(
+            transferId(t.id),
+            NotificationCompat.Builder(context, CHANNEL_TRANSFERS)
+                .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setContentTitle(title)
+                .setContentText("${humanSize(t.done)} / ${humanSize(t.total)}")
+                .setProgress(100, percent, t.total <= 0)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setContentIntent(openApp(context))
+                .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+                .build(),
+        )
+    }
+
+    fun transferEnd(context: Context, id: String) {
+        NotificationManagerCompat.from(context).cancel(transferId(id))
+    }
+
+    /** Transfert en échec : il se relance depuis l'appli (ou en repartageant). */
+    fun transferFailed(context: Context, t: Transfer) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val title = context.getString(if (t.upload) R.string.transfer_up_failed else R.string.transfer_down_failed, t.name)
+        NotificationManagerCompat.from(context).notify(
+            transferId(t.id),
+            NotificationCompat.Builder(context, CHANNEL_TRANSFERS)
+                .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setContentTitle(title)
+                .setContentText(t.error)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(t.error))
+                .setAutoCancel(true)
+                .setContentIntent(openApp(context))
+                .build(),
+        )
+    }
+
+    private fun transferId(id: String): Int = 500_000_000 + (id.hashCode() and 0x0fffffff)
 
     /** Messages affichés : (identifiant, date de publication), sans le résumé du groupe. */
     private fun shownMessages(context: Context): List<Pair<Int, Long>> =

@@ -37,6 +37,7 @@
     "offscreen",
     "storage"
   ],
+  "optional_host_permissions": ["<all_urls>"],
   "commands": {
     "send-page": {
       "suggested_key": {

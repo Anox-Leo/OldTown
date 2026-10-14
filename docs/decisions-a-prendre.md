@@ -13,14 +13,16 @@ tranchées : D1 à D4 ([0012](decisions/0012-organisation-du-travail.md)), D5
 ([0016](decisions/0016-android-service-tuile-qr.md)), D12, D16, D17, D19 et
 D21 ([0017](decisions/0017-extension-chrome-sans-appli-desktop.md)), D20, D22
 et D23 ([0018](decisions/0018-fichiers-historique-revocation.md)), D24
-([0019](decisions/0019-presse-papiers-manuel.md)).
+([0019](decisions/0019-presse-papiers-manuel.md)), D25 et D26
+([0027](decisions/0027-image-par-domaine-transferts-android.md)), D27
+([0029](decisions/0029-extension-fichiers-ouverts-par-le-navigateur.md)).
 
 **Pour un agent** : ne tranche jamais une ligne de ce fichier toi-même. Si ta
 tâche dépend d'une décision encore ouverte, applique la recommandation et
 signale-le dans ton compte rendu.
 
 Chaque question donne les options, leurs avantages et inconvénients, puis la
-question qui aide à trancher. La prochaine porte le numéro D25.
+question qui aide à trancher. La prochaine porte le numéro D28.
 
 ## Questions ouvertes
 

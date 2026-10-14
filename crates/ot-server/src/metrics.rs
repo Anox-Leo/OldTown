@@ -17,6 +17,17 @@ pub struct Metrics {
     /// Appareils enregistrés par un parrain (QR inversé).
     pub pairings_registered: AtomicU64,
     pub pairings_rejected: AtomicU64,
+    /// Requêtes HTTP (fichiers) dont la signature est refusée.
+    pub http_auth_failures: AtomicU64,
+    pub blobs_created: AtomicU64,
+    /// Fichiers refusés : trop gros ou quota atteint.
+    pub blobs_rejected: AtomicU64,
+    pub blob_chunks_uploaded: AtomicU64,
+    pub blob_chunks_downloaded: AtomicU64,
+    /// Fichiers supprimés : retirés par tous, annulés, purgés.
+    pub blobs_done: AtomicU64,
+    pub blobs_cancelled: AtomicU64,
+    pub blobs_purged: AtomicU64,
 }
 
 impl Metrics {
@@ -24,7 +35,7 @@ impl Metrics {
         counter.fetch_add(1, Relaxed);
     }
 
-    pub fn render(&self, pending: u64) -> String {
+    pub fn render(&self, pending: u64, blob_bytes: u64) -> String {
         let mut out = String::new();
         let mut metric = |name: &str, kind: &str, help: &str, values: &[(&str, u64)]| {
             let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} {kind}");
@@ -88,6 +99,39 @@ impl Metrics {
                 ("{result=\"registered\"}", get(&self.pairings_registered)),
                 ("{result=\"rejected\"}", get(&self.pairings_rejected)),
             ],
+        );
+        metric(
+            "ot_http_auth_failures_total",
+            "counter",
+            "Requêtes HTTP de fichiers refusées à l'authentification.",
+            &[("", get(&self.http_auth_failures))],
+        );
+        metric(
+            "ot_blobs_total",
+            "counter",
+            "Fichiers : créés, refusés (taille, quota), supprimés (retirés, annulés, purgés).",
+            &[
+                ("{result=\"created\"}", get(&self.blobs_created)),
+                ("{result=\"rejected\"}", get(&self.blobs_rejected)),
+                ("{result=\"done\"}", get(&self.blobs_done)),
+                ("{result=\"cancelled\"}", get(&self.blobs_cancelled)),
+                ("{result=\"purged\"}", get(&self.blobs_purged)),
+            ],
+        );
+        metric(
+            "ot_blob_chunks_total",
+            "counter",
+            "Morceaux de fichiers déposés et retirés.",
+            &[
+                ("{dir=\"up\"}", get(&self.blob_chunks_uploaded)),
+                ("{dir=\"down\"}", get(&self.blob_chunks_downloaded)),
+            ],
+        );
+        metric(
+            "ot_blob_bytes",
+            "gauge",
+            "Octets chiffrés réservés par les fichiers en transit.",
+            &[("", blob_bytes)],
         );
         out
     }

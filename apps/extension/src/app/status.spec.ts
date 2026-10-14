@@ -8,6 +8,8 @@ function state(over: Partial<StateView>): StateView {
     connection: 'online',
     recipient: '',
     pendingSends: 0,
+    transfers: [],
+    relayAccess: true,
     ...over,
   };
 }

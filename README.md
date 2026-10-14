@@ -1,14 +1,15 @@
 # OldTown
 
-Échange de textes et de liens entre mes appareils, via un relais auto-hébergé
-sur un laptop Ubuntu, joignable seulement par Tailscale. Le contenu est chiffré
-de bout en bout sous une clé de groupe que seuls mes appareils détiennent : le
-relais ne stocke que des octets chiffrés et les clients refusent tout message
-en clair.
+Échange de textes, de liens et de fichiers entre mes appareils, via un relais
+auto-hébergé sur un laptop Ubuntu, joignable seulement par Tailscale. Le
+contenu est chiffré de bout en bout sous une clé de groupe que seuls mes
+appareils détiennent : le relais ne stocke que des octets chiffrés et les
+clients refusent tout message en clair.
 
 **État** : étapes 1 (relais et CLI) et 2 (chiffrement et appairage) terminées ;
 étape 3 (appli Android, `wss`, appairage par QR) terminée ;
-étape 4 (extension pour Brave et Chrome) terminée.
+étape 4 (extension pour Brave et Chrome) terminée ; étape 5 (fichiers)
+terminée.
 Clients : la CLI `ot` sous macOS, Windows et Linux, l'appli Android
 (APK à compiler, voir [Téléphone Android](#5-téléphone-android)) et
 l'extension Chrome (à charger en mode développeur, voir
@@ -120,7 +121,11 @@ Le relais tourne en service systemd sous un utilisateur système dédié
 
    Autres réglages possibles de la même façon : `OT_TTL` (durée de vie d'un
    message non acquitté, `7d` par défaut), `OT_PURGE_INTERVAL` (`10m`),
-   `OT_LOG_FORMAT` (`json` dans l'unité).
+   `OT_LOG_FORMAT` (`json` dans l'unité), et pour les fichiers (étape 5) :
+   `OT_BLOB_DIR` (dossier des morceaux chiffrés, `blobs/` à côté de la base
+   par défaut), `OT_MAX_FILE_SIZE` (`2G`), `OT_BLOB_QUOTA` (espace total des
+   fichiers en transit, `20G`), `OT_BLOB_TTL` (`48h`). Garder sur le disque
+   au moins le quota de libre.
 
 4. TLS (`wss`, note 0015) : certificat Let's Encrypt du nom MagicDNS du
    serveur, obtenu et renouvelé par `tailscale cert`. Activer d'abord HTTPS
@@ -309,6 +314,13 @@ de n'importe quelle appli (et ses raccourcis par appareil), et parraine les
 nouveaux appareils par QR. Les clés sont chiffrées par une clé du Keystore
 Android et exclues des sauvegardes.
 
+Fichiers (étape 5) : *Partager* une ou plusieurs photos, vidéos ou fichiers
+vers OldTown, ou le trombone de l'écran d'accueil (sélecteur de fichiers,
+destinataire choisi dans « À : ») ; l'envoi continue en arrière-plan (notification de
+progression) et reprend après une coupure. Un fichier reçu de moins de 20 Mo
+est enregistré d'office dans *Téléchargements/OldTown* quand le téléphone est
+en Wi-Fi ; sinon, *Télécharger* dans la notification ou l'écran d'accueil.
+
 ### 6. Extension Chrome (macOS, Windows, Linux)
 
 Brave ou Chrome (Chromium 120 au moins, 127 pour l'ouverture automatique de
@@ -333,6 +345,10 @@ la clé publique du manifeste (`fiblpidpjopjpinfgonlkblkonllpgfb`).
 5. macOS : autoriser les notifications du navigateur (*Réglages Système* →
    *Notifications* → *Brave Browser* ou *Google Chrome*).
 
+La popup est une conversation (note 0030) : en haut, les canaux *Tous* et
+un par appareil ; au milieu, mes messages à droite et ceux des autres à
+gauche ; en bas, la zone d'envoi, qui envoie dans le canal ouvert.
+
 Envoyer : clic droit sur une page, un lien ou une sélection → *Envoyer à
 OldTown* → l'appareil ; `Alt+Maj+S` envoie l'adresse de l'onglet, et
 `Alt+Maj+V` le presse-papiers, au dernier destinataire choisi (raccourcis
@@ -345,6 +361,19 @@ le lien, ou la popup ; *Copier*). Les 50 derniers éléments sont dans la popup
 montrent l'état de la connexion, l'URL du relais, les membres du groupe (et
 la nouvelle clé de groupe), et permettent d'oublier l'appareil. Chrome fermé, rien n'est reçu : le relais garde les messages
 7 jours et l'extension les reçoit à la réouverture.
+
+Fichiers (étape 5) : bouton trombone de la popup (sélecteur de fichiers,
+au destinataire choisi), ou clic droit sur une image → *Envoyer à
+OldTown*. La première fois, la popup propose d'autoriser l'accès au relais
+(les fichiers passent par HTTPS, pas par la connexion des messages) ; une
+image qu'un site ne laisse pas lire demande l'accès à son seul domaine
+(note 0027). Un fichier reçu s'ouvre dans le lecteur du navigateur (image,
+PDF, texte, audio, vidéo) : d'office s'il fait moins de 20 Mo et que le
+navigateur est au premier plan, sinon par un clic sur la notification ou
+sur l'élément de la popup ; rien n'est enregistré sur le disque. Pour
+l'enregistrer : clic droit du navigateur, ou l'icône de téléchargement à
+droite de l'élément dans la popup. Un fichier que le navigateur ne sait pas
+afficher (`.zip`, `.docx`…) attend ce téléchargement (note 0029).
 
 Les clés sont rangées dans le profil Chrome, chiffrées par une clé WebCrypto
 non exportable : moins bien protégées qu'un coffre de l'OS (voir
@@ -418,6 +447,10 @@ ot send "bonjour"                        # à tous mes autres appareils
 ot send --to windows https://example.org # à un seul membre (option répétable)
 echo "texte" | ot send                   # lu sur l'entrée standard
 ot listen                                # messages reçus au fil de l'eau (--json : une ligne JSON par message)
+ot send --file video.mp4 --to telephone  # un fichier ; relancer la même commande reprend un envoi interrompu
+ot listen --download-dir ~/Téléchargements  # télécharge aussi les fichiers reçus
+ot files                                 # fichiers reçus pas encore téléchargés
+ot download blob_01J… --to ~/Bureau      # télécharge l'un d'eux (dossier courant par défaut)
 ot devices                               # appareils du relais ; signale ceux hors du groupe
 ot group show                            # époque, membres, empreintes de leurs clés
 ot pair sponsor 'oldtown://sponsor?o=…'  # parraine un appareil d'après le texte de son QR
@@ -427,6 +460,13 @@ Tout est chiffré et signé avant de partir ; un message en clair, d'un appareil
 hors du groupe ou mal signé est rejeté et signalé par `ot listen`. Un message
 dont la clé n'est pas encore arrivée est mis de côté puis affiché à son
 arrivée. Un message non lu est gardé 7 jours par le relais.
+
+Un fichier est chiffré par morceaux de 1 Mio sous une clé qui lui est propre,
+déposé sur le relais, puis annoncé par un message ; le destinataire le
+télécharge, vérifie son SHA-256 et le relais l'efface quand tous les
+destinataires l'ont reçu, ou après 48 heures. Un fichier reçu porte le nom
+choisi par l'expéditeur, nettoyé (pas de chemin, pas de caractère interdit) ;
+un nom déjà pris devient `nom (2).ext`.
 
 Une seule connexion est active par appareil : lancer `ot send` ou `ot devices`
 sur un appareil qui fait tourner `ot listen` coupe brièvement ce dernier, qui
@@ -445,6 +485,8 @@ macOS, `%APPDATA%\oldtown\config` sous Windows.
 | `roster.json` (`0600`) | Membres du groupe et leurs clés publiques |
 | `quarantine.json` (`0600`) | Messages en attente de leur clé (100 au plus) |
 | `seen.json` | Derniers messages reçus, pour ne jamais les afficher deux fois |
+| `files.json` (`0600`) | Fichiers annoncés pas encore téléchargés, avec leur clé (7 jours) |
+| `uploads.json` (`0600`) | Envois de fichiers en cours, avec leur clé, pour les reprendre |
 
 ## Administration du relais
 
@@ -455,8 +497,17 @@ ots messages purge                       # purge immédiate des messages acquitt
 ```
 
 `/metrics` compte notamment les appairages (`ot_pairings_total` : jetons
-créés et utilisés, appareils enregistrés par un parrain, refus) ; le relais ne
-garde que le SHA-256 des jetons.
+créés et utilisés, appareils enregistrés par un parrain, refus) et les
+fichiers (`ot_blobs_total`, `ot_blob_chunks_total`, `ot_blob_bytes` : octets
+en transit, à comparer au quota) ; le relais ne garde que le SHA-256 des
+jetons.
+
+**Fichiers en transit.** Morceaux chiffrés sous `/var/lib/ot-relay/blobs/`
+(un dossier par fichier), jamais sauvegardés. Ils sont effacés quand tous les
+destinataires les ont reçus, quand l'expéditeur annule, ou au bout de
+`OT_BLOB_TTL` (48 h). `OT_BLOB_QUOTA` (20 Gio) borne leur total : au-delà, un
+nouvel envoi est refusé (« espace du relais plein ») jusqu'à ce que d'autres
+soient retirés. Le relais ne connaît ni le nom ni le type des fichiers.
 
 **Retirer un appareil (perdu, volé, remplacé).** Depuis un autre membre, puis
 sur le serveur :
@@ -509,11 +560,18 @@ sans sauvegarde, la liste des appareils.
 
 - **Extension Chrome** : remplacer le contenu du dossier chargé par la
   nouvelle version, puis *Actualiser* l'extension dans `brave://extensions`.
+  Depuis le dépôt, `npm run deploy -- <dossier chargé>` (dans
+  `apps/extension`, Node 24.15 au moins) construit l'extension et remplace
+  le contenu de ce dossier (seulement s'il est vide ou contient déjà
+  OldTown).
   Clés, groupe et historique sont gardés (ils sont dans le profil Chrome,
   liés à l'identifiant fixe de l'extension).
 
 Le QR inversé (étape 3) demande un relais et des clients de l'étape 3 ; le
-reste du protocole est inchangé. L'extension (étape 4) demande un relais de
+reste du protocole est inchangé. Les fichiers (étape 5) demandent un relais
+et des clients de l'étape 5 : un client plus ancien rejette l'annonce d'un
+fichier (« file inattendu »), sans autre effet ; un relais plus ancien répond
+`404` à l'envoi. L'extension (étape 4) demande un relais de
 l'étape 4 (trames `ping`/`pong`, note 0023) : avec un relais plus ancien, elle
 se reconnecte toutes les 75 s.
 
@@ -604,6 +662,11 @@ npm run build       # extension non empaquetée : dist/extension
 | Android : messages reçus seulement à l'ouverture de l'appli | Optimisation de batterie active | Accepter l'exemption proposée sur l'écran d'accueil (ou *Réglages* → *Batterie*) |
 | Android : « En attente du parrain » qui dure | `ot pair new` arrêté avant la demande, ou une autre commande `ot` du parrain a pris sa session | Relancer l'appli (la demande repart) ; sinon *Réglages* → *Oublier cet appareil* et nouveau code |
 | `ot devices` : « hors du groupe » | Appairage inachevé, ou appareil ajouté au relais sans appairage | Le révoquer sur le serveur s'il est inconnu |
+| Envoi de fichier : « l'horloge de l'appareil est décalée » | Heure de l'appareil fausse de plus d'une minute (les requêtes de fichiers sont signées avec l'heure) | Remettre l'heure automatique |
+| Envoi de fichier : « espace du relais plein » ou « fichier de … octets, maximum … » | Quota (`OT_BLOB_QUOTA`) atteint, ou fichier au-delà de `OT_MAX_FILE_SIZE` | Attendre le retrait des fichiers en transit, ou relever la limite sur le relais |
+| « fichier expiré : il n'est plus sur le relais » | Plus de 48 h, ou envoi annulé | Le renvoyer |
+| Envoi de fichier interrompu | Coupure réseau longue (plus de 10 minutes sans progrès) | Relancer : `ot send --file` reprend ; Android et l'extension reprennent seuls au redémarrage, ou en repartageant |
+| Extension : rien ne se télécharge, ou « Accès au relais » demandé | Permission d'accès à l'origine du relais pas encore accordée | Accepter la demande (une fois) ; vérifier dans `brave://extensions` → OldTown → *Accès aux sites* |
 
 Pour localiser une panne réseau sous Windows :
 

@@ -17,11 +17,27 @@ export type CoreEvent =
       created_at: string;
       kind: 'text' | 'link';
       body: string;
+      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
+      to?: string[];
     }
   | { type: 'rejected'; msg_id: string; from: string; reason: string }
   | { type: 'group_changed'; epoch: number }
   | { type: 'pairing_completed'; device_id: string; name: string }
-  | { type: 'keyring_error'; message: string };
+  | { type: 'keyring_error'; message: string }
+  /** Fichier annoncé (étape 5) ; sa clé reste dans le WebAssembly. */
+  | {
+      type: 'file';
+      seq: number;
+      msg_id: string;
+      from: string;
+      created_at: string;
+      blob_id: string;
+      name: string;
+      mime: string;
+      size: number;
+      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
+      to?: string[];
+    };
 
 export type ClientEvent =
   | CoreEvent
@@ -424,7 +440,14 @@ export class RelayClient {
         this.outbox.push({ msgId: (sent as { msg_id: string }).msg_id, env: text });
       }
       if (out.sends.length > 0) await this.saveOutbox();
-      for (const event of out.events) await this.emit(event);
+      // Les destinataires sont en clair dans l'enveloppe (le relais en a
+      // besoin) : ils disent dans quel canal ranger l'élément.
+      const to = (env as { to?: string[] }).to ?? [];
+      for (const event of out.events) {
+        await this.emit(
+          event.type === 'message' || event.type === 'file' ? { ...event, to } : event,
+        );
+      }
       this.remember(msgId);
       await this.deps.storage.saveSeen(this.seen);
       for (const sent of out.sends) this.sendRaw(encode.send(JSON.stringify(sent)));

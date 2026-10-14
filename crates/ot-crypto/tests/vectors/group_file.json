@@ -1,0 +1,33 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "group",
+    "epoch": 1,
+    "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+  },
+  "body": {
+    "kind": "file",
+    "blob_id": "blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V",
+    "name": "été 2026.jpg",
+    "mime": "image/jpeg",
+    "size": 2500000,
+    "chunk_size": 1048576,
+    "chunks": 3,
+    "key": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8=",
+    "nonce": "eHl6e3x9fn+AgYKDhIWGh4iJig==",
+    "sha256": "jI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqs="
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "AQAAAAFGR0hJSktMTU5PUFFSU1RVVldYWVpbXF0TnvLsnRY31SaA/FOL2VtKMjZLdDTvpAv05onyHNa4LI3GFEOB5cVSABWKqFoRqLjuzZZmJGPY1vFpMgVG9voKNO16v5c20dd14sw4I809Fju93VhIvkLLDhG7SXt4gr4BRunUGk9/QgR2S7o1yLkBOYorFOP5PLYY693hP+Oq2qmnr3T7oCfmQmMN03DDVmlyjFt6rgjV0oI2o5dBEE4UrWs1effc8sDjVaoF5eLjXkcRDPqdwwQFi4KrHwAjh9mnVH15tWk9le5ZCc8wQ76TsF4MZWKdiTxKlqvsBWENCdqFvwAjE3NVJbJmL6NzK2781cKTTN0MFEfRvpnEolyhrX3eaaXXRaz7bokgN03fwblMDzERbC6NZ5tctug7com4hbINLR/9be5sNkvPvY16GQ8MHtHGsnDCjfGMrCVCLLo5hzQVobJtUtAjDn/ORHbqPwDXSyWkrHCzdDcTly8whQCPYuoIcCnkvgi6DcOBHvZgHPs46CGo138="
+    }
+  }
+}

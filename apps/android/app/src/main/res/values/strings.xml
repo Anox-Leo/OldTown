@@ -18,4 +18,13 @@
     <string name="action_open">Ouvrir</string>
     <string name="action_share">Partager</string>
     <string name="sensitive_hidden">Contenu masqué</string>
+    <string name="channel_transfers">Transferts</string>
+    <string name="channel_transfers_desc">Progression des fichiers envoyés et reçus.</string>
+    <string name="action_download">Télécharger</string>
+    <string name="file_offered">📎 %1$s (%2$s)</string>
+    <string name="file_saved">📎 %1$s, enregistré dans Téléchargements</string>
+    <string name="transfer_up">Envoi de %1$s</string>
+    <string name="transfer_down">Réception de %1$s</string>
+    <string name="transfer_up_failed">Envoi de %1$s interrompu</string>
+    <string name="transfer_down_failed">Réception de %1$s interrompue</string>
 </resources>

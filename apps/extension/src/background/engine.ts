@@ -4,6 +4,7 @@
 
 import {
   Core,
+  Hasher,
   type QrCode,
   Vault,
   decodeFrame,
@@ -12,9 +13,11 @@ import {
   qrCode,
   version,
 } from '../wasm/ot_wasm.js';
+import { HISTORY_LEN } from '../shared/api';
 import type {
   Connection,
   DeviceView,
+  FileView,
   GroupView,
   Item,
   PendingView,
@@ -22,28 +25,85 @@ import type {
   QrView,
   RelayDevice,
   StateView,
+  TransferView,
 } from '../shared/api';
+import { AUTO_CACHE_MAX, isViewable } from '../shared/files';
 import { type ClientEvent, type ClientStorage, RelayClient, type Timing } from './client';
 import { checkServerUrl, decode, wsUrl } from './frames';
 import { type KeySource, type KeyValue, SecretStore } from './secrets';
+import {
+  type ByteSource,
+  ExpiredError,
+  type Geometry,
+  type TransferTiming,
+  Transfers,
+} from './transfer';
 
-/** Derniers éléments reçus gardés (plan de l'étape 4). */
-export const HISTORY_LEN = 50;
+export { HISTORY_LEN };
 /** Historique : contenu en clair, donc rangé chiffré comme les clés. */
 const HISTORY = 'history.json';
 const DEVICE = 'device';
 const RECIPIENT = 'recipient';
 const OUTBOX = 'outbox';
 const SEEN = 'seen';
+/** Envois de fichiers pas terminés, repris au réveil ; rangés chiffrés (noms). */
+const OUTGOING = 'outgoing.json';
 /** Délai maximal de l'enregistrement par code. */
 const REDEEM_TIMEOUT = 10_000;
+export { AUTO_CACHE_MAX };
+
+/** Fichiers de l'appareil (OPFS dans l'extension, mémoire dans les tests). */
+export interface FileStorage {
+  /** Fichier à envoyer, déjà copié sous `path`. */
+  source(path: string): Promise<ByteSource>;
+  remove(path: string): Promise<void>;
+  /** Copie **chiffrée** des fichiers reçus (note 0029) : un morceau, s'il y est. */
+  getChunk(blobId: string, index: number): Promise<Uint8Array | undefined>;
+  /** Range un morceau chiffré (entier ou absent). */
+  putChunk(blobId: string, index: number, sealed: Uint8Array): Promise<void>;
+  removeCache(blobId: string): Promise<void>;
+  /** Fichiers reçus dont une copie existe. */
+  listCache(): Promise<string[]>;
+}
+
+/** Plage demandée par `Range: bytes=…`, bornes comprises. */
+function parseRange(
+  header: string | null,
+  size: number,
+): { start: number; end: number } | undefined {
+  const m = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null;
+  if (!m || size === 0 || (m[1] === '' && m[2] === '')) return undefined;
+  const start = m[1] === '' ? Math.max(size - Number(m[2]), 0) : Number(m[1]);
+  const end = m[1] !== '' && m[2] !== '' ? Math.min(Number(m[2]), size - 1) : size - 1;
+  return start <= end && start < size ? { start, end } : undefined;
+}
 
 export interface EngineDeps {
   kv: KeyValue;
   keys: KeySource;
+  files?: FileStorage;
   webSocket?(url: string): WebSocket;
+  fetch?: typeof fetch;
   timing?: Partial<Timing>;
+  transferTiming?: Partial<TransferTiming>;
+  /**
+   * Accès HTTP à l'origine du relais (permission d'hôte, note 0027). Sans
+   * lui, le navigateur bloque toute requête de fichier. Absent : accordé.
+   */
+  relayAllowed?(serverUrl: string): Promise<boolean>;
   log?(message: string, error?: unknown): void;
+}
+
+/** Message d'un fichier bloqué faute d'accès au relais. */
+export const NO_RELAY_ACCESS = 'accès au relais pas encore autorisé : « Autoriser » dans la popup';
+
+/** Envoi de fichier en cours, rangé pour reprendre après l'arrêt du service worker. */
+interface Outgoing {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  to: string;
 }
 
 type Pending = { kind: 'offer'; qr: string; expires_at: string } | { kind: 'join' };
@@ -89,6 +149,11 @@ export class Engine {
   private connection: Connection = 'offline';
   private connectionError?: string;
   private readonly listeners = new Set<(push: Push) => void>();
+  private transfers?: Transfers;
+  private readonly progress = new Map<string, TransferView>();
+  /** Transferts lancés dans cette vie du service worker. */
+  private readonly running = new Set<string>();
+  private relayAccess = true;
   /** Écritures du coffre et de l'historique, dans l'ordre. */
   private writes: Promise<void> = Promise.resolve();
 
@@ -113,7 +178,7 @@ export class Engine {
     this.recipient = typeof items[RECIPIENT] === 'string' ? items[RECIPIENT] : '';
     try {
       for (const [name, value] of await this.secrets.loadAll()) {
-        if (name !== HISTORY) this.vault.load(name, value);
+        if (name !== HISTORY && name !== OUTGOING) this.vault.load(name, value);
         value.fill(0);
       }
       if (device) this.openCore(device.id);
@@ -130,7 +195,10 @@ export class Engine {
       return;
     }
     this.device = device;
-    if (device) this.startClient();
+    if (device) {
+      this.startClient();
+      void this.pruneCache().catch((e: unknown) => this.log('nettoyage des fichiers', e));
+    }
   }
 
   private openCore(deviceId: string): void {
@@ -197,6 +265,8 @@ export class Engine {
       group,
       recipient: this.recipient,
       pendingSends: this.client?.pendingSends ?? 0,
+      transfers: [...this.progress.values()],
+      relayAccess: this.relayAccess,
     };
   }
 
@@ -293,8 +363,40 @@ export class Engine {
       log: this.deps.log,
     });
     this.client = client;
+    this.transfers = new Transfers({
+      serverUrl: device.serverUrl,
+      deviceId: device.id,
+      sign: (method, path, body, now) => this.vault.signHttp(device.id, method, path, body, now),
+      core,
+      persistVault: () => this.persistVault(),
+      fetch: this.deps.fetch,
+      timing: this.deps.transferTiming,
+    });
     this.connection = 'connecting';
     void client.start().catch((e: unknown) => this.log('démarrage du client', e));
+    void this.refreshRelayAccess().then(() => this.resumeOutgoing());
+  }
+
+  /**
+   * Relit la permission d'accès au relais ; si elle vient d'être accordée,
+   * relance les envois et les téléchargements qu'elle bloquait.
+   */
+  async refreshRelayAccess(): Promise<boolean> {
+    const url = this.device?.serverUrl;
+    const allowed = !url || !this.deps.relayAllowed || (await this.deps.relayAllowed(url));
+    const granted = allowed && !this.relayAccess;
+    this.relayAccess = allowed;
+    this.changed();
+    if (granted) {
+      void this.resumeOutgoing();
+      for (const item of await this.history()) {
+        const f = item.file;
+        if (f && !f.cached && f.error === NO_RELAY_ACCESS && f.size <= AUTO_CACHE_MAX) {
+          void this.cacheFile(item.msgId);
+        }
+      }
+    }
+    return allowed;
   }
 
   /**
@@ -349,11 +451,37 @@ export class Engine {
           createdAt: e.created_at,
           kind: e.kind,
           body: e.body,
+          to: e.to ?? [],
         };
         // Rangé avant l'acquittement : le client attend la fin de ce
         // traitement.
         await this.addToHistory(item);
         this.push({ type: 'item', item });
+        return;
+      }
+      case 'file': {
+        const item: Item = {
+          msgId: e.msg_id,
+          from: e.from,
+          fromName: this.nameOf(e.from),
+          createdAt: e.created_at,
+          kind: 'file',
+          body: e.name,
+          file: { blobId: e.blob_id, name: e.name, mime: e.mime, size: e.size },
+          to: e.to ?? [],
+        };
+        // L'offre (clé comprise) est déjà dans le coffre, rangé par le client
+        // avant l'acquittement ; l'élément aussi, ici.
+        await this.addToHistory(item);
+        this.push({ type: 'item', item });
+        void this.pruneCache().catch((err: unknown) => this.log('nettoyage des fichiers', err));
+        // Petit fichier : copié (chiffré) d'office, sans retarder
+        // l'acquittement ; sans accès au relais, noté en attente.
+        if (e.size <= AUTO_CACHE_MAX && this.deps.files && !this.relayAccess) {
+          await this.updateFile(e.msg_id, { error: NO_RELAY_ACCESS });
+        } else if (e.size <= AUTO_CACHE_MAX && this.deps.files) {
+          void this.cacheFile(e.msg_id);
+        }
         return;
       }
       case 'rejected':
@@ -365,9 +493,12 @@ export class Engine {
       case 'send_failed':
         this.log(`envoi refusé par le relais : ${e.code}`);
         break;
+      case 'accepted':
+        // Un message envoyé depuis cette extension n'est plus « en cours ».
+        await this.updateItem(e.msg_id, { pending: false }, (i) => i.pending === true);
+        break;
       case 'group_changed':
       case 'pairing_completed':
-      case 'accepted':
         break;
     }
     this.changed();
@@ -384,6 +515,8 @@ export class Engine {
     await this.persistVault();
     await this.secrets.clear();
     await this.deps.kv.remove([DEVICE, OUTBOX, SEEN]);
+    this.progress.clear();
+    this.transfers = undefined;
     this.device = undefined;
     this.connection = 'offline';
     this.connectionError = undefined;
@@ -519,9 +652,407 @@ export class Engine {
       throw new Error("cette extension n'est pas encore dans un groupe");
     }
     const env = core.sealText(text, to ? [to] : []);
+    const trimmed = text.trim();
+    // Comme `ot_core::classify` : un lien s'il n'est fait que d'une URL web.
+    const kind = /^https?:\/\/\S+$/i.test(trimmed) ? 'link' : 'text';
+    await this.recordSent(env, { kind, body: kind === 'link' ? trimmed : text }, to);
     const msgId = await client.queue(env);
     this.changed();
     return msgId;
+  }
+
+  /**
+   * Range un élément envoyé dans l'historique (note 0030), « en cours »
+   * jusqu'à l'accusé du relais. Rangé **avant** la mise en file : l'accusé
+   * pourrait sinon arriver avant l'élément.
+   */
+  private async recordSent(
+    env: string,
+    content: Pick<Item, 'kind' | 'body' | 'file'>,
+    to: string,
+  ): Promise<void> {
+    const device = this.device;
+    if (!device) return;
+    const parsed = JSON.parse(env) as { msg_id: string; created_at: string };
+    const item: Item = {
+      msgId: parsed.msg_id,
+      from: device.id,
+      fromName: device.name,
+      createdAt: parsed.created_at,
+      ...content,
+      outgoing: true,
+      to: to ? [to] : [],
+      pending: true,
+    };
+    await this.addToHistory(item);
+    this.push({ type: 'item', item });
+  }
+
+  // --- Fichiers (étape 5) ---
+
+  private setProgress(view: TransferView | undefined, id: string): void {
+    if (view) this.progress.set(id, view);
+    else this.progress.delete(id);
+    this.changed();
+  }
+
+  private ready(): { client: RelayClient; transfers: Transfers; files: FileStorage } {
+    const { client, transfers } = this;
+    const files = this.deps.files;
+    if (!client || !transfers || !this.group() || !files) {
+      throw new Error("cette extension n'est pas encore dans un groupe");
+    }
+    return { client, transfers, files };
+  }
+
+  /**
+   * Envoie un fichier déjà copié sous `path` à `to` (un membre) ou à tous
+   * (`''`). Rangé d'abord dans `outgoing` : un arrêt du service worker
+   * reprend l'envoi au réveil. Renvoie le `msg_id` de l'annonce.
+   */
+  async sendFile(file: Outgoing): Promise<string> {
+    this.ready();
+    if (!(await this.refreshRelayAccess())) throw new Error(NO_RELAY_ACCESS);
+    await this.editOutgoing((list) =>
+      list.some((o) => o.path === file.path) ? list : [...list, file],
+    );
+    return this.runUpload(file);
+  }
+
+  private async outgoing(): Promise<Outgoing[]> {
+    await this.writes;
+    return this.readOutgoing();
+  }
+
+  private async readOutgoing(): Promise<Outgoing[]> {
+    const bytes = await this.secrets.get(OUTGOING);
+    if (!bytes) return [];
+    try {
+      return JSON.parse(new TextDecoder().decode(bytes)) as Outgoing[];
+    } finally {
+      bytes.fill(0);
+    }
+  }
+
+  private editOutgoing(edit: (list: Outgoing[]) => Outgoing[]): Promise<void> {
+    return this.serialWrite(async () => {
+      const list = edit(await this.readOutgoing());
+      if (list.length === 0) {
+        await this.secrets.delete(OUTGOING);
+        return;
+      }
+      const bytes = new TextEncoder().encode(JSON.stringify(list));
+      await this.secrets.put(OUTGOING, bytes);
+      bytes.fill(0);
+    });
+  }
+
+  private async runUpload(file: Outgoing): Promise<string> {
+    const { client, transfers, files } = this.ready();
+    if (this.running.has(file.path)) throw new Error('envoi déjà en cours');
+    this.running.add(file.path);
+    const view = (done: number, error?: string): TransferView => ({
+      id: file.path,
+      direction: 'up',
+      name: file.name,
+      done,
+      total: file.size,
+      error,
+    });
+    try {
+      const source = await files.source(file.path);
+      const { env, blobId } = await transfers.upload(
+        { sourceId: file.path, name: file.name, mime: file.mime, to: file.to ? [file.to] : [] },
+        source,
+        (done) => this.setProgress(view(done), file.path),
+      );
+      const fileView = { blobId, name: file.name, mime: file.mime, size: file.size };
+      await this.recordSent(env, { kind: 'file', body: file.name, file: fileView }, file.to);
+      const msgId = await client.queue(env);
+      await transfers.uploadSent(file.path);
+      await this.editOutgoing((list) => list.filter((o) => o.path !== file.path));
+      await files.remove(file.path);
+      this.setProgress(undefined, file.path);
+      return msgId;
+    } catch (e) {
+      this.setProgress(view(0, message(e)), file.path);
+      throw e;
+    } finally {
+      this.running.delete(file.path);
+    }
+  }
+
+  /** Reprend les envois interrompus par l'arrêt du service worker. */
+  private async resumeOutgoing(): Promise<void> {
+    if (!this.deps.files || !this.group() || !this.relayAccess) return;
+    for (const file of await this.outgoing()) {
+      if (this.running.has(file.path)) continue;
+      void this.runUpload(file).catch((e: unknown) => this.log('reprise d’un envoi', e));
+    }
+  }
+
+  /** Abandonne un envoi (libère la place sur le relais). */
+  async cancelUpload(path: string): Promise<void> {
+    const { transfers, files } = this.ready();
+    const file = (await this.outgoing()).find((o) => o.path === path);
+    if (file) await transfers.cancelUpload(path, file.size);
+    await this.editOutgoing((list) => list.filter((o) => o.path !== path));
+    await files.remove(path);
+    this.setProgress(undefined, path);
+  }
+
+  /** Met à jour le fichier d'un élément de l'historique (copie, erreur…). */
+  updateFile(msgId: string, change: Partial<FileView>): Promise<Item | undefined> {
+    return this.updateItem(
+      msgId,
+      {},
+      (i) => !!i.file,
+      (i) => {
+        i.file = { ...(i.file as FileView), ...change };
+      },
+    );
+  }
+
+  /**
+   * Met à jour un élément de l'historique, s'il existe et vérifie `when`, et
+   * le pousse à la popup.
+   */
+  private async updateItem(
+    msgId: string,
+    change: Partial<Item>,
+    when: (item: Item) => boolean = () => true,
+    edit?: (item: Item) => void,
+  ): Promise<Item | undefined> {
+    let updated: Item | undefined;
+    await this.serialWrite(async () => {
+      const items = await this.readHistory();
+      const item = items.find((i) => i.msgId === msgId);
+      if (!item || !when(item)) return;
+      Object.assign(item, change);
+      edit?.(item);
+      updated = item;
+      const bytes = new TextEncoder().encode(JSON.stringify(items));
+      await this.secrets.put(HISTORY, bytes);
+      bytes.fill(0);
+    });
+    if (updated) this.push({ type: 'item', item: updated });
+    return updated;
+  }
+
+  // --- Fichiers reçus, servis par le service worker (note 0029) ---
+
+  private geometry(blobId: string): Geometry {
+    const core = this.core;
+    if (!core) throw new Error("cette extension n'est pas encore dans un groupe");
+    return JSON.parse(core.fileGeometry(blobId)) as Geometry;
+  }
+
+  /**
+   * Morceau chiffré `index` : la copie de l'OPFS, sinon le relais (et il
+   * rejoint la copie).
+   */
+  private async sealedChunk(blobId: string, index: number): Promise<Uint8Array> {
+    const { transfers, files } = this.ready();
+    const cached = await files.getChunk(blobId, index);
+    if (cached) return cached;
+    if (!this.relayAccess && !(await this.refreshRelayAccess())) throw new Error(NO_RELAY_ACCESS);
+    const sealed = await transfers.chunk(blobId, index);
+    await files.putChunk(blobId, index, sealed);
+    return sealed;
+  }
+
+  /**
+   * Morceaux déchiffrés `from` à `to` (compris), dans l'ordre, quatre retirés
+   * d'avance. Chaque morceau est authentifié (STREAM) par le WebAssembly.
+   */
+  private async *plainChunks(blobId: string, from: number, to: number): AsyncGenerator<Uint8Array> {
+    const core = this.core;
+    if (!core) throw new Error("cette extension n'est pas encore dans un groupe");
+    const pending: Promise<Uint8Array>[] = [];
+    let next = from;
+    const fill = () => {
+      while (next <= to && pending.length < 4) {
+        const p = this.sealedChunk(blobId, next++);
+        // Une erreur sera relevée à son tour ; pas de rejet non traité.
+        p.catch(() => undefined);
+        pending.push(p);
+      }
+    };
+    fill();
+    for (let i = from; i <= to; i++) {
+      const sealed = await (pending.shift() as Promise<Uint8Array>);
+      fill();
+      yield core.openChunk(blobId, i, sealed);
+    }
+  }
+
+  /**
+   * Fichier lu en entier : son SHA-256 est vérifié ; s'il concorde, le relais
+   * peut l'effacer et la copie est complète. Sinon la copie est effacée.
+   */
+  private async verified(blobId: string, msgId: string, sha256: Uint8Array): Promise<void> {
+    const { transfers, files } = this.ready();
+    if (!this.core?.checkFile(blobId, sha256)) {
+      await files.removeCache(blobId);
+      throw new Error('fichier altéré : son empreinte SHA-256 ne correspond pas');
+    }
+    try {
+      await transfers.done(blobId);
+    } catch (e) {
+      this.log('fin du retrait non signalée au relais', e);
+    }
+    await this.updateFile(msgId, { cached: true, error: undefined });
+  }
+
+  /**
+   * Copie chiffrée d'un fichier reçu, morceau par morceau, puis vérification
+   * (petits fichiers, à la réception). Sans effet si elle existe déjà.
+   */
+  async cacheFile(msgId: string): Promise<void> {
+    const item = await this.item(msgId);
+    const file = item?.file;
+    if (!file || file.cached || this.running.has(msgId)) return;
+    if (!(await this.refreshRelayAccess())) {
+      await this.updateFile(msgId, { error: NO_RELAY_ACCESS });
+      return;
+    }
+    this.running.add(msgId);
+    const hasher = new Hasher();
+    let done = 0;
+    try {
+      const g = this.geometry(file.blobId);
+      for await (const plain of this.plainChunks(file.blobId, 0, g.chunks - 1)) {
+        hasher.update(plain);
+        done += plain.length;
+        plain.fill(0);
+        this.setProgress(
+          { id: msgId, direction: 'down', name: file.name, done, total: file.size },
+          msgId,
+        );
+      }
+      await this.verified(file.blobId, msgId, hasher.finish());
+    } catch (e) {
+      const error =
+        e instanceof ExpiredError || (e instanceof Error && e.message === NO_RELAY_ACCESS)
+          ? e.message
+          : `réception impossible : ${message(e)}`;
+      this.log('copie d’un fichier reçu', e);
+      await this.updateFile(msgId, { error });
+    } finally {
+      hasher.free();
+      this.running.delete(msgId);
+      this.setProgress(undefined, msgId);
+    }
+  }
+
+  /**
+   * Réponse à l'adresse `/f/<blob_id>/…` (note 0029) : le fichier en clair,
+   * en flux, depuis la copie chiffrée ou le relais. `inline` pour un type que
+   * le navigateur affiche, sinon (ou `download`) `attachment`. `Range` pour
+   * les vidéos. Une lecture complète vérifie le SHA-256 et complète la copie.
+   */
+  async fileResponse(
+    blobId: string,
+    opts: { download: boolean; range: string | null },
+  ): Promise<Response> {
+    const notFound = () =>
+      new Response('Fichier inconnu ou expiré : il n’est plus sur cet appareil.', {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    const item = (await this.history()).find((i) => i.file?.blobId === blobId);
+    const file = item?.file;
+    if (!item || !file) return notFound();
+    let g: Geometry;
+    try {
+      g = this.geometry(blobId);
+    } catch {
+      return notFound();
+    }
+    const range = parseRange(opts.range, g.size);
+    const start = range?.start ?? 0;
+    const end = range?.end ?? g.size - 1;
+    const first = Math.floor(start / g.chunk_size);
+    const last = g.size === 0 ? 0 : Math.floor(end / g.chunk_size);
+    const chunks = this.plainChunks(blobId, first, last);
+    // Seule une lecture complète permet de vérifier l'empreinte.
+    let hasher: Hasher | undefined = range ? undefined : new Hasher();
+    const release = () => {
+      hasher?.free();
+      hasher = undefined;
+    };
+    let index = first;
+    const body = new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          const next = await chunks.next();
+          if (next.done) {
+            const digest = hasher?.finish();
+            release();
+            if (digest) await this.verified(blobId, item.msgId, digest);
+            controller.close();
+            return;
+          }
+          const plain = next.value;
+          hasher?.update(plain);
+          const offset = index * g.chunk_size;
+          index++;
+          controller.enqueue(
+            plain.slice(Math.max(start - offset, 0), Math.min(end - offset + 1, plain.length)),
+          );
+          plain.fill(0);
+        } catch (e) {
+          release();
+          this.log('lecture d’un fichier reçu', e);
+          controller.error(e);
+        }
+      },
+      cancel: async () => {
+        release();
+        await chunks.return(undefined);
+      },
+    });
+    const mime = file.mime || 'application/octet-stream';
+    const inline = !opts.download && isViewable(mime);
+    const headers = new Headers({
+      'Content-Type': mime,
+      'Content-Length': String(Math.max(end - start + 1, 0)),
+      'Accept-Ranges': 'bytes',
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    // Servi sous l'origine de l'extension : origine opaque, sans script ni
+    // accès aux API (sauf le PDF, lu par le lecteur intégré du navigateur).
+    if (mime !== 'application/pdf') headers.set('Content-Security-Policy', 'sandbox');
+    if (range) headers.set('Content-Range', `bytes ${start}-${end}/${g.size}`);
+    return new Response(body, { status: range ? 206 : 200, headers });
+  }
+
+  /**
+   * Efface les copies et les clés des fichiers sortis de l'historique (50
+   * derniers) ou expirés (7 jours) : les deux partent ensemble (note 0029).
+   */
+  async pruneCache(): Promise<void> {
+    const files = this.deps.files;
+    const core = this.core;
+    if (!files || !core) return;
+    const kept = new Set(
+      (await this.history()).map((i) => i.file?.blobId).filter((b): b is string => !!b),
+    );
+    const offers = JSON.parse(core.files()) as { blob_id: string }[];
+    let changed = false;
+    for (const o of offers) {
+      if (!kept.has(o.blob_id)) {
+        core.forgetFile(o.blob_id);
+        changed = true;
+      }
+    }
+    const known = new Set(offers.filter((o) => kept.has(o.blob_id)).map((o) => o.blob_id));
+    for (const blobId of await files.listCache()) {
+      if (!known.has(blobId)) await files.removeCache(blobId);
+    }
+    if (changed) await this.persistVault();
   }
 
   async devices(): Promise<RelayDevice[]> {
@@ -550,6 +1081,7 @@ export class Engine {
   close(): void {
     this.client?.stop();
     this.client = undefined;
+    this.transfers = undefined;
     this.core?.free();
     this.core = undefined;
   }

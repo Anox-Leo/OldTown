@@ -4,7 +4,8 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { checkServerUrl, decode, encode, wsUrl } from '../src/background/frames';
-import { Vault, decodeFrame } from '../src/wasm/ot_wasm.js';
+import { type Geometry, createBlobBody } from '../src/background/transfer';
+import { Vault, decodeFrame, fileGeometry } from '../src/wasm/ot_wasm.js';
 import { ROOT, golden, loadWasm } from './support';
 
 beforeAll(loadWasm);
@@ -12,7 +13,10 @@ beforeAll(loadWasm);
 describe('golden de ot-proto', () => {
   it('toutes les trames sont acceptées et relues à l’identique', () => {
     const dir = path.join(ROOT, 'crates/ot-proto/tests/golden');
-    const names = readdirSync(dir).map((f) => f.replace(/\.json$/, ''));
+    // Les `http_*` sont des corps de l'API des fichiers, pas des trames.
+    const names = readdirSync(dir)
+      .map((f) => f.replace(/\.json$/, ''))
+      .filter((n) => !n.startsWith('http_'));
     expect(names).toContain('ping');
     expect(names).toContain('pong');
     for (const name of names) {
@@ -28,6 +32,12 @@ describe('golden de ot-proto', () => {
     expect(encode.listDevices()).toBe(golden('list_devices'));
     const env = (JSON.parse(golden('send')) as { env: unknown }).env;
     expect(encode.send(JSON.stringify(env))).toBe(golden('send'));
+  });
+
+  it('le corps de création d’un fichier est celui du golden', () => {
+    const g = JSON.parse(fileGeometry(2_500_000, 1 << 20)) as Geometry;
+    const body = createBlobBody(g, ['dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0']);
+    expect(JSON.stringify(body)).toBe(golden('http_create_blob'));
   });
 
   it('les trames signées par le WebAssembly ont la forme des golden', () => {

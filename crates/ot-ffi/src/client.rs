@@ -4,9 +4,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use ot_core::{Client, ClientConfig, Dedup, DeviceId, Events, StoreKeyring};
+use ot_core::{BlobId, Client, ClientConfig, Dedup, DeviceId, Events, OutgoingFile, StoreKeyring};
 use tokio::sync::mpsc;
 
+use crate::files::{FileItem, FileSink, FileSource, Listener, Sink, Source, TransferListener};
 use crate::local::{Local, PendingJoin};
 use crate::types::millis;
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 #[derive(uniffi::Object)]
 pub struct OtClient {
     client: Client,
+    local: Local,
     device: DeviceState,
     events: tokio::sync::Mutex<mpsc::Receiver<Event>>,
 }
@@ -51,9 +53,10 @@ impl OtClient {
         if let Some(pending) = local.pending_join()? {
             RUNTIME.spawn(send_join(client.clone(), pending, tx.clone()));
         }
-        let forward = Forwarder { client: client.clone(), local, keyring, seen, names, tx };
+        let forward =
+            Forwarder { client: client.clone(), local: local.clone(), keyring, seen, names, tx };
         RUNTIME.spawn(forward.run(core_events));
-        Ok(Arc::new(Self { client, device, events: tokio::sync::Mutex::new(rx) }))
+        Ok(Arc::new(Self { client, local, device, events: tokio::sync::Mutex::new(rx) }))
     }
 
     pub fn device(&self) -> DeviceState {
@@ -71,17 +74,73 @@ impl OtClient {
     pub async fn send_text(&self, text: String, to: Vec<String>) -> Result<String, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
-            let to = to
-                .iter()
-                .map(|id| {
-                    id.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let to = parse_ids(&to)?;
             if text.trim().is_empty() {
                 return Err(OtError::Invalid { message: "texte vide".into() });
             }
             let accepted = client.send(&ot_core::classify(&text), to).await?;
             Ok(accepted.msg_id.to_string())
+        })
+        .await
+    }
+
+    /// Envoie un fichier (étape 5) : dépôt chiffré par morceaux, puis
+    /// annonce aux destinataires (vide : tous les autres). `source_id`
+    /// identifie la source (son URI) : relancer l'envoi de la même source
+    /// reprend là où il s'est arrêté. Renvoie le `msg_id` de l'annonce.
+    pub async fn send_file(
+        &self,
+        source: Arc<dyn FileSource>,
+        source_id: String,
+        name: String,
+        mime: String,
+        to: Vec<String>,
+        listener: Arc<dyn TransferListener>,
+    ) -> Result<String, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let to = parse_ids(&to)?;
+            let file = OutgoingFile { source_id, name, mime, to };
+            let accepted = client
+                .send_file(file, Arc::new(Source(source)), Arc::new(Listener(listener)))
+                .await?;
+            Ok(accepted.msg_id.to_string())
+        })
+        .await
+    }
+
+    /// Abandonne l'envoi en cours de cette source (libère la place sur le
+    /// relais).
+    pub async fn cancel_upload(&self, source_id: String) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.cancel_upload(&source_id).await?) }).await
+    }
+
+    /// Télécharge le fichier annoncé par l'élément `msg_id` dans `sink`,
+    /// vérifie son SHA-256 et note son URI dans l'historique. Renvoie
+    /// l'élément mis à jour.
+    pub async fn download(
+        &self,
+        msg_id: String,
+        sink: Arc<dyn FileSink>,
+        listener: Arc<dyn TransferListener>,
+    ) -> Result<FileItem, OtError> {
+        let (client, local) = (self.client.clone(), self.local.clone());
+        on_runtime(async move {
+            let item = local
+                .history()?
+                .into_iter()
+                .find(|i| i.msg_id == msg_id)
+                .and_then(|i| i.file)
+                .ok_or_else(|| OtError::Invalid { message: "fichier inconnu".into() })?;
+            let blob: BlobId =
+                item.blob_id.parse().map_err(|e| OtError::Internal { message: format!("{e}") })?;
+            let sink = Arc::new(Sink { inner: sink, uri: std::sync::Mutex::new(None) });
+            client.download(&blob, sink.clone(), Arc::new(Listener(listener))).await?;
+            let uri =
+                sink.uri.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+            local.set_file_uri(&msg_id, &uri)?;
+            Ok(FileItem { saved_uri: Some(uri), ..item })
         })
         .await
     }
@@ -141,16 +200,7 @@ impl OtClient {
     /// ordinateur revendu…). Renvoie la nouvelle époque.
     pub async fn rotate(&self, exclude: Vec<String>) -> Result<u32, OtError> {
         let client = self.client.clone();
-        on_runtime(async move {
-            let exclude = exclude
-                .iter()
-                .map(|id| {
-                    id.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(client.rotate(exclude).await?)
-        })
-        .await
+        on_runtime(async move { Ok(client.rotate(parse_ids(&exclude)?).await?) }).await
     }
 
     /// Le réseau a changé : reconnexion immédiate.
@@ -167,6 +217,13 @@ impl OtClient {
         })
         .await;
     }
+}
+
+/// Identifiants d'appareils donnés par Kotlin.
+fn parse_ids(ids: &[String]) -> Result<Vec<DeviceId>, OtError> {
+    ids.iter()
+        .map(|id| id.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() }))
+        .collect()
 }
 
 /// Noms des membres, pour afficher l'expéditeur.
@@ -245,19 +302,40 @@ impl Forwarder {
                     kind: m.content.kind.into(),
                     body: m.content.body,
                     sensitive: false,
+                    file: None,
                 };
-                self.seen.insert(m.msg_id);
-                let saved = self
-                    .local
-                    .save_seen(self.seen.iter())
-                    .and_then(|()| self.local.push_history(received.clone()));
-                if let Err(e) = saved {
-                    out.push(Event::StorageError { message: e.to_string() });
-                }
+                self.remember(m.msg_id, &received, &mut out);
+                Event::Message { received }
+            }
+            E::File(f) => {
+                let f = f.file;
+                let received = Received {
+                    msg_id: f.msg_id.to_string(),
+                    from_name: self.name_of(&f.from),
+                    from_id: f.from.to_string(),
+                    created_at_ms: millis(f.created_at),
+                    kind: crate::ContentKind::File,
+                    body: f.name.clone(),
+                    sensitive: false,
+                    file: Some(FileItem::from_info(&f)),
+                };
+                self.remember(f.msg_id, &received, &mut out);
                 Event::Message { received }
             }
         };
         out.insert(0, ev);
         out
+    }
+
+    /// Range un élément reçu : vu, et dans l'historique.
+    fn remember(&mut self, msg_id: ot_core::Ulid, received: &Received, out: &mut Vec<Event>) {
+        self.seen.insert(msg_id);
+        let saved = self
+            .local
+            .save_seen(self.seen.iter())
+            .and_then(|()| self.local.push_history(received.clone()));
+        if let Err(e) = saved {
+            out.push(Event::StorageError { message: e.to_string() });
+        }
     }
 }

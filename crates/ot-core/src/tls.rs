@@ -14,7 +14,7 @@ use crate::client::Ws;
 /// Autorités de confiance pour `wss://`.
 #[derive(Clone)]
 pub struct TlsRoots {
-    config: Arc<ClientConfig>,
+    pub(crate) config: Arc<ClientConfig>,
 }
 
 impl TlsRoots {

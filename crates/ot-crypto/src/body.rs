@@ -1,10 +1,11 @@
 //! Corps des messages, sérialisés en JSON dans le clair (après la signature).
 
-use ot_proto::{DeviceId, b64};
+use ot_proto::{BlobId, DeviceId, b64};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::{CryptoError, GroupKey, Result};
+use crate::file::{FILE_NONCE_LEN, check_layout};
+use crate::{CryptoError, FileKey, GroupKey, Result};
 
 /// Corps d'un message chiffré. `text` et `link` gardent le format de
 /// l'étape 1 (`{"kind":"text","body":"…"}`).
@@ -31,6 +32,26 @@ pub enum Body {
     /// Nouvelle époque après une rotation, pour un seul appareil (schéma
     /// `0x03`) ; le roster ne contient plus les exclus.
     GroupKey { epoch: u32, key: GroupKey, roster: Roster },
+    /// Fichier déposé sur le relais (schéma `0x01`, étape 5, note 0026) :
+    /// sa référence, ce qu'il faut pour l'ouvrir et le vérifier.
+    File {
+        blob_id: BlobId,
+        /// Nom donné par l'expéditeur ; à nettoyer avant de l'écrire
+        /// ([`crate::sanitize_file_name`]).
+        name: String,
+        mime: String,
+        /// Taille en clair, en octets.
+        size: u64,
+        chunk_size: u32,
+        chunks: u32,
+        key: FileKey,
+        /// Préfixe de nonce STREAM.
+        #[serde(with = "b64::array")]
+        nonce: [u8; FILE_NONCE_LEN],
+        /// SHA-256 du clair.
+        #[serde(with = "b64::array")]
+        sha256: [u8; 32],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +108,7 @@ impl Body {
             Self::PairWelcome { .. } => "pair_welcome",
             Self::Roster { .. } => "roster",
             Self::GroupKey { .. } => "group_key",
+            Self::File { .. } => "file",
         }
     }
 
@@ -97,8 +119,13 @@ impl Body {
         Zeroizing::new(serde_json::to_vec(self).expect("Body est toujours sérialisable"))
     }
 
+    /// Lit un corps ; un `file` aux tailles incohérentes est refusé.
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
-        serde_json::from_slice(bytes).map_err(|e| CryptoError::Body(e.to_string()))
+        let body = serde_json::from_slice(bytes).map_err(|e| CryptoError::Body(e.to_string()))?;
+        if let Self::File { size, chunk_size, chunks, .. } = &body {
+            check_layout(*size, *chunk_size, *chunks)?;
+        }
+        Ok(body)
     }
 }
 
@@ -112,6 +139,30 @@ mod tests {
         assert_eq!(&**body.to_json(), br#"{"kind":"text","body":"bonjour"}"#);
         let content = ot_proto::Content::text("bonjour");
         assert_eq!(Body::from_json(&serde_json::to_vec(&content).unwrap()).unwrap(), body);
+    }
+
+    fn file(chunks: u32) -> Body {
+        Body::File {
+            blob_id: "blob_01J9Z3Q5RT8YB6ZK4C2D7E9F1G".parse().unwrap(),
+            name: "photo.jpg".into(),
+            mime: "image/jpeg".into(),
+            size: 2_500_000,
+            chunk_size: crate::FILE_CHUNK_SIZE,
+            chunks,
+            key: FileKey::from_bytes([1; 32]),
+            nonce: [2; FILE_NONCE_LEN],
+            sha256: [3; 32],
+        }
+    }
+
+    #[test]
+    fn file_roundtrip_and_layout_check() {
+        let body = file(3);
+        assert_eq!(Body::from_json(&body.to_json()).unwrap(), body);
+        assert_eq!(body.kind(), "file");
+        // Le `Debug` d'un corps `file` ne montre pas la clé.
+        assert!(!format!("{body:?}").contains("[1, 1"));
+        assert!(Body::from_json(&file(4).to_json()).is_err());
     }
 
     #[test]

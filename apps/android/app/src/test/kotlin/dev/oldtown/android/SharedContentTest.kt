@@ -19,9 +19,26 @@ class SharedContentTest {
     }
 
     @Test
-    fun filesWaitForStage5() {
-        assertEquals(SharedContent.Unsupported, readShare(Intent.ACTION_SEND, "image/png", null))
-        assertEquals(SharedContent.Unsupported, readShare(Intent.ACTION_SEND_MULTIPLE, "application/pdf", null))
+    fun filesAreAccepted() {
+        val photo = "content://media/external/images/media/42"
+        assertEquals(SharedContent.Files(listOf(photo)), readShare(Intent.ACTION_SEND, "image/png", null, listOf(photo)))
+        val two = listOf(photo, "content://com.android.providers.downloads.documents/document/7")
+        assertEquals(SharedContent.Files(two), readShare(Intent.ACTION_SEND_MULTIPLE, "*/*", null, two))
+        // Un fichier texte partagé avec un texte : le fichier l'emporte.
+        assertEquals(SharedContent.Files(listOf(photo)), readShare(Intent.ACTION_SEND, "text/plain", "x", listOf(photo)))
+    }
+
+    @Test
+    fun onlyContentUrisAreSent() {
+        // Une URI file:// pourrait désigner les clés de l'appli.
+        val own = "file:///data/data/dev.oldtown.android/no_backup/device.key"
+        assertEquals(SharedContent.Empty, readShare(Intent.ACTION_SEND, "application/octet-stream", null, listOf(own)))
+        assertEquals(
+            SharedContent.Files(listOf("content://a/1")),
+            readShare(Intent.ACTION_SEND_MULTIPLE, "*/*", null, listOf(own, "content://a/1")),
+        )
+        // Une image sans flux : rien à envoyer.
+        assertEquals(SharedContent.Empty, readShare(Intent.ACTION_SEND, "image/png", null))
     }
 
     @Test
