@@ -165,3 +165,23 @@ async fn concurrent_writes_do_not_fail() {
         t.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn open_while_another_connection_writes() {
+    // Une connexion neuve sur une base déjà en WAL, pendant qu'une autre tient
+    // le verrou d'écriture : `ots device list` pendant que le relais écrit, ou
+    // une connexion que le pool ouvre en pleine charge. Elle ne doit pas
+    // échouer en SQLITE_BUSY.
+    use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ot.db");
+    let store = Store::open(&path).await.unwrap();
+    store.add_device("mac", &[1; 32], 0).await.unwrap();
+
+    let mut writer = SqliteConnectOptions::new().filename(&path).connect().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut writer).await.unwrap();
+    let other = Store::open(&path).await.unwrap();
+    assert_eq!(other.devices().await.unwrap().len(), 1);
+    sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+}

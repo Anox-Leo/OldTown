@@ -259,23 +259,27 @@ async fn size_limit_and_quota() {
 }
 
 #[tokio::test]
-async fn cancel_and_expiry_delete_chunks() {
-    let s = setup_with(|dir| Config {
-        blob_dir: dir.to_owned(),
-        blob_ttl: Duration::from_millis(300),
-        ..test_config()
-    })
-    .await;
+async fn cancel_deletes_chunks() {
+    let s = setup().await;
     let cancelled = create(&s, &s.mac, &[&s.phone]).await;
     assert_eq!(put(&s, &s.mac, &cancelled, 0, &chunk(0)).await.status, 204);
     let res = signed(&s.server, &s.mac, "DELETE", &format!("/v1/blobs/{cancelled}"), b"").await;
     assert_eq!(res.status, 204);
     assert_eq!(chunk_files(&s, &cancelled), 0);
     assert_eq!(status(&s, &s.mac, &cancelled).await.error(), HttpErrorCode::NotFound);
+    s.server.stop().await;
+}
 
+#[tokio::test]
+async fn expiry_deletes_chunks() {
+    // Durée de vie assez longue pour que le dépôt finisse avant, même sur un
+    // exécuteur de CI lent (300 ms ne suffisaient pas sous macOS).
+    let ttl = Duration::from_secs(1);
+    let s =
+        setup_with(|dir| Config { blob_dir: dir.to_owned(), blob_ttl: ttl, ..test_config() }).await;
     let expiring = create(&s, &s.mac, &[&s.phone]).await;
     upload_all(&s, &expiring).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    tokio::time::sleep(ttl + Duration::from_millis(100)).await;
     // Expiré : introuvable avant même la purge, puis effacé du disque.
     assert_eq!(status(&s, &s.phone, &expiring).await.error(), HttpErrorCode::NotFound);
     s.server.relay.purge_once().await.unwrap();

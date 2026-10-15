@@ -19,6 +19,15 @@ use tempfile::TempDir;
 /// Morceaux de 64 Kio : un fichier de quelques Mio en compte des dizaines.
 const CHUNK: u32 = 64 * 1024;
 
+/// Borne d'un transfert de quelques Mio : chaque morceau est synchronisé sur
+/// disque par le relais, et `STEP` ne suffit pas sur un exécuteur de CI lent.
+const TRANSFER: Duration = Duration::from_secs(20);
+
+/// Échoue si le transfert `fut` ne se termine pas dans `TRANSFER`.
+async fn transfer<T>(fut: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(TRANSFER, fut).await.expect("transfert trop long")
+}
+
 fn transfer_config() -> TransferConfig {
     TransferConfig {
         chunk_size: CHUNK,
@@ -103,7 +112,7 @@ async fn file_roundtrip_while_messages_keep_flowing() {
     // Pendant le dépôt, la session WebSocket sert toujours dans les deux sens.
     within(cb.send(&Content::text("pendant le transfert"), vec![])).await.unwrap();
     assert_eq!(next_message(&mut ea).await.content.body, "pendant le transfert");
-    within(upload).await.unwrap().unwrap();
+    transfer(upload).await.unwrap().unwrap();
 
     let info = next_file(&mut eb).await;
     assert_eq!(
@@ -116,7 +125,7 @@ async fn file_roundtrip_while_messages_keep_flowing() {
     let seen = Arc::new(AtomicU64::new(0));
     let s2 = seen.clone();
     let progress = Arc::new(move |done: u64, _total: u64| s2.store(done, Ordering::SeqCst));
-    within(cb.download(&info.blob_id, sink.clone(), progress)).await.unwrap();
+    transfer(cb.download(&info.blob_id, sink.clone(), progress)).await.unwrap();
     assert!(*sink.data.lock().unwrap() == data);
     assert!(sink.finished.load(Ordering::SeqCst));
     assert_eq!(seen.load(Ordering::SeqCst), data.len() as u64);
@@ -157,12 +166,12 @@ async fn transfers_resume_after_network_cuts() {
     };
     let src = MemSource::new(data.clone());
     let sent = ca.send_file(outgoing(&s.b), src, cut_at(gate.clone()));
-    tokio::time::timeout(Duration::from_secs(20), sent).await.unwrap().unwrap();
+    transfer(sent).await.unwrap();
 
-    let info = tokio::time::timeout(Duration::from_secs(20), next_file(&mut eb)).await.unwrap();
+    let info = transfer(next_file(&mut eb)).await;
     let sink = Arc::new(MemSink::default());
     let got = cb.download(&info.blob_id, sink.clone(), cut_at(gate.clone()));
-    tokio::time::timeout(Duration::from_secs(20), got).await.unwrap().unwrap();
+    transfer(got).await.unwrap();
     assert!(*sink.data.lock().unwrap() == data);
     s.server.stop().await;
 }
@@ -204,7 +213,7 @@ async fn upload_resumes_after_app_and_relay_restart() {
     // Le hachage lit tout une fois, puis le dépôt s'arrête à mi-chemin.
     let failing =
         Arc::new(Failing { inner: MemSource::new(data.clone()), fail_after: chunks + chunks / 2 });
-    let err = within(ca.send_file(outgoing(&b), failing, no_progress())).await.unwrap_err();
+    let err = transfer(ca.send_file(outgoing(&b), failing, no_progress())).await.unwrap_err();
     assert!(matches!(err, ClientError::Transfer(_)), "{err}");
 
     // Le relais redémarre entre-temps.
@@ -214,20 +223,20 @@ async fn upload_resumes_after_app_and_relay_restart() {
 
     // Relancé sur la même source : seuls les morceaux manquants sont relus.
     let src = MemSource::new(data.clone());
-    within(ca.send_file(outgoing(&b), src.clone(), no_progress())).await.unwrap();
+    transfer(ca.send_file(outgoing(&b), src.clone(), no_progress())).await.unwrap();
     let reads = src.reads.load(Ordering::SeqCst);
     assert!(reads > 0 && reads < chunks, "{reads} lectures pour {chunks} morceaux");
 
     let info = next_file(&mut eb).await;
     let sink = Arc::new(MemSink::default());
-    within(cb.download(&info.blob_id, sink.clone(), no_progress())).await.unwrap();
+    transfer(cb.download(&info.blob_id, sink.clone(), no_progress())).await.unwrap();
     assert!(*sink.data.lock().unwrap() == data);
     server.stop().await;
 }
 
 #[tokio::test]
 async fn expired_file_is_reported_and_forgotten() {
-    let s = setup_with(|c| Config { blob_ttl: Duration::from_millis(500), ..c }).await;
+    let s = setup_with(|c| Config { blob_ttl: Duration::from_secs(1), ..c }).await;
     let url = s.server.url();
     let (ca, _ea) = online(&s.a, &url).await;
     let (cb, mut eb) = online(&s.b, &url).await;
@@ -235,7 +244,7 @@ async fn expired_file_is_reported_and_forgotten() {
     within(ca.send_file(outgoing(&s.b), src, no_progress())).await.unwrap();
     let info = next_file(&mut eb).await;
 
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
     let sink = Arc::new(MemSink::default());
     let err = within(cb.download(&info.blob_id, sink.clone(), no_progress())).await.unwrap_err();
     assert_eq!(err, ClientError::Expired);
