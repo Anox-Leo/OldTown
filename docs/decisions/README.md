@@ -41,3 +41,4 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0031](0031-extension-accueil-liste-de-conversations.md) | Extension : accueil en liste de conversations (avatars, présence), conversation ouverte au clic | 5 | Acceptée |
 | [0032](0032-popup-ouverte-sur-la-conversation.md) | Extension : la popup ouverte pour un élément reçu (d'office ou par sa notification) montre sa conversation | 5 | Acceptée |
 | [0033](0033-android-conversations-partage-par-usage.md) | Android : conversations comme l'extension (envois dans l'historique, destinataires des reçus), partage trié par usage | Hors jalon | Acceptée |
+| [0034](0034-etape-6-abandonnee.md) | Étape 6 (presse-papiers) abandonnée ; prochaine étape : la 8 | 6, 8 | Acceptée |

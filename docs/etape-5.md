@@ -45,7 +45,7 @@ téléchargement des fichiers reçus, ouverture directe des images et PDF).
 **Exclus** : synchronisation de dossiers (Syncthing le fait), aperçus côté
 relais (il ne voit rien), miniatures dans les notifications, transfert direct
 d'appareil à appareil en réseau local (piste pour plus tard), images collées
-du presse-papiers (étape 6).
+du presse-papiers (prévues à l'étape 6, abandonnée : note 0034).
 
 ## Conception
 
