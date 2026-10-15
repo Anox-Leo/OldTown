@@ -52,6 +52,8 @@ data class Transfer(
     val done: Long,
     val total: Long,
     val error: String? = null,
+    /** Destinataires d'un envoi (vide : tous), pour sa bulle de progression. */
+    val to: List<String> = emptyList(),
 )
 
 data class HubState(
@@ -142,6 +144,20 @@ object RelayHub {
         s.copy(history = (listOf(item) + s.history.filter { it.msgId != item.msgId }).take(HISTORY_LEN))
     }
 
+    /** Envoi rangé (en tête) ou mis à jour sur place (accepté), note 0033. */
+    internal fun upsert(item: Received) = _state.update { s ->
+        if (s.history.any { it.msgId == item.msgId }) {
+            s.copy(history = s.history.map { if (it.msgId == item.msgId) item else it })
+        } else {
+            s.copy(history = (listOf(item) + s.history).take(HISTORY_LEN))
+        }
+    }
+
+    /** Envoi en échec, retiré de l'historique. */
+    internal fun remove(msgId: String) = _state.update { s ->
+        s.copy(history = s.history.filterNot { it.msgId == msgId })
+    }
+
     fun setHistory(items: List<Received>) = _state.update { it.copy(history = items) }
 
     /** Remplace un élément de l'historique (fichier enregistré). */
@@ -183,5 +199,5 @@ object RelayHub {
     }
 
     private const val CLIENT_TIMEOUT_MS = 10_000L
-    private const val HISTORY_LEN = 50
+    private const val HISTORY_LEN = 100
 }

@@ -18,9 +18,11 @@ import dev.oldtown.android.files.FileTransfers
 import dev.oldtown.android.files.fileActions
 import dev.oldtown.android.files.humanSize
 import dev.oldtown.android.relay.Connection
+import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.relay.RelayService
 import dev.oldtown.android.relay.Transfer
 import dev.oldtown.android.ui.MainActivity
+import dev.oldtown.android.ui.channelOf
 import dev.oldtown.core.Received
 
 /**
@@ -80,6 +82,19 @@ object Notifications {
         PendingIntent.FLAG_IMMUTABLE,
     )
 
+    /** Ouvre l'appli sur la conversation de l'élément (note 0033) : le canal seul, pas le contenu. */
+    private fun openConversation(context: Context, item: Received, id: Int): PendingIntent {
+        val channel = channelOf(item, RelayHub.state.value.device?.deviceId)
+        return PendingIntent.getActivity(
+            context,
+            id,
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_CHANNEL, channel),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     /** Texte de la notification permanente pour un état de connexion. */
     fun statusText(context: Context, connection: Connection, waitingSponsor: Boolean): String =
         context.getString(
@@ -133,7 +148,7 @@ object Notifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(if (item.sensitive) text else item.body))
             .setWhen(item.createdAtMs)
             .setShowWhen(true)
-            .setContentIntent(openApp(context))
+            .setContentIntent(openConversation(context, item, id))
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -194,7 +209,7 @@ object Notifications {
                         context, id, FileTransfers.openIntent(saved, file.mime), PendingIntent.FLAG_IMMUTABLE,
                     )
                 } else {
-                    openApp(context)
+                    openConversation(context, item, id)
                 },
             )
         for (action in fileActions(saved != null)) {

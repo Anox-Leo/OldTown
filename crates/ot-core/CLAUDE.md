@@ -37,7 +37,9 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   trait `Keyring` (`keyring.rs`, `MemoryKeyring` pour les tests). Le format
   vient de `ot-crypto` ; aucune primitive crypto n'est appelée directement ici.
 - Aucun envoi en clair : `Client::send` chiffre toujours et refuse sans
-  groupe ; `send_envelope` ne sert qu'aux tests.
+  groupe ; `send_envelope` n'envoie que ce que `Client::seal` a chiffré
+  (pour connaître le `msg_id` avant l'envoi, note 0033), ou les enveloppes
+  construites par les tests.
 - Fichiers (étape 5, note 0026) : `files.rs` (sans réseau) range les offres
   reçues (`files.json`) et les dépôts en cours (`uploads.json`) dans le
   `Keyring`, clés comprises, et signe les requêtes HTTP ; `Secure` traite le

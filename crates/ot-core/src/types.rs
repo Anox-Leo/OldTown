@@ -14,6 +14,8 @@ pub struct Received {
     pub seq: i64,
     pub msg_id: Ulid,
     pub from: DeviceId,
+    /// Destinataires lus dans l'enveloppe ; vide : tous les appareils.
+    pub to: Vec<DeviceId>,
     pub created_at: OffsetDateTime,
     pub content: Content,
 }

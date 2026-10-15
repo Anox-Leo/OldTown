@@ -133,16 +133,29 @@ async fn phone_joins_by_code_then_exchanges() {
         (received.kind, received.body.as_str()),
         (ContentKind::Link, "https://example.org/a")
     );
+    assert!(received.to.is_empty() && !received.outgoing, "envoi à tous : {received:?}");
     assert_eq!(history(a_store.clone()).unwrap(), vec![received.clone()]);
+    // Chez B, l'envoi est rangé en cours, puis accepté (note 0033).
+    let Event::Sent { item } = next(&b, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && item.pending && item.msg_id == msg_id, "{item:?}");
+    let Event::Sent { item } = next(&b, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && !item.pending, "{item:?}");
+    assert_eq!((item.from_name.as_str(), item.to.len()), ("pixel", 0));
+    assert_eq!(history(b_store.clone()).unwrap(), vec![item]);
     clear_history(a_store.clone()).unwrap();
     assert!(history(a_store.clone()).unwrap().is_empty());
 
-    // Destinataire hors groupe, texte vide.
+    // Destinataire hors groupe, texte vide : rien de rangé.
     assert!(matches!(
         b.send_text("x".into(), vec![ot_core::DeviceId::generate().to_string()]).await,
         Err(OtError::NotInGroup { .. })
     ));
     assert!(matches!(b.send_text("  ".into(), vec![]).await, Err(OtError::Invalid { .. })));
+    assert_eq!(history(b_store.clone()).unwrap().len(), 1);
 
     let devices = a.devices().await.unwrap();
     assert!(devices.iter().all(|d| d.member), "{devices:?}");
@@ -154,7 +167,7 @@ async fn phone_joins_by_code_then_exchanges() {
 async fn phone_sponsors_by_reverse_qr() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
-    let a = OtClient::start(a_store).unwrap();
+    let a = OtClient::start(a_store.clone()).unwrap();
     next(&a, connected).await;
 
     // Un PC affiche son QR (comme `ot pair join --qr`).
@@ -185,6 +198,22 @@ async fn phone_sponsors_by_reverse_qr() {
         unreachable!()
     };
     assert_eq!((received.from_name.as_str(), received.body.as_str()), ("windows", "merci"));
+    assert!(received.to.is_empty());
+
+    // Adressé au téléphone seul : ses destinataires le disent.
+    let me: ot_core::DeviceId = a.device().device_id.parse().unwrap();
+    within(pc.send(&Content::text("pour toi"), vec![me.clone()])).await.unwrap();
+    let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
+        unreachable!()
+    };
+    assert_eq!((received.body.as_str(), received.to.clone()), ("pour toi", vec![me.to_string()]));
+
+    // Réponse du téléphone au PC seul : rangée avec ce destinataire.
+    let pc_id = pc.device_id().to_string();
+    a.send_text("reçu".into(), vec![pc_id.clone()]).await.unwrap();
+    let sent = history(a_store.clone()).unwrap();
+    assert!(sent[0].outgoing && !sent[0].pending, "{:?}", sent[0]);
+    assert_eq!((sent[0].body.as_str(), sent[0].to.clone()), ("reçu", vec![pc_id]));
 }
 
 /// Fichier en mémoire, comme le lirait Kotlin.
@@ -270,7 +299,16 @@ async fn files_both_ways() {
         }
     })
     .await;
-    assert_eq!((file.msg_id.to_string(), file.name.as_str()), (msg, "IMG_0001.jpg"));
+    assert_eq!((file.msg_id.to_string(), file.name.as_str()), (msg.clone(), "IMG_0001.jpg"));
+    // Rangé chez l'expéditeur une fois annoncé, sans état « en cours ».
+    let Event::Sent { item } = next(&a, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && !item.pending && item.msg_id == msg, "{item:?}");
+    assert_eq!((item.kind, item.body.as_str()), (ContentKind::File, "IMG_0001.jpg"));
+    let sent = item.file.clone().unwrap();
+    assert_eq!((sent.mime.as_str(), sent.size), ("image/jpeg", photo.len() as u64));
+    assert_eq!(history(a_store.clone()).unwrap()[0], item);
 
     // PC → téléphone : rangé dans l'historique, téléchargé, URI notée.
     let source = Arc::new(MemSource(photo.clone()));
@@ -307,6 +345,7 @@ fn old_history_without_files_still_reads() {
     let old = r#"[{"msg_id":"m","from_id":"d","from_name":"mac","created_at_ms":1,"kind":"text","body":"x","sensitive":false}]"#;
     let items: Vec<Received> = serde_json::from_str(old).unwrap();
     assert_eq!(items[0].file, None);
+    assert!(items[0].to.is_empty() && !items[0].outgoing && !items[0].pending);
 }
 
 #[tokio::test]
@@ -347,9 +386,9 @@ fn qr_helpers() {
 }
 
 #[test]
-fn history_keeps_the_last_fifty() {
+fn history_keeps_the_last_hundred() {
     let local = Local::new(Arc::new(TestStore::default()));
-    for i in 0..60 {
+    for i in 0..110 {
         let item = Received {
             msg_id: format!("m{i}"),
             from_id: "dev".into(),
@@ -359,10 +398,20 @@ fn history_keeps_the_last_fifty() {
             body: format!("{i}"),
             sensitive: false,
             file: None,
+            to: vec![],
+            outgoing: i % 2 == 0,
+            pending: i == 108,
         };
         local.push_history(item).unwrap();
     }
     let items = local.history().unwrap();
-    assert_eq!(items.len(), crate::local::HISTORY_LEN);
-    assert_eq!((items[0].body.as_str(), items[49].body.as_str()), ("59", "10"));
+    assert_eq!(items.len(), 100);
+    assert_eq!(crate::local::HISTORY_LEN, 100);
+    assert_eq!((items[0].body.as_str(), items[99].body.as_str()), ("109", "10"));
+    // Accusé du relais, puis échec d'un autre envoi.
+    assert!(!local.mark_sent("m108").unwrap().unwrap().pending);
+    assert_eq!(local.mark_sent("absent").unwrap(), None);
+    local.remove_history("m109").unwrap();
+    let items = local.history().unwrap();
+    assert_eq!((items.len(), items[0].body.as_str(), items[0].pending), (99, "108", false));
 }

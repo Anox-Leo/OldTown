@@ -40,6 +40,8 @@ pub struct FileInfo {
 pub struct ReceivedFile {
     pub seq: i64,
     pub file: FileInfo,
+    /// Destinataires lus dans l'enveloppe ; vide : tous les appareils.
+    pub to: Vec<DeviceId>,
 }
 
 /// Offre reçue, rangée dans le keyring avant l'acquittement : tout ce qu'il

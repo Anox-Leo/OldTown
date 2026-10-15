@@ -30,9 +30,22 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   pas par l'`Intent`. « Ouvrir » seulement pour `http(s)://`.
 - **Partage** : `share/ShareActivity` (feuille du bas : texte, ou fichiers
   `SEND`/`SEND_MULTIPLE`, URI `content://` seulement) et un raccourci Direct
-  Share par membre (`share/Shortcuts`).
+  Share par membre (`share/Shortcuts`). Destinataires : « Tous » en tête,
+  puis les appareils du plus utilisé au moins utilisé (`byUsage`, note
+  0033), raccourcis rangés de même.
+- **Conversations** (note 0033, comme l'extension) : l'accueil
+  (`ui/HomeScreen`) liste « Tous mes appareils » puis un appareil par
+  ligne, du plus récemment actif au moins récent, avec présence (relue
+  toutes les 15 s au premier plan) ; `ui/ConversationScreen` montre les
+  bulles du canal (envois à droite) et envoie dans ce canal ; une
+  notification ouvre la conversation de son canal (`EXTRA_CHANNEL`). Règles
+  pures dans `ui/Conversations.kt` (`channelOf`, `deviceKind`,
+  `avatarColor`, `conversations`, `byUsage`), recopiées de l'extension et
+  testées sous JVM : les garder identiques à `devices.ts` et `channelOf`.
+  L'historique (100 éléments) contient aussi les envois (`outgoing`,
+  `pending`), signalés par `Event.Sent` / `Event.Unsent`.
 - **Fichiers** (étape 5, notes 0027 et 0028) : envoi par le menu *Partager*
-  ou le trombone de l'écran d'accueil (sélecteur `OpenMultipleDocuments`) ;
+  ou le trombone d'une conversation (sélecteur `OpenMultipleDocuments`) ;
   les transferts tournent dans `RelayService` (actions `SEND_FILES`,
   `DOWNLOAD`), qui garde l'accès aux URI
   partagées et survit aux écrans ; `files/` : `UriSource` (lecture à un
@@ -45,7 +58,7 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   d'après Lucide), textes en français. Navigation par une pile d'écrans
   dans `MainActivity`.
 - **Tests** : unitaires JVM dans `app/src/test` (logique pure : actions,
-  partage, règles des fichiers) ; instrumentés dans `app/src/androidTest`
+  partage, règles des fichiers, conversations) ; instrumentés dans `app/src/androidTest`
   (Keystore, service, feuille de partage, écriture MediaStore). Ce qui
   touche au protocole se teste en Rust. Les tests instrumentés tournent avec
   les vraies données de l'appli : un test qui oublie ou remplace l'appareil

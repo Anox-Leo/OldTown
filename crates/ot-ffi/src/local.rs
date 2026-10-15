@@ -21,11 +21,11 @@ pub(crate) const DEVICE_KEY: &str = "device.key";
 pub(crate) const PENDING_JOIN: &str = "pending_join.json";
 /// Derniers `msg_id` vus.
 pub(crate) const SEEN: &str = "seen.json";
-/// Derniers éléments reçus.
+/// Derniers éléments reçus et envoyés.
 pub(crate) const HISTORY: &str = "history.json";
 
-/// Taille de l'historique gardé (plan de l'étape 3).
-pub const HISTORY_LEN: usize = 50;
+/// Taille de l'historique gardé (note 0033, comme l'extension).
+pub const HISTORY_LEN: usize = 100;
 
 /// Sérialise les lectures-écritures de l'historique (événements et écran).
 static HISTORY_LOCK: Mutex<()> = Mutex::new(());
@@ -149,7 +149,7 @@ impl Local {
         self.write_json(SEEN, &ids)
     }
 
-    /// Derniers éléments reçus, du plus récent au plus ancien.
+    /// Derniers éléments reçus et envoyés, du plus récent au plus ancien.
     pub fn history(&self) -> Result<Vec<Received>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         Ok(self.read_json(HISTORY)?.unwrap_or_default())
@@ -162,6 +162,26 @@ impl Local {
         items.retain(|i| i.msg_id != item.msg_id);
         items.insert(0, item);
         items.truncate(HISTORY_LEN);
+        self.write_json(HISTORY, &items)
+    }
+
+    /// Envoi accepté par le relais : l'élément n'est plus en cours.
+    /// Renvoie l'élément mis à jour, `None` s'il a quitté l'historique.
+    pub fn mark_sent(&self, msg_id: &str) -> Result<Option<Received>, OtError> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        let Some(item) = items.iter_mut().find(|i| i.msg_id == msg_id) else { return Ok(None) };
+        item.pending = false;
+        let updated = item.clone();
+        self.write_json(HISTORY, &items)?;
+        Ok(Some(updated))
+    }
+
+    /// Retire un élément (envoi en échec).
+    pub fn remove_history(&self, msg_id: &str) -> Result<(), OtError> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        items.retain(|i| i.msg_id != msg_id);
         self.write_json(HISTORY, &items)
     }
 
@@ -294,7 +314,7 @@ pub fn set_server_url(store: Arc<dyn SecretStore>, url: String) -> Result<Device
     Ok(device)
 }
 
-/// Derniers éléments reçus, du plus récent au plus ancien.
+/// Derniers éléments reçus et envoyés, du plus récent au plus ancien.
 #[uniffi::export]
 pub fn history(store: Arc<dyn SecretStore>) -> Result<Vec<Received>, OtError> {
     Local::new(store).history()
