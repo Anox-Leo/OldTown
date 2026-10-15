@@ -22,6 +22,29 @@ const ICONS = {
     'M9 2h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
     'M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2',
   ],
+  'arrow-left': ['m12 19-7-7 7-7', 'M19 12H5'],
+  // Avatars des appareils (`devices.ts`).
+  phone: ['M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', 'M12 18h.01'],
+  laptop: [
+    'M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z',
+    'M20.054 15.987H3.946',
+  ],
+  desktop: [
+    'M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
+    'M8 21h8',
+    'M12 17v4',
+  ],
+  browser: [
+    'M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z',
+    'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20',
+    'M2 12h20',
+  ],
+  group: [
+    'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',
+    'M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0z',
+    'M22 21v-2a4 4 0 0 0-3-3.87',
+    'M16 3.13a4 4 0 0 1 0 7.75',
+  ],
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -31,6 +54,8 @@ export type IconName = keyof typeof ICONS;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <svg
+      [attr.width]="size()"
+      [attr.height]="size()"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -48,13 +73,10 @@ export type IconName = keyof typeof ICONS;
     :host {
       display: inline-flex;
     }
-    svg {
-      width: 18px;
-      height: 18px;
-    }
   `,
 })
 export class IconComponent {
   readonly name = input.required<IconName>();
+  readonly size = input(18);
   protected readonly paths = computed(() => ICONS[this.name()]);
 }

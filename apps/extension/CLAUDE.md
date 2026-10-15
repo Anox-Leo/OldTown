@@ -45,9 +45,15 @@ l'interface.
   cours (`outgoing.json`, des noms) sont rangés de la même façon.
   En clair dans `chrome.storage.local` : seulement `device` (id, nom, URL),
   `recipient`, `outbox` (enveloppes chiffrées) et `seen` (`msg_id`).
-- **Popup = conversation** (note 0030) : canaux « Tous » et un par appareil
-  (`channelOf`), bulles envoyées à droite et reçues à gauche, zone d'envoi en
-  bas qui envoie dans le canal ouvert (canal ouvert = `recipient`).
+- **Popup = conversations** (notes 0030 et 0031) : accueil (`home.ts`) en
+  liste, « Tous mes appareils » puis un appareil par ligne (plus récent
+  d'abord), avatar (type deviné au nom, couleur tirée de l'id :
+  `devices.ts`) et dernier message ; un clic ouvre la conversation
+  (`chat.ts`, canal ouvert = `recipient`) : flèche de retour, présence
+  d'après `devices` (toutes les 15 s), bulles envoyées à droite et reçues à
+  gauche, zone d'envoi en bas. Rangement des éléments : `channelOf`.
+  Popup ouverte pour un élément reçu (d'office ou par sa notification) :
+  sa conversation directement (push `open`, note 0032).
   L'historique (100 éléments) garde aussi les envois, « en cours » jusqu'à
   `accepted` ; les destinataires d'un reçu viennent de l'enveloppe.
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
