@@ -43,3 +43,6 @@ WhatsApp : la liste des conversations, puis la conversation ouverte.
 - Un nom d'appareil trompeur donne un mauvais pictogramme ; sans
   conséquence autre que visuelle.
 - Popup ouverte, une requête `devices` toutes les 15 s vers le relais.
+
+**Suite.** Même travail pour l'appli Android :
+[`plan-android-conversations.md`](../plan-android-conversations.md).
