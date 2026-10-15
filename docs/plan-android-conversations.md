@@ -1,5 +1,10 @@
 # Plan : conversations à la WhatsApp sur Android
 
+**État (15 octobre 2026)** : **réalisé** (A1 à A6), avec le tri par usage
+de la feuille de partage ; écarts dans la note
+[0033](decisions/0033-android-conversations-partage-par-usage.md). Reste
+l'essai sur le téléphone (`actions-manuelles.md`).
+
 Reprise sur l'appli Android de l'accueil en liste de conversations de
 l'extension (notes [0030](decisions/0030-extension-conversation-par-canal.md)
 et [0031](decisions/0031-extension-accueil-liste-de-conversations.md)). Plan
@@ -52,7 +57,7 @@ est déjà en clair dans l'enveloppe.
 
 ## Tâches
 
-### A1. Destinataires dans les éléments reçus (Rust)
+### ✅ A1. Destinataires dans les éléments reçus (Rust)
 
 - **Fichiers** : `crates/ot-core/src/types.rs`, `crates/ot-core/src/secure.rs`,
   `crates/ot-ffi/src/types.rs`, `crates/ot-ffi/src/client.rs`,
@@ -69,7 +74,7 @@ est déjà en clair dans l'enveloppe.
 - **Fini quand** : `cargo test --workspace` passe ; les golden et les
   vecteurs ne bougent pas.
 
-### A2. Envois dans l'historique (Rust)
+### ✅ A2. Envois dans l'historique (Rust)
 
 - **Fichiers** : `crates/ot-ffi/src/client.rs`, `crates/ot-ffi/src/local.rs`,
   `crates/ot-ffi/src/tests.rs`.
@@ -88,7 +93,7 @@ est déjà en clair dans l'enveloppe.
 - **Fini quand** : tests Rust verts ; décision notée (note 0033) : envois
   dans l'historique Android, nouveaux champs, taille 100.
 
-### A3. Règles pures en Kotlin
+### ✅ A3. Règles pures en Kotlin
 
 - **Fichiers** : `apps/android/app/src/main/kotlin/dev/oldtown/android/ui/Conversations.kt`
   (nouveau), `apps/android/app/src/test/kotlin/dev/oldtown/android/ConversationsTest.kt`.
@@ -108,7 +113,7 @@ est déjà en clair dans l'enveloppe.
   côtés).
 - **Fini quand** : `./gradlew test` passe.
 
-### A4. Accueil en liste
+### ✅ A4. Accueil en liste
 
 - **Fichiers** : `ui/HomeScreen.kt`, `ui/components/Icons.kt`,
   `ui/components/Components.kt` (composant `Avatar`), `ui/MainActivity.kt`.
@@ -129,7 +134,7 @@ est déjà en clair dans l'enveloppe.
 - **Fini quand** : l'accueil ressemble à celui de l'extension, en thème
   sombre et clair.
 
-### A5. Écran de conversation
+### ✅ A5. Écran de conversation
 
 - **Fichiers** : `ui/ConversationScreen.kt` (nouveau), `ui/MainActivity.kt`,
   `ui/HomeScreen.kt` (en sortir `ItemSheet`, `relativeTime` et le
@@ -147,7 +152,7 @@ est déjà en clair dans l'enveloppe.
   appareil l'affiche à droite avec `to == [id]`.
 - **Fini quand** : essai sur le téléphone contre le relais, ci-dessous.
 
-### A6. Notification → conversation
+### ✅ A6. Notification → conversation
 
 - **Fichiers** : `notify/Notifications.kt`, `ui/MainActivity.kt`.
 - **Faire** : toucher la notification d'un message ouvre l'appli sur la

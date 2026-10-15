@@ -133,7 +133,7 @@ class RelayService : LifecycleService() {
         RelayHub.setGroup(started.group())
         RelayHub.setConnection(Connection.Connecting)
         RelayHub.attach(started)
-        Shortcuts.update(this, RelayHub.state.value.group)
+        Shortcuts.update(this, RelayHub.state.value.group, RelayHub.state.value.history)
         render()
 
         var failures = 0
@@ -157,10 +157,13 @@ class RelayService : LifecycleService() {
                         Notifications.showMessage(this, event.received)
                     }
                 }
+                // Envoi rangé, accepté ou en échec (note 0033) : jamais notifié.
+                is Event.Sent -> RelayHub.upsert(event.item)
+                is Event.Unsent -> RelayHub.remove(event.msgId)
                 is Event.GroupChanged -> {
                     val group = started.group()
                     RelayHub.setGroup(group)
-                    Shortcuts.update(this, group)
+                    Shortcuts.update(this, group, RelayHub.state.value.history)
                 }
                 is Event.PairingCompleted -> RelayHub.notify(Notice.PairingCompleted(event.name))
                 is Event.JoinFailed -> RelayHub.notify(Notice.JoinFailed(event.message))

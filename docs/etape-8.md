@@ -22,7 +22,8 @@ plan détaillé au moment de le lancer.
   Décider au démarrage si les métadonnées (date, type, expéditeur) sont
   chiffrées aussi.
 - Rétention réglable (par défaut 90 jours), contenus `sensitive` jamais
-  enregistrés, effacement complet en un geste.
+  enregistrés (aucun marquage n'existe : l'étape 6 est abandonnée, note
+  0034), effacement complet en un geste.
 - Écrans « Historique » sur Android et dans l'extension, recherche, renvoi d'un élément.
 - Critère de fin : retrouver un lien reçu il y a un mois en tapant un mot ;
   les contenus de la base copiée sur une autre machine sont illisibles.

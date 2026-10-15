@@ -213,8 +213,21 @@ impl Client {
         self.request(|tx| Command::SendContent(content.clone(), to, tx)).await
     }
 
-    /// Envoie une enveloppe déjà construite, telle quelle. Réutiliser le même
-    /// `msg_id` est sans effet côté serveur.
+    /// Chiffre et signe un contenu comme [`Client::send`], sans l'envoyer :
+    /// l'appelant connaît ainsi le `msg_id` avant l'envoi (historique des
+    /// envois, note 0033), puis passe l'enveloppe à [`Client::send_envelope`].
+    pub async fn seal(
+        &self,
+        content: &Content,
+        to: Vec<DeviceId>,
+    ) -> Result<Envelope, ClientError> {
+        let content = content.clone();
+        self.with_secure(move |s| s.seal_content(&content, to)).await
+    }
+
+    /// Envoie une enveloppe déjà construite (par [`Client::seal`], ou à la
+    /// main dans les tests), telle quelle. Réutiliser le même `msg_id` est
+    /// sans effet côté serveur.
     pub async fn send_envelope(&self, env: Envelope) -> Result<Accepted, ClientError> {
         self.request(|tx| Command::Send(env, tx)).await
     }
@@ -241,6 +254,18 @@ impl Client {
         source: Arc<dyn ChunkSource>,
         progress: Arc<dyn Progress>,
     ) -> Result<Accepted, ClientError> {
+        self.send_file_info(file, source, progress).await.map(|(accepted, _)| accepted)
+    }
+
+    /// Comme [`Client::send_file`], et décrit en plus le fichier annoncé
+    /// (sans clé), pour le ranger dans l'historique des envois (note 0033).
+    /// `created_at` : l'heure de l'annonce acceptée.
+    pub async fn send_file_info(
+        &self,
+        file: OutgoingFile,
+        source: Arc<dyn ChunkSource>,
+        progress: Arc<dyn Progress>,
+    ) -> Result<(Accepted, FileInfo), ClientError> {
         let t = &self.transfers;
         let size = source.size();
         let now = OffsetDateTime::now_utc();
@@ -292,7 +317,16 @@ impl Client {
         let sid = pending.source_id;
         self.with_secure(move |s| s.forget_upload(&sid)).await?;
         tracing::info!(blob = %pending.meta.blob_id, "fichier envoyé");
-        Ok(accepted)
+        let info = FileInfo {
+            msg_id: accepted.msg_id,
+            from: self.device_id.clone(),
+            created_at: OffsetDateTime::now_utc(),
+            blob_id: pending.meta.blob_id.clone(),
+            name: pending.meta.name.clone(),
+            mime: pending.meta.mime.clone(),
+            size: pending.meta.size,
+        };
+        Ok((accepted, info))
     }
 
     /// Abandonne le dépôt en cours de cette source et libère la place sur

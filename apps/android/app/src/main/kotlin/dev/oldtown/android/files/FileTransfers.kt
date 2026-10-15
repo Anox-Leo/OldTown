@@ -72,7 +72,7 @@ object FileTransfers {
         try {
             val file = describe(context, uri)
             name = file.name
-            val start = Transfer(id, name, upload = true, done = 0, total = file.size.coerceAtLeast(0))
+            val start = Transfer(id, name, upload = true, done = 0, total = file.size.coerceAtLeast(0), to = to)
             RelayHub.setTransfer(start)
             UriSource.open(context, file).use { source ->
                 client.sendFile(source, id, file.name, file.mime, to, Progress(context, start))
@@ -81,12 +81,12 @@ object FileTransfers {
             Notifications.transferEnd(context, id)
             release(context, uri)
         } catch (e: OtException) {
-            failed(context, Transfer(id, name, upload = true, 0, 0), e.message)
+            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), e.message)
         } catch (e: IOException) {
-            failed(context, Transfer(id, name, upload = true, 0, 0), e.message)
+            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), e.message)
         } catch (e: SecurityException) {
             // Accès à l'URI retiré (appli tuée, partage expiré) : il faut repartager.
-            failed(context, Transfer(id, name, upload = true, 0, 0), "fichier plus accessible : le partager de nouveau")
+            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), "fichier plus accessible : le partager de nouveau")
         }
     }
 

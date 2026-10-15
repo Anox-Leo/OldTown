@@ -8,14 +8,18 @@ Pont UniFFI (mode macros, sans UDL) entre `ot-core` et l'appli Android
 `SecretStore`, `FileSource`, `FileSink` et `TransferListener`, implémentés en
 Kotlin. Fichiers (étape 5) : `OtClient::send_file`, `download`,
 `cancel_upload` ; un fichier reçu est un élément d'historique de type `File`
-(`Received::file`, son URI une fois enregistré).
+(`Received::file`, son URI une fois enregistré). Envois (note 0033) :
+`send_text` et `send_file` rangent l'élément (`outgoing`, `pending` jusqu'à
+l'accusé) et le signalent par `Event::Sent` (`Event::Unsent` s'il échoue) ;
+chaque élément porte ses destinataires (`to`, vide : tous).
 
 - Types exposés simples (`types.rs`) : chaînes, entiers, enregistrements.
   Jamais de clé (pas même celle d'un fichier) ; seuls `Invitation` et
   `QrKind::Join` portent un code d'appairage, que l'appli affiche.
 - État local rangé dans le `SecretStore` (`local.rs`) : `device.json`,
   `device.key` (même format que la CLI), `pending_join.json`, `seen.json`,
-  `history.json` (50 derniers), plus les noms du `StoreKeyring`.
+  `history.json` (100 derniers, reçus et envoyés, note 0033), plus les noms
+  du `StoreKeyring`.
 - Runtime tokio interne (`RUNTIME`) : toute fonction `async` exportée passe
   par `on_runtime`. Pas de `block_on` dans du code appelé par Kotlin.
 - Pas de `[lints] workspace = true` : le code généré par UniFFI contient de

@@ -1,6 +1,7 @@
 package dev.oldtown.android.ui
 
 import android.Manifest
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -39,12 +40,32 @@ import dev.oldtown.android.ui.components.BannerKind
 import dev.oldtown.android.ui.theme.OldTownTheme
 import dev.oldtown.android.ui.theme.Ot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) openFrom(intent)
         setContent { OldTownTheme { App() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openFrom(intent)
+    }
+
+    /** Notification d'un message : sa conversation (le canal seul passe par l'`Intent`). */
+    private fun openFrom(intent: Intent) {
+        intent.getStringExtra(EXTRA_CHANNEL)?.let { openChannel.value = it }
+    }
+
+    companion object {
+        /** Canal à ouvrir (note 0033), mis par une notification. */
+        const val EXTRA_CHANNEL = "dev.oldtown.android.extra.CHANNEL"
+
+        /** Conversation demandée par une notification, prise en charge par l'écran. */
+        internal val openChannel = MutableStateFlow<String?>(null)
     }
 
     // Écran visible : les messages reçus vont dans la liste, sans notification (T8b).
@@ -66,6 +87,8 @@ sealed interface Screen {
     data object Settings : Screen
     data object Sponsor : Screen
     data object ShowCode : Screen
+    /** Conversation d'un canal : `""` pour « Tous », sinon un appareil. */
+    data class Conversation(val channel: String) : Screen
 }
 
 @Composable
@@ -80,6 +103,15 @@ private fun App() {
         RelayHub.ensureStarted(context)
     }
     LaunchedEffect(Unit) { RelayHub.notices.collect { notice = it } }
+    // Notification touchée : sa conversation, par-dessus l'accueil.
+    LaunchedEffect(Unit) {
+        MainActivity.openChannel.collect { channel ->
+            if (channel == null) return@collect
+            stack.clear()
+            stack.add(Screen.Conversation(channel))
+            MainActivity.openChannel.value = null
+        }
+    }
     LaunchedEffect(notice) {
         if (notice != null) {
             delay(4_000)
@@ -113,6 +145,7 @@ private fun App() {
                 Screen.Settings -> SettingsScreen(hub, onBack = pop, onForgotten = { stack.clear() })
                 Screen.Sponsor -> SponsorScreen(onBack = pop)
                 Screen.ShowCode -> ShowCodeScreen(onBack = pop)
+                is Screen.Conversation -> ConversationScreen(hub, screen.channel, onBack = pop)
             }
         }
         notice?.let { n ->

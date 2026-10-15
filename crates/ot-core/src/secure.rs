@@ -629,6 +629,7 @@ impl Secure {
                     seq,
                     msg_id: env.msg_id,
                     from: env.from.clone(),
+                    to: env.to.clone(),
                     created_at: env.created_at,
                     content,
                 })));
@@ -693,7 +694,7 @@ impl Secure {
         let mut files = self.keyring.load_files().map_err(|e| Reject::Reason(e.0))?;
         add_offer(&mut files, stored, now);
         self.keyring.save_files(&files).map_err(|e| Reject::Reason(e.0))?;
-        fx.push(Effect::Emit(Event::File(ReceivedFile { seq, file })));
+        fx.push(Effect::Emit(Event::File(ReceivedFile { seq, file, to: env.to.clone() })));
         Ok(Handled::Done)
     }
 

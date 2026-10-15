@@ -2,14 +2,14 @@
 
 **Recommandation : construire ton propre système autour d'un serveur relais sur le laptop Ubuntu, qui ne voit que des données chiffrées de bout en bout, et d'un cœur partagé en Rust (protocole et chiffrement) réutilisé par l'appli Android et l'extension Chrome (en WebAssembly).** Le laptop suffit largement comme serveur ; Tailscale le rend joignable de partout sans ouvrir de port, et un VPS n'est utile que plus tard.
 
-Le vrai travail est côté clients : chaque OS a ses propres règles sur le presse-papiers et le partage. La feuille de route avance par jalons utilisables, du simple envoi de texte au presse-papiers live.
+Le vrai travail est côté clients : chaque OS a ses propres règles sur le presse-papiers et le partage. La feuille de route avance par jalons utilisables, du simple envoi de texte aux fichiers volumineux, puis vers un système autonome prêt à publier.
 
 ## Besoins
 
 - **Serveur** : laptop Ubuntu, toujours allumé et connecté, à la maison.
 - **Clients** : téléphone Android 13, Mac M3, PC Windows 10, plus un navigateur sur chacun.
 - **Contenus** : texte, liens, fichiers (documents personnels, potentiellement volumineux).
-- **Intégration** : menu Partager d'Android, presse-papiers synchronisé en direct sur les ordinateurs, extension navigateur.
+- **Intégration** : menu Partager d'Android, extension navigateur, presse-papiers envoyé d'un geste (pas de synchronisation automatique, notes 0019 et 0034).
 - **Portée** : à la maison et à distance (4G, autre Wi-Fi).
 - **Sécurité** : chiffrement de bout en bout, le serveur ne voit jamais le contenu en clair.
 - **Projet** : système maison, adaptable finement, développé sur la durée.
@@ -45,6 +45,8 @@ Android est la seule plateforme où le presse-papiers ne peut pas être lu autom
 | Windows 10 | Entrée « Envoyer vers » ou menu contextuel, glisser sur l'icône | Notification toast, écriture dans le presse-papiers | Événement natif `AddClipboardFormatListener` | Ignorer les formats `ExcludeClipboardContentFromMonitorProcessing` posés par les gestionnaires de mots de passe |
 | Ordinateurs (extension Chrome) | Menu contextuel (page, lien, sélection, image), popup, raccourci | Notification Chrome, popup avec les derniers éléments reçus | Envoi sur un geste, écriture à la réception (note 0019) | Réception seulement quand Chrome tourne ; service worker arrêté après 30 s d'inactivité |
 | Ubuntu (si le laptop sert aussi de client) | GSConnect montre la voie : extension GNOME Shell | Notification | Sous GNOME Wayland, une appli ordinaire ne peut pas surveiller le presse-papiers en arrière-plan (à confirmer sur ta version) : passer par une extension GNOME ou une session X11 | Le serveur seul n'en a pas besoin |
+
+Sans appli desktop (note 0017) ni étape presse-papiers (note 0034), les lignes macOS, Windows et Ubuntu restent une référence pour une suite éventuelle ; seules les lignes Android et extension Chrome sont construites.
 
 Pour éviter les boucles, chaque élément porte un identifiant : un client qui écrit un contenu reçu ne le renvoie pas quand il le détecte.
 
@@ -93,12 +95,13 @@ Chaque jalon donne un outil utilisable au quotidien, ce qui te permet d'ajuster 
 | Jalon | À construire | Ce que tu sais faire à la fin |
 | --- | --- | --- |
 | [1. Fondations](etape-1.md) (terminé) | Tailscale, serveur relais minimal (WebSocket + SQLite), CLI de test, cœur Rust avec tests | Envoyer un texte d'un terminal à un autre |
-| [2. Chiffrement et appairage](etape-2.md) | Clés d'échange, clé de groupe et rotation, appairage par code, relais aveugle | Le serveur ne voit plus rien en clair |
-| [3. Android : partage](etape-3.md) | Appli Kotlin, cible de partage, notifications, service de premier plan, appairage QR dans les deux sens, `wss` | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
-| [4. Extension Chrome](etape-4.md) | Extension autonome : crypto en WebAssembly, protocole en TypeScript, menus contextuels, popup, notifications | Échanger avec le téléphone depuis n'importe quel ordinateur qui a Chrome |
-| [5. Fichiers](etape-5.md) | Envoi par morceaux chiffrés, reprise, durée de vie sur le serveur | Envoyer des documents et des photos volumineux |
-| [6. Presse-papiers](etape-6.md) | Contenu `clip`, images, écriture à la réception, marquage sensible ; jamais de surveillance automatique | Envoyer et recevoir le presse-papiers en un geste |
+| [2. Chiffrement et appairage](etape-2.md) (terminé) | Clés d'échange, clé de groupe et rotation, appairage par code, relais aveugle | Le serveur ne voit plus rien en clair |
+| [3. Android : partage](etape-3.md) (terminé) | Appli Kotlin, cible de partage, notifications, service de premier plan, appairage QR dans les deux sens, `wss` | Partager un lien ou un texte depuis n'importe quelle appli du téléphone |
+| [4. Extension Chrome](etape-4.md) (terminé) | Extension autonome : crypto en WebAssembly, protocole en TypeScript, menus contextuels, popup, notifications | Échanger avec le téléphone depuis n'importe quel ordinateur qui a Chrome |
+| [5. Fichiers](etape-5.md) (terminé) | Envoi par morceaux chiffrés, reprise, durée de vie sur le serveur | Envoyer des documents et des photos volumineux |
 | [8. Confort et durcissement](etape-8.md) | Historique chiffré et recherche, UnifiedPush avec ntfy, révocation sans SSH, sauvegardes, Headscale, publication | Un système autonome, sans dépendance externe |
+
+Deux jalons ont été supprimés, sans réattribuer leur numéro : le 6, presse-papiers ([note 0034](decisions/0034-etape-6-abandonnee.md) : l'envoi du presse-papiers d'un geste existe déjà dans l'extension), et le 7, extension navigateur, devenu le jalon 4 ([note 0017](decisions/0017-extension-chrome-sans-appli-desktop.md)). Entre les jalons 5 et 8, l'appli Android a repris l'accueil en conversations de l'extension ([plan](plan-android-conversations.md), [note 0033](decisions/0033-android-conversations-partage-par-usage.md)). Le jalon 8 conclut le projet.
 
 Dès les jalons 1 à 3, OldTown remplace déjà l'usage principal de Pushbullet.
 
