@@ -9,6 +9,7 @@ class FakeBackground {
   readonly state = signal<StateView | undefined>(undefined);
   readonly items = signal<Item[]>([]);
   readonly error = signal<string | undefined>(undefined);
+  readonly openChat = signal<string | undefined>(undefined);
   connect(): void {
     // Pas de service worker sous jsdom.
   }
@@ -372,5 +373,47 @@ describe('App (popup)', () => {
     fixture.detectChanges();
     openChat(fixture, 'Tous mes appareils');
     expect(el.querySelector('header .presence')?.textContent?.trim()).toBe('1 en ligne');
+  });
+
+  it('ouverte pour un élément reçu : directement sa conversation', () => {
+    const bg = new FakeBackground();
+    const member = (id: string, name: string) => ({
+      device_id: id,
+      name,
+      sign_fingerprint: '',
+      exchange_fingerprint: '',
+      added_epoch: 1,
+    });
+    bg.state.set({
+      version: '0.1.0',
+      phase: 'ready',
+      connection: 'offline',
+      recipient: '',
+      pendingSends: 0,
+      transfers: [],
+      relayAccess: true,
+      device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
+      group: {
+        epoch: 1,
+        key_fingerprint: '',
+        roster_version: 1,
+        members: [member('dev_me', 'Chrome Mac'), member('dev_tel', 'Téléphone')],
+      },
+    });
+    bg.openChat.set('dev_tel');
+    TestBed.configureTestingModule({ providers: [{ provide: BackgroundService, useValue: bg }] });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Téléphone');
+    expect(bg.openChat()).toBeUndefined();
+    // La flèche ramène à l'accueil, et y reste.
+    el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
+    fixture.detectChanges();
+    expect(el.querySelector('.chats')).toBeTruthy();
+    // Appareil sorti du groupe : « Tous ».
+    bg.openChat.set('dev_parti');
+    fixture.detectChanges();
+    expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Tous mes appareils');
   });
 });

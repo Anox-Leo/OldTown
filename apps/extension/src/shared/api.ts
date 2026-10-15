@@ -140,8 +140,15 @@ export type Request =
 
 export type Reply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 
-/** Messages poussés par le service worker vers la popup ouverte (port). */
-export type Push = { type: 'state'; state: StateView } | { type: 'item'; item: Item };
+/**
+ * Messages poussés par le service worker vers la popup ouverte (port).
+ * `open` : la popup vient de s'ouvrir pour un élément reçu (popup ouverte
+ * d'office ou clic sur sa notification), elle montre sa conversation.
+ */
+export type Push =
+  | { type: 'state'; state: StateView }
+  | { type: 'item'; item: Item }
+  | { type: 'open'; channel: string };
 
 /** Nom du port ouvert par la popup : tant qu'il est ouvert, pas de notification. */
 export const POPUP_PORT = 'popup';

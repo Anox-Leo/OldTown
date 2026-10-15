@@ -4,7 +4,7 @@ Reprise sur l'appli Android de l'accueil en liste de conversations de
 l'extension (notes [0030](decisions/0030-extension-conversation-par-canal.md)
 et [0031](decisions/0031-extension-accueil-liste-de-conversations.md)). Plan
 de cadrage : le relire contre le code avant de coder, et noter tout écart
-dans une note de décision (la 0032 a priori). Lire aussi
+dans une note de décision (la 0033 a priori). Lire aussi
 `apps/android/CLAUDE.md`.
 
 ## But
@@ -85,7 +85,7 @@ est déjà en clair dans l'enveloppe.
   Ne jamais notifier un élément envoyé.
 - **Tests** : un texte envoyé apparaît dans `history()`, `pending` puis
   accepté ; un fichier envoyé apparaît avec `outgoing` ; la limite de 100.
-- **Fini quand** : tests Rust verts ; décision notée (note 0032) : envois
+- **Fini quand** : tests Rust verts ; décision notée (note 0033) : envois
   dans l'historique Android, nouveaux champs, taille 100.
 
 ### A3. Règles pures en Kotlin
@@ -151,7 +151,8 @@ est déjà en clair dans l'enveloppe.
 
 - **Fichiers** : `notify/Notifications.kt`, `ui/MainActivity.kt`.
 - **Faire** : toucher la notification d'un message ouvre l'appli sur la
-  conversation de son canal (extra dans l'`Intent`, pas le contenu).
+  conversation de son canal (extra dans l'`Intent`, pas le contenu), comme
+  l'extension (note 0032).
 - **Fini quand** : essai manuel.
 
 ## Fin
@@ -164,6 +165,6 @@ est déjà en clair dans l'enveloppe.
   conversation du navigateur côté extension ; les couleurs d'un même
   appareil sont identiques des deux côtés.
 - `apps/android/CLAUDE.md` mis à jour (écran d'accueil, conversation,
-  `Conversations.kt`), note 0032 ajoutée à `docs/decisions/README.md`.
+  `Conversations.kt`), note 0033 ajoutée à `docs/decisions/README.md`.
 - Hors périmètre : non-lus et badges, recherche, suppression d'un message,
   épinglage.

@@ -52,6 +52,8 @@ l'interface.
   (`chat.ts`, canal ouvert = `recipient`) : flèche de retour, présence
   d'après `devices` (toutes les 15 s), bulles envoyées à droite et reçues à
   gauche, zone d'envoi en bas. Rangement des éléments : `channelOf`.
+  Popup ouverte pour un élément reçu (d'office ou par sa notification) :
+  sa conversation directement (push `open`, note 0032).
   L'historique (100 éléments) garde aussi les envois, « en cours » jusqu'à
   `accepted` ; les destinataires d'un reçu viennent de l'enveloppe.
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;

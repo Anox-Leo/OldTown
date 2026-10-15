@@ -5,7 +5,7 @@
 
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
-import { POPUP_PORT } from '../shared/api';
+import { POPUP_PORT, channelOf } from '../shared/api';
 import { humanSize } from '../shared/format';
 import * as opfs from '../shared/opfs';
 import { relayOrigin } from '../shared/origins';
@@ -25,6 +25,8 @@ const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
  */
 const AUTO_OPEN_MAX_AGE = 2 * 60_000;
 const NOTIFICATION_COPY = 0;
+/** Délai pour que la popup ouverte pour un élément le réclame (note 0032). */
+const PENDING_CHAT_MAX_AGE = 10_000;
 
 function log(message: string, error?: unknown): void {
   // Jamais de contenu ni de clé : seulement le message de l'erreur.
@@ -51,6 +53,12 @@ const files: FileStorage = {
 
 let opening: Promise<Engine> | undefined;
 const popups = new Set<chrome.runtime.Port>();
+/**
+ * Conversation à montrer dans la prochaine popup (note 0032) : posé juste
+ * avant de l'ouvrir pour un élément reçu, consommé à sa connexion. En
+ * mémoire seulement : la popup s'ouvre dans la foulée.
+ */
+let pendingChat: { channel: string; until: number } | undefined;
 
 /** Ouvre le moteur une seule fois par vie du service worker. */
 function engine(): Promise<Engine> {
@@ -154,10 +162,35 @@ chrome.runtime.onConnect.addListener((port) => {
   }
   popups.add(port);
   port.onDisconnect.addListener(() => popups.delete(port));
+  // Seule la popup (ou sa fenêtre de repli) réclame la conversation, pas
+  // les réglages ouverts dans un onglet.
+  const chat = isPopupPage(port.sender) ? takePendingChat() : undefined;
   void engine()
-    .then((e) => port.postMessage({ type: 'state', state: e.state() } satisfies Push))
+    .then((e) => {
+      port.postMessage({ type: 'state', state: e.state() } satisfies Push);
+      if (chat !== undefined) port.postMessage({ type: 'open', channel: chat } satisfies Push);
+    })
     .catch((err: unknown) => log('ouverture de la popup', err));
 });
+
+function isPopupPage(sender?: chrome.runtime.MessageSender): boolean {
+  if (!sender?.url) return false;
+  return new URL(sender.url).pathname === '/index.html';
+}
+
+function takePendingChat(): string | undefined {
+  const chat = pendingChat;
+  pendingChat = undefined;
+  return chat && Date.now() < chat.until ? chat.channel : undefined;
+}
+
+/** Retient la conversation d'un élément reçu, pour la popup qui va s'ouvrir. */
+function rememberChat(e: Engine, item: Item): void {
+  pendingChat = {
+    channel: channelOf(item, e.state().device?.id),
+    until: Date.now() + PENDING_CHAT_MAX_AGE,
+  };
+}
 
 /**
  * Seules les pages de cette extension (popup, réglages ouverts dans un
@@ -406,7 +439,7 @@ async function openPopup(windowId?: number): Promise<boolean> {
  * navigateur au premier plan, un lien s'ouvre dans un onglet et un texte
  * ouvre la popup, sans notification ; sinon, notification.
  */
-async function deliver(item: Item): Promise<void> {
+async function deliver(e: Engine, item: Item): Promise<void> {
   if (popups.size > 0) return;
   const recent = Date.now() - Date.parse(item.createdAt) < AUTO_OPEN_MAX_AGE;
   const win = recent ? await focusedWindow() : undefined;
@@ -415,6 +448,7 @@ async function deliver(item: Item): Promise<void> {
       await chrome.tabs.create({ url: item.body, active: true, windowId: win.id });
       return;
     }
+    rememberChat(e, item);
     if (await openPopup(win.id)) return;
   }
   await notify(item);
@@ -433,7 +467,7 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
   if (item.outgoing) return;
   const file = item.file;
   if (!file) {
-    await deliver(item);
+    await deliver(e, item);
     return;
   }
   if (file.cached || file.error || popups.size > 0) return;
@@ -441,6 +475,7 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
   const win = recent ? await focusedWindow() : undefined;
   if (win && e.state().relayAccess) {
     if (file.size > AUTO_CACHE_MAX) {
+      rememberChat(e, item);
       if (await openPopup(win.id)) return;
     } else if (isViewable(file.mime)) {
       await chrome.tabs.create({
@@ -488,11 +523,12 @@ async function notify(item: Item): Promise<void> {
  * un onglet, ou téléchargé par un onglet en arrière-plan, que le navigateur
  * referme une fois le téléchargement lancé.
  */
-async function openFileItem(item: Item): Promise<void> {
+async function openFileItem(e: Engine, item: Item): Promise<void> {
   const file = item.file;
   if (!file) return;
   const action = fileAction(item);
   if (action === 'popup') {
+    rememberChat(e, item);
     await showExtension();
     return;
   }
@@ -511,9 +547,10 @@ chrome.notifications.onClicked.addListener((id) => {
       return;
     }
     if (item?.file) {
-      await openFileItem(item);
+      await openFileItem(e, item);
       return;
     }
+    if (item) rememberChat(e, item);
     await showExtension();
   })().catch((e: unknown) => log('notification', e));
 });

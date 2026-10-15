@@ -5,6 +5,7 @@ import {
   effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 
 import type { Item, RelayDevice, StateView } from '../shared/api';
@@ -198,6 +199,18 @@ export class HomeComponent {
   protected readonly presence = signal<ReadonlyMap<string, boolean> | undefined>(undefined);
 
   constructor() {
+    // Popup ouverte pour un élément reçu (note 0032) : sa conversation
+    // directement, « Tous » si l'appareil n'est plus dans le groupe.
+    effect(() => {
+      const channel = this.bg.openChat();
+      if (channel === undefined) return;
+      untracked(() => {
+        const list = this.list();
+        const c = list.find((x) => x.id === channel) ?? list[0];
+        if (c) this.select(c);
+        this.bg.openChat.set(undefined);
+      });
+    });
     // Présence : à la connexion, puis régulièrement ; inconnue hors ligne.
     effect((onCleanup) => {
       if (!this.online()) {
