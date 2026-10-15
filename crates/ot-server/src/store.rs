@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use ot_proto::{BlobId, DeviceId};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Row, SqlitePool};
+use sqlx::{ConnectOptions, Connection, Row, SqlitePool};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -137,8 +137,19 @@ impl Store {
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal);
+        // Le mode WAL est enregistré dans le fichier : il se règle une fois,
+        // ici, sur une connexion seule. Demandé à chaque connexion du pool, il
+        // pouvait échouer aussitôt en SQLITE_BUSY quand le pool en ouvrait une
+        // pendant une écriture : changer de journal demande un verrou exclusif
+        // que busy_timeout ne fait pas attendre (vu sous Windows en CI).
+        let conn = opts
+            .clone()
+            .busy_timeout(Duration::from_secs(5))
+            .journal_mode(SqliteJournalMode::Wal)
+            .connect()
+            .await?;
+        conn.close().await?;
         Self::connect(opts, 4).await
     }
 
