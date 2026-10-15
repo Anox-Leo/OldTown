@@ -38,3 +38,4 @@ effacée : on la marque « Remplacée par NNNN ».
 | [0028](0028-etape-5-realisation.md) | Étape 5 : reprise du retrait limitée à l'appli ouverte, géométrie chiffrée, état des fichiers sérialisé, choix de la CLI, de l'extension et d'Android | 5 | Acceptée |
 | [0029](0029-extension-fichiers-ouverts-par-le-navigateur.md) | Extension : fichiers reçus ouverts par le navigateur, téléchargement sur un geste, trombone qui ouvre le sélecteur (D27) | 5 | Acceptée |
 | [0030](0030-extension-conversation-par-canal.md) | Extension : la popup devient une conversation par canal (« Tous », un par appareil) | 5 | Acceptée |
+| [0031](0031-extension-accueil-liste-de-conversations.md) | Extension : accueil en liste de conversations (avatars, présence), conversation ouverte au clic | 5 | Acceptée |
