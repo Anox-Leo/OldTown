@@ -45,8 +45,10 @@ android {
         applicationId = "dev.oldtown.android"
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.3.0"
+        // majeur × 10000 + mineur × 100 + correctif ; versionName identique
+        // à la version du workspace Cargo et de l'extension.
+        versionCode = 10000
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += rustAbis }
     }

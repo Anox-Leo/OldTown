@@ -1,6 +1,6 @@
 {
   "name": "oldtown-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "scripts": {
     "wasm": "node scripts/build-wasm.mjs",
     "build": "npm run wasm && ng build && node scripts/build-extension.mjs",
