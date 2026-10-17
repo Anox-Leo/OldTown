@@ -1,0 +1,12 @@
+# Contexte de construction de deploy/docker/Dockerfile : les sources Rust
+# seulement.
+/target
+/private
+/apps
+**/node_modules
+.git
+.env
+.env.*
+*.db
+*.db-*
+*.key
