@@ -1,0 +1,49 @@
+@startuml architecture
+!include style.iuml
+title OldTown deployment
+
+node "Android phone" as phone {
+  artifact "OldTown app\n(Kotlin, Rust core via UniFFI)" as app
+  database "Keys, group, history\n(encrypted, Android Keystore)" as appstore
+}
+
+node "Computer: Chrome or Brave" as browser {
+  artifact "OldTown extension\n(TypeScript, Rust core in WebAssembly)" as ext
+  database "Keys, group, history\n(encrypted, WebCrypto key)" as extstore
+}
+
+node "Computer: terminal" as terminal {
+  artifact "ot CLI (Rust)" as cli
+  database "Keys and group\n(files, 0600)" as clistore
+}
+
+node "Relay host (VPS or home server)" as host {
+  node "Caddy\n(TLS, Let's Encrypt)" as front
+  artifact "ot-server" as relay
+  database "SQLite\n(devices, queued encrypted envelopes)" as sqlite
+  folder "Encrypted file chunks\n(deleted after delivery, 48 h max)" as blobs
+}
+
+app -- appstore
+ext -- extstore
+cli -- clistore
+
+app --> front : wss + https\n(443)
+ext --> front : wss + https\n(443)
+cli --> front : wss + https\n(443)
+front --> relay : ws / http\n(local)
+relay -- sqlite
+relay -- blobs
+
+note right of front
+  Private mode (Tailscale): no Caddy,
+  ot-server serves wss itself on the
+  tailnet, with a "tailscale cert".
+end note
+
+note bottom of host
+  The relay holds no key: it routes and stores
+  ciphertext, and only sees metadata
+  (who writes to whom, when, how much).
+end note
+@enduml

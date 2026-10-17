@@ -1,0 +1,9 @@
+' Common style: plain UML, black and white.
+skinparam monochrome true
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 12
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 260
+hide footbox
