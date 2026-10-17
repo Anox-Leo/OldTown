@@ -1,7 +1,7 @@
 # OldTown
 
 Send texts, links and files between your own devices (Android phone,
-Chrome or Brave on any computer, a terminal) through a relay you host
+Chromium-based browser on any computer, a terminal) through a relay you host
 yourself. Everything is end-to-end encrypted under a key that only your
 devices hold: the relay stores and forwards ciphertext and never sees the
 content.
@@ -10,9 +10,7 @@ Think Pushbullet, self-hosted, without an account and without trusting the
 server.
 
 > **Status.** A personal project, used daily, published as is under the MIT
-> license, without warranty. The apps' interface is in French for now. The
-> cryptography was reviewed by its author and by an AI model, not yet by an
-> independent cryptographer (see [SECURITY.md](SECURITY.md)).
+> license, without warranty. The apps' interface is in French for now.
 
 **Contents:** [Choose how devices reach the relay](#choose-how-devices-reach-the-relay) ·
 [Install](#install) · [Everyday use](#everyday-use) ·
