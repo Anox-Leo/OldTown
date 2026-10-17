@@ -3,6 +3,7 @@
 
 mod auth;
 pub mod blobs;
+pub mod limits;
 pub mod metrics;
 mod registry;
 mod session;
@@ -11,20 +12,24 @@ pub mod tls;
 
 use std::collections::HashSet;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use axum::extract::{State, WebSocketUpgrade};
-use axum::http::{StatusCode, header};
+use axum::extract::connect_info::Connected;
+use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::serve::IncomingStream;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::auth::NonceCache;
 use crate::blobs::BlobDir;
+use crate::limits::{Limits, LimitsConfig, Refused};
 use crate::metrics::Metrics;
 use crate::registry::Registry;
 use crate::store::{PurgeStats, Store};
@@ -53,6 +58,8 @@ pub struct Config {
     pub blob_quota: u64,
     /// Durée de vie d'un fichier déposé.
     pub blob_ttl: Duration,
+    /// Protections d'un relais exposé (étape 8e).
+    pub limits: LimitsConfig,
 }
 
 /// Nombre maximal de nonces HTTP retenus pendant la fenêtre.
@@ -64,13 +71,14 @@ impl Default for Config {
             ttl: Duration::from_secs(7 * 24 * 3600),
             purge_interval: Duration::from_secs(10 * 60),
             ping_interval: Duration::from_secs(30),
-            auth_timeout: Duration::from_secs(30),
+            auth_timeout: Duration::from_secs(10),
             pairing_ttl: Duration::from_secs(10 * 60),
             tls_reload_interval: Duration::from_secs(10 * 60),
             blob_dir: PathBuf::from("blobs"),
             max_file_size: 2 << 30,
             blob_quota: 20 << 30,
             blob_ttl: Duration::from_secs(48 * 3600),
+            limits: LimitsConfig::default(),
         }
     }
 }
@@ -89,6 +97,7 @@ struct Inner {
     shutdown: watch::Sender<bool>,
     blob_dir: BlobDir,
     nonces: NonceCache,
+    limits: Arc<Limits>,
 }
 
 impl Relay {
@@ -98,6 +107,7 @@ impl Relay {
                 store,
                 blob_dir: BlobDir::new(config.blob_dir.clone()),
                 nonces: NonceCache::new(MAX_HTTP_NONCES),
+                limits: Limits::new(config.limits.clone()),
                 config,
                 registry: Registry::default(),
                 metrics: Metrics::default(),
@@ -110,18 +120,29 @@ impl Relay {
         &self.inner.store
     }
 
+    /// Routes publiques : WebSocket, fichiers, `/healthz`. Les métriques
+    /// n'y sont pas : elles sont sur [`Relay::admin_router`].
     pub fn router(&self) -> Router {
         Router::new()
             .route(ot_proto::WS_PATH, get(ws_handler))
             .route("/healthz", get(healthz))
+            .merge(blobs::router(self.clone()))
+            .with_state(self.clone())
+    }
+
+    /// Routes d'administration (`/metrics`, `/healthz`), servies sur une
+    /// adresse à part, locale par défaut (`OT_ADMIN_LISTEN`).
+    pub fn admin_router(&self) -> Router {
+        Router::new()
+            .route("/healthz", get(healthz))
             .route("/metrics", get(metrics_handler))
-            .merge(blobs::router())
             .with_state(self.clone())
     }
 
     /// Lance une purge (messages, jetons, fichiers) et met à jour les
     /// compteurs. Renvoie les chiffres des messages et des jetons.
     pub async fn purge_once(&self) -> store::Result<PurgeStats> {
+        self.inner.limits.prune();
         let stats = self.inner.store.purge(now_ms()).await?;
         let m = &self.inner.metrics;
         m.purged_acked.fetch_add(stats.acked, std::sync::atomic::Ordering::Relaxed);
@@ -191,6 +212,16 @@ pub async fn serve(
     run(relay, listener, shutdown).await
 }
 
+/// Sert les routes d'administration ([`Relay::admin_router`]) en clair
+/// sur `listener`, jusqu'à ce que `shutdown` se termine.
+pub async fn serve_admin(
+    relay: Relay,
+    listener: TcpListener,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, relay.admin_router()).with_graceful_shutdown(shutdown).await
+}
+
 /// Comme [`serve`], en TLS (`wss://`) ; le certificat est relu toutes les
 /// `tls_reload_interval` s'il a changé sur le disque.
 pub async fn serve_tls(
@@ -226,6 +257,7 @@ async fn run<L>(
 where
     L: axum::serve::Listener,
     L::Addr: std::fmt::Debug,
+    for<'a> Peer: Connected<IncomingStream<'a, L>>,
 {
     match relay.clean_blob_dir().await {
         Ok(0) => {}
@@ -245,7 +277,8 @@ where
         })
     };
     let stop = relay.inner.shutdown.clone();
-    let res = axum::serve(listener, relay.router())
+    let app = relay.router().into_make_service_with_connect_info::<Peer>();
+    let res = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown.await;
             stop.send_replace(true);
@@ -255,14 +288,56 @@ where
     res
 }
 
+/// Adresse de la connexion, en clair comme en TLS (`ConnectInfo`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Peer(pub(crate) SocketAddr);
+
+impl Connected<IncomingStream<'_, TcpListener>> for Peer {
+    fn connect_info(stream: IncomingStream<'_, TcpListener>) -> Self {
+        Self(*stream.remote_addr())
+    }
+}
+
+impl Connected<IncomingStream<'_, tls::TlsListener>> for Peer {
+    fn connect_info(stream: IncomingStream<'_, tls::TlsListener>) -> Self {
+        Self(*stream.remote_addr())
+    }
+}
+
 pub fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-async fn ws_handler(State(relay): State<Relay>, ws: WebSocketUpgrade) -> Response {
+async fn ws_handler(
+    State(relay): State<Relay>,
+    ConnectInfo(Peer(peer)): ConnectInfo<Peer>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let ip = relay.inner.limits.client_ip(peer, &headers);
+    let permit = match relay.inner.limits.admit(ip) {
+        Ok(permit) => permit,
+        Err(why) => return refused(&relay, why),
+    };
     ws.max_message_size(ot_proto::MAX_FRAME_BYTES)
         .max_frame_size(ot_proto::MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| session::run(relay, socket))
+        .on_upgrade(move |socket| session::run(relay, socket, ip, permit))
+}
+
+/// Refus d'une connexion par les limites : `503` avec le code `busy` de
+/// l'API des fichiers ; le client réessaie avec son délai habituel.
+pub(crate) fn refused(relay: &Relay, why: Refused) -> Response {
+    let m = &relay.inner.metrics;
+    Metrics::inc(match why {
+        Refused::Busy => &m.limited_busy,
+        Refused::Failures => &m.limited_failures,
+    });
+    tracing::debug!(?why, "connexion refusée par les limites");
+    let body = ot_proto::http::HttpError {
+        error: ot_proto::http::HttpErrorCode::Busy,
+        message: "relais saturé, réessayer plus tard".into(),
+    };
+    (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response()
 }
 
 async fn healthz(State(relay): State<Relay>) -> Response {

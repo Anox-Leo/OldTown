@@ -32,6 +32,8 @@ pub fn test_config() -> Config {
 
 pub struct TestServer {
     pub addr: SocketAddr,
+    /// Routes d'administration (`/metrics`).
+    pub admin: SocketAddr,
     pub relay: Relay,
     /// En TLS : l'URL est en `wss://localhost`.
     tls: bool,
@@ -53,7 +55,8 @@ impl TestServer {
             let _ = stopped.await;
         });
         let task = tokio::spawn(async move { serve.await.unwrap() });
-        Self { addr, relay, tls: false, stop: Some(stop), task }
+        let admin = start_admin(&relay).await;
+        Self { addr, admin, relay, tls: false, stop: Some(stop), task }
     }
 
     /// Relais en TLS (`wss://`), avec le certificat donné.
@@ -66,7 +69,8 @@ impl TestServer {
             let _ = stopped.await;
         });
         let task = tokio::spawn(async move { serve.await.unwrap() });
-        Self { addr, relay, tls: true, stop: Some(stop), task }
+        let admin = start_admin(&relay).await;
+        Self { addr, admin, relay, tls: true, stop: Some(stop), task }
     }
 
     pub fn url(&self) -> String {
@@ -88,6 +92,14 @@ impl TestServer {
         let _ = self.stop.take().unwrap().send(());
         tokio::time::timeout(STEP, &mut self.task).await.expect("arrêt du serveur").unwrap();
     }
+}
+
+/// Routes d'administration sur un port local à part, arrêtées avec le test.
+async fn start_admin(relay: &Relay) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(ot_server::serve_admin(relay.clone(), listener, std::future::pending()));
+    addr
 }
 
 pub struct TestDevice {
@@ -189,6 +201,10 @@ pub async fn no_message(events: &mut Events, d: Duration) {
 pub struct Raw(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
 impl Raw {
+    pub fn from_stream(ws: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
+        Self(ws)
+    }
+
     pub async fn connect(server: &TestServer) -> Self {
         let url = format!("{}{}", server.url(), ot_proto::WS_PATH);
         Self(tokio_tungstenite::connect_async(url).await.unwrap().0)

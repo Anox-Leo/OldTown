@@ -28,6 +28,9 @@ pub struct Metrics {
     pub blobs_done: AtomicU64,
     pub blobs_cancelled: AtomicU64,
     pub blobs_purged: AtomicU64,
+    /// Connexions et requêtes refusées par les limites (étape 8e).
+    pub limited_busy: AtomicU64,
+    pub limited_failures: AtomicU64,
 }
 
 impl Metrics {
@@ -132,6 +135,15 @@ impl Metrics {
             "gauge",
             "Octets chiffrés réservés par les fichiers en transit.",
             &[("", blob_bytes)],
+        );
+        metric(
+            "ot_limited_total",
+            "counter",
+            "Connexions et requêtes refusées : trop de connexions non authentifiées, trop d'échecs.",
+            &[
+                ("{reason=\"busy\"}", get(&self.limited_busy)),
+                ("{reason=\"failures\"}", get(&self.limited_failures)),
+            ],
         );
         out
     }

@@ -192,7 +192,7 @@ async fn expired_messages_are_purged() {
 
     let stats = server.relay.purge_once().await.unwrap();
     assert_eq!(stats.expired, 1);
-    let (_, body) = http_get(server.addr, "/metrics").await;
+    let (_, body) = http_get(server.admin, "/metrics").await;
     assert!(body.contains("ot_messages_purged_total{reason=\"expired\"} 1"), "{body}");
 }
 
@@ -208,7 +208,7 @@ async fn acked_messages_are_purged() {
 
     for _ in 0..50 {
         if server.relay.purge_once().await.unwrap().acked == 1 {
-            let (_, body) = http_get(server.addr, "/metrics").await;
+            let (_, body) = http_get(server.admin, "/metrics").await;
             assert!(body.contains("ot_messages_purged_total{reason=\"acked\"} 1"), "{body}");
             return;
         }

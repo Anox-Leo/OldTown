@@ -83,7 +83,7 @@ async fn valid_token_registers_device() {
     };
     Raw::login(&server, &dev).await;
 
-    let (_, body) = http_get(server.addr, "/metrics").await;
+    let (_, body) = http_get(server.admin, "/metrics").await;
     assert!(body.contains("ot_pairings_total{result=\"created\"} 1"), "{body}");
     assert!(body.contains("ot_pairings_total{result=\"redeemed\"} 1"), "{body}");
 }
@@ -121,7 +121,7 @@ async fn unknown_token_is_refused() {
     let (server, _) = setup(test_config()).await;
     let reply = redeem(&server, &[1; PAIR_TOKEN_LEN], "windows", &Identity::generate()).await;
     assert_error(reply, ErrorCode::PairingInvalid);
-    let (_, body) = http_get(server.addr, "/metrics").await;
+    let (_, body) = http_get(server.admin, "/metrics").await;
     assert!(body.contains("ot_pairings_total{result=\"rejected\"} 1"), "{body}");
 }
 

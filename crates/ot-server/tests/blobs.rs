@@ -253,7 +253,7 @@ async fn size_limit_and_quota() {
     // 2 × 96 = 192 octets réservés ; un troisième dépasserait 200.
     let res = signed(&s.server, &s.mac, "POST", "/v1/blobs", &body(&ok)).await;
     assert_eq!((res.status, res.error()), (507, HttpErrorCode::QuotaExceeded));
-    let (_, metrics) = http_get(s.server.addr, "/metrics").await;
+    let (_, metrics) = http_get(s.server.admin, "/metrics").await;
     assert!(metrics.contains("ot_blob_bytes 192"), "{metrics}");
     s.server.stop().await;
 }
