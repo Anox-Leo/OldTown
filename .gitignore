@@ -1,6 +1,8 @@
 /target
 # Notes et réglages propres à mon installation, jamais publiés.
 /private/
+# Conception, plans et notes de décision : locaux, jamais publiés.
+/docs/
 *.db
 *.db-shm
 *.db-wal

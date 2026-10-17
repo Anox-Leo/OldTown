@@ -1,10 +1,11 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use ot_proto::b64;
+use ot_server::limits::LimitsConfig;
 use ot_server::store::Store;
 use ot_server::tls::Tls;
 use ot_server::{Config, Relay, now_ms};
@@ -27,9 +28,18 @@ struct Cli {
 enum Command {
     /// Lance le relais.
     Serve {
-        /// Adresse d'écoute : l'IP Tailscale du serveur, jamais 0.0.0.0.
+        /// Adresse d'écoute : l'IP Tailscale du serveur, ou `127.0.0.1`
+        /// derrière un frontal TLS (Caddy).
         #[arg(long, env = "OT_LISTEN", default_value = "127.0.0.1:7878")]
         listen: SocketAddr,
+        /// Adresse des routes d'administration (`/metrics`), à garder
+        /// locale (ex. 127.0.0.1:7879). Sans elle, pas de métriques.
+        #[arg(long, env = "OT_ADMIN_LISTEN")]
+        admin_listen: Option<SocketAddr>,
+        /// IP des frontaux (séparées par des virgules) dont on croit
+        /// l'en-tête `X-Forwarded-For` pour connaître l'IP des clients.
+        #[arg(long, env = "OT_TRUSTED_PROXY", value_delimiter = ',')]
+        trusted_proxy: Vec<IpAddr>,
         /// Durée de vie d'un message non acquitté (ex. 7d, 24h).
         #[arg(long, env = "OT_TTL", default_value = "7d", value_parser = parse_duration)]
         ttl: Duration,
@@ -101,6 +111,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Serve {
             listen,
+            admin_listen,
+            trusted_proxy,
             ttl,
             purge_interval,
             log_format,
@@ -121,9 +133,10 @@ async fn main() -> Result<()> {
                 max_file_size,
                 blob_quota,
                 blob_ttl,
+                limits: LimitsConfig { trusted_proxies: trusted_proxy, ..LimitsConfig::default() },
                 ..Config::default()
             };
-            serve(cli.db, listen, tls, config).await
+            serve(cli.db, listen, admin_listen, tls, config).await
         }
         Command::Device(cmd) => device(&cli.db, cmd).await,
         Command::Messages(cmd) => messages(&cli.db, cmd).await,
@@ -142,6 +155,7 @@ fn init_logs(format: LogFormat) {
 async fn serve(
     db: PathBuf,
     listen: SocketAddr,
+    admin_listen: Option<SocketAddr>,
     tls: Option<(PathBuf, PathBuf)>,
     config: Config,
 ) -> Result<()> {
@@ -154,6 +168,14 @@ async fn serve(
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("écoute sur {listen}"))?;
+    let admin = match admin_listen {
+        Some(addr) => Some(
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("écoute d'administration sur {addr}"))?,
+        ),
+        None => None,
+    };
     let scheme = if tls.is_some() { "wss" } else { "ws" };
     tracing::info!(
         %listen,
@@ -161,12 +183,26 @@ async fn serve(
         db = %db.display(),
         ttl = ?config.ttl,
         blob_dir = %config.blob_dir.display(),
+        admin = ?admin_listen,
+        trusted_proxies = config.limits.trusted_proxies.len(),
         "relais démarré"
     );
     let relay = Relay::new(store.clone(), config);
+    // Arrêtée avec le relais ; une erreur n'arrête pas le relais.
+    let admin = admin.map(|listener| {
+        let relay = relay.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ot_server::serve_admin(relay, listener, std::future::pending()).await {
+                tracing::error!(error = %e, "routes d'administration arrêtées");
+            }
+        })
+    });
     match tls {
         Some(tls) => ot_server::serve_tls(relay, listener, tls, shutdown_signal()).await?,
         None => ot_server::serve(relay, listener, shutdown_signal()).await?,
+    }
+    if let Some(admin) = admin {
+        admin.abort();
     }
     store.close().await;
     tracing::info!("relais arrêté");

@@ -4,10 +4,12 @@ use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use ot_proto::{
     DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES, MAX_NAME_CHARS, valid_device_name,
 };
+use std::net::IpAddr;
 use std::sync::atomic::Ordering::Relaxed;
 use time::OffsetDateTime;
 use tokio::time::{Instant, timeout_at};
 
+use crate::limits::Permit;
 use crate::metrics::Metrics;
 use crate::registry::Session;
 use crate::store::{NewMessage, StoreError};
@@ -19,9 +21,13 @@ const DELIVERY_BATCH: u32 = 100;
 /// Fin de session : la connexion doit être fermée.
 struct Close(&'static str);
 
-pub async fn run(relay: Relay, mut socket: WebSocket) {
+/// `permit` tient la place de la connexion parmi les non authentifiées ;
+/// il est rendu dès la fin de l'authentification.
+pub async fn run(relay: Relay, mut socket: WebSocket, ip: IpAddr, permit: Permit) {
     let inner = &*relay.inner;
-    let device = match authenticate(inner, &mut socket).await {
+    let authenticated = authenticate(inner, &mut socket, ip).await;
+    drop(permit);
+    let device = match authenticated {
         Ok(device) => device,
         Err(Close(reason)) => {
             tracing::debug!(reason, "connexion refusée");
@@ -58,14 +64,20 @@ async fn send(socket: &mut WebSocket, frame: &Frame) -> Result<(), Close> {
     socket.send(Message::text(frame.to_json())).await.map_err(|_| Close("écriture impossible"))
 }
 
-async fn authenticate(inner: &Inner, socket: &mut WebSocket) -> Result<DeviceId, Close> {
+async fn authenticate(
+    inner: &Inner,
+    socket: &mut WebSocket,
+    ip: IpAddr,
+) -> Result<DeviceId, Close> {
     let nonce = auth::new_nonce();
     let deadline = Instant::now() + inner.config.auth_timeout;
     send(socket, &Frame::Challenge { nonce }).await?;
 
     loop {
         let msg = match timeout_at(deadline, socket.recv()).await {
-            Err(_) => return auth_failed(inner, socket, "délai d'authentification dépassé").await,
+            Err(_) => {
+                return auth_failed(inner, socket, ip, "délai d'authentification dépassé").await;
+            }
             Ok(None | Some(Err(_)) | Some(Ok(Message::Close(_)))) => {
                 return Err(Close("connexion fermée"));
             }
@@ -85,21 +97,34 @@ async fn authenticate(inner: &Inner, socket: &mut WebSocket) -> Result<DeviceId,
                 let device = match inner.store.device(&device_id).await {
                     Ok(Some(d)) if d.revoked_at.is_none() => d,
                     Ok(_) => {
-                        return auth_failed(inner, socket, "appareil inconnu ou révoqué").await;
+                        return auth_failed(inner, socket, ip, "appareil inconnu ou révoqué").await;
                     }
                     Err(e) => {
+                        // Panne du relais, pas un échec du client : non compté.
                         tracing::error!(error = %e, "lecture de l'appareil");
-                        return auth_failed(inner, socket, "erreur interne").await;
+                        Metrics::inc(&inner.metrics.auth_failures);
+                        let error = Frame::error(ErrorCode::AuthFailed, "erreur interne", None);
+                        send(socket, &error).await?;
+                        return Err(Close("auth_failed"));
                     }
                 };
                 if !auth::verify(&device.public_key, &nonce, &device_id, &sig) {
                     tracing::warn!(device = %device_id, "signature invalide");
-                    return auth_failed(inner, socket, "signature invalide").await;
+                    return auth_failed(inner, socket, ip, "signature invalide").await;
                 }
                 return Ok(device_id);
             }
             Ok(Frame::PairRedeem { token, name, public_key, sig }) => {
-                return redeem(inner, socket, &nonce, &token, &name, &public_key, &sig).await;
+                let redeemed = redeem(inner, socket, &nonce, &token, &name, &public_key, &sig);
+                return match redeemed.await {
+                    Ok(never) => match never {},
+                    Err(Rejected::Invalid) => {
+                        inner.limits.failed(ip);
+                        Err(Close("appairage refusé"))
+                    }
+                    Err(Rejected::Other) => Err(Close("appairage refusé")),
+                    Err(Rejected::Closed(close)) => Err(close),
+                };
             }
             Ok(other) => {
                 let msg = format!("trame {} reçue avant auth", other.type_name());
@@ -113,15 +138,33 @@ async fn authenticate(inner: &Inner, socket: &mut WebSocket) -> Result<DeviceId,
 async fn auth_failed(
     inner: &Inner,
     socket: &mut WebSocket,
+    ip: IpAddr,
     message: &'static str,
 ) -> Result<DeviceId, Close> {
     Metrics::inc(&inner.metrics.auth_failures);
+    inner.limits.failed(ip);
     send(socket, &Frame::error(ErrorCode::AuthFailed, message, None)).await?;
     Err(Close("auth_failed"))
 }
 
 fn invalid_name() -> String {
     format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables")
+}
+
+/// Fin d'un `pair_redeem` : la connexion est toujours fermée ensuite.
+enum Rejected {
+    /// Jeton ou signature invalides : compte comme un échec de l'IP.
+    Invalid,
+    /// Refus qui ne trahit pas un essai (nom pris, erreur interne).
+    Other,
+    /// Appairage réussi, ou écriture impossible.
+    Closed(Close),
+}
+
+impl From<Close> for Rejected {
+    fn from(close: Close) -> Self {
+        Self::Closed(close)
+    }
 }
 
 /// Enregistre un appareil avec un jeton d'appairage, répond `pair_redeemed`
@@ -134,7 +177,7 @@ async fn redeem(
     name: &str,
     public_key: &[u8; 32],
     sig: &[u8; 64],
-) -> Result<DeviceId, Close> {
+) -> Result<std::convert::Infallible, Rejected> {
     let name = name.trim();
     if !valid_device_name(name) {
         return pairing_rejected(inner, socket, ErrorCode::BadFrame, invalid_name()).await;
@@ -156,7 +199,7 @@ async fn redeem(
             tracing::info!(device = %r.device.id, sponsor = %r.sponsor, "appareil appairé");
             let frame = Frame::PairRedeemed { device_id: r.device.id, sponsor: r.sponsor };
             send(socket, &frame).await?;
-            Err(Close("appairage terminé"))
+            Err(Rejected::Closed(Close("appairage terminé")))
         }
         Err(StoreError::PairingInvalid) => {
             let msg = "jeton inconnu, expiré ou déjà utilisé".into();
@@ -182,10 +225,10 @@ async fn pairing_rejected(
     socket: &mut WebSocket,
     code: ErrorCode,
     message: String,
-) -> Result<DeviceId, Close> {
+) -> Result<std::convert::Infallible, Rejected> {
     Metrics::inc(&inner.metrics.pairings_rejected);
     send(socket, &Frame::error(code, message, None)).await?;
-    Err(Close("appairage refusé"))
+    Err(if code == ErrorCode::PairingInvalid { Rejected::Invalid } else { Rejected::Other })
 }
 
 struct Active<'a> {

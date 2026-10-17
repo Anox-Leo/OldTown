@@ -1,0 +1,35 @@
+@startuml file-transfer
+!include style.iuml
+mainframe sd Send a file
+
+participant "Sender device" as A
+participant "Relay\n(ot-server)" as R
+participant "Recipient device" as B
+
+A -> A : random file key;\nsplit into 1 MiB chunks, encrypt each\n(STREAM, XChaCha20-Poly1305)
+A -> R : POST /v1/blobs (sizes, recipients)\n[request signed by the device]
+activate R
+R --> A : blob_id
+deactivate R
+loop each chunk (resumable)
+  A -> R : PUT /v1/blobs/{id}/chunks/{n} [signed]
+end
+A -> R : send(envelope: file{blob_id, name, type,\nsize, key, SHA-256}), encrypted\nwith the group key
+R ->> B : deliver(envelope)
+activate B
+B -> B : decrypt the announcement,\nkeep the file key
+loop each chunk
+  B -> R : GET /v1/blobs/{id}/chunks/{n} [signed]
+  R --> B : encrypted chunk
+end
+B -> B : decrypt chunks in order\n(missing, reordered or altered chunk = rejected);\ncheck SHA-256
+B -> R : POST /v1/blobs/{id}/done [signed]
+deactivate B
+R -> R : delete chunks once every recipient\nis done (or after 48 h)
+
+note over R
+  The relay never learns the file
+  name, type or key: only the
+  encrypted size and the recipients.
+end note
+@enduml

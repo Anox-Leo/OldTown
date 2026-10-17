@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path as UrlPath, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path as UrlPath, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use ot_proto::http::{
@@ -27,6 +28,7 @@ use ot_proto::{BlobId, DeviceId, b64};
 use time::OffsetDateTime;
 
 use crate::auth::{self, NonceError};
+use crate::limits::Refused;
 use crate::metrics::Metrics;
 use crate::store::{Blob, NewBlob, StoreError};
 use crate::{Relay, now_ms};
@@ -36,14 +38,35 @@ use crate::{Relay, now_ms};
 const CHUNK_TAG_LEN: u64 = 16;
 
 /// Routes de l'API, à fusionner dans le routeur du relais. Corps limité à un
-/// morceau chiffré, plus une marge pour le JSON de création.
-pub fn router() -> Router<Relay> {
+/// morceau chiffré, plus une marge pour le JSON de création. Une IP qui a
+/// épuisé ses échecs est refusée avant toute vérification, et chaque
+/// signature refusée lui compte un échec (étape 8e).
+pub fn router(relay: Relay) -> Router<Relay> {
     Router::new()
         .route(BLOBS_PATH, post(create))
         .route("/v1/blobs/{id}", get(status).delete(cancel))
         .route("/v1/blobs/{id}/chunks/{n}", put(upload).get(download))
         .route("/v1/blobs/{id}/done", post(done))
         .layer(DefaultBodyLimit::max(MAX_SEALED_CHUNK as usize + 4096))
+        .layer(middleware::from_fn_with_state(relay, limit))
+}
+
+async fn limit(
+    State(relay): State<Relay>,
+    ConnectInfo(crate::Peer(peer)): ConnectInfo<crate::Peer>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let limits = &relay.inner.limits;
+    let ip = limits.client_ip(peer, req.headers());
+    if limits.blocked(ip) {
+        return crate::refused(&relay, Refused::Failures);
+    }
+    let res = next.run(req).await;
+    if res.status() == StatusCode::UNAUTHORIZED {
+        limits.failed(ip);
+    }
+    res
 }
 
 /// Erreur de l'API : code et message lisible, sans contenu ni secret.

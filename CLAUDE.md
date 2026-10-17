@@ -5,11 +5,15 @@ appareils (Android, Mac, Windows, Ubuntu, navigateur), via un relais
 auto-hébergé sur un laptop Ubuntu, joignable seulement par Tailscale. Le relais
 ne voit jamais le contenu en clair (à partir de l'étape 2).
 
-Réponses, documentation et commentaires de code en français ; identifiants,
-messages de commit et noms de branches en anglais.
+Réponses, documentation interne et commentaires de code en français ;
+`README.md`, `SECURITY.md`, identifiants, messages de commit et noms de
+branches en anglais.
 
-Tout ce qu'un agent doit savoir est dans le dépôt : il n'y a pas d'autre
-mémoire. Si une information manque, la demander plutôt que la deviner.
+Le dépôt est public : `README.md` (simplifié) et le code en sont la
+documentation. `docs/` (conception, plans, notes de décision, actions
+manuelles, README détaillé en français `docs/readme-fr.md`) reste **local,
+ignoré par git, jamais publié** ; il n'y a pas d'autre mémoire. Si une
+information manque, la demander plutôt que la deviner.
 
 ## Où regarder
 
@@ -43,8 +47,9 @@ font foi, puis le plan de l'étape, puis `design.md`.
 
 ## Règles
 
-- Le dépôt deviendra public (note 0011) : jamais de nom de machine, IP, nom de
-  tailnet, chemin personnel ou secret dans les fichiers versionnés. Exemple de
+- Le dépôt est public : jamais de nom de machine, IP, nom de tailnet, nom de
+  domaine personnel, adresse e-mail, chemin personnel ou secret dans les
+  fichiers versionnés ni dans les commits. Exemple de
   nom d'hôte : `relais`. Les réglages personnels vont dans `private/` (ignoré
   par git).
 - `ot-server` ne dépend que de `ot-proto` et ne lit jamais `payload`. Il ne

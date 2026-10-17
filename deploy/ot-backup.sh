@@ -1,7 +1,7 @@
 #!/bin/sh
 # Sauvegarde des appareils enregistrés sur le relais (pas des messages, qui
 # sont en clair à l'étape 1 et n'ont rien à faire dans une sauvegarde).
-# Produit des INSERT rejouables sur une base neuve : voir README, « Restaurer ».
+# Produit des INSERT rejouables sur une base neuve : restaurer avec sqlite3 <base> < devices-<date>.sql (relais arrêté).
 set -eu
 
 DB=${OT_DB:-/var/lib/ot-relay/ot.db}

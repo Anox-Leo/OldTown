@@ -139,7 +139,9 @@ async fn healthz_and_metrics() {
     let (server, a, _) = setup().await;
     assert_eq!(http_get(server.addr, "/healthz").await, (200, "ok\n".into()));
     let _session = Raw::login(&server, &a).await;
-    let (code, body) = http_get(server.addr, "/metrics").await;
+    assert_eq!(http_get(server.addr, "/metrics").await.0, 404, "jamais sur le port public");
+    assert_eq!(http_get(server.admin, "/healthz").await, (200, "ok\n".into()));
+    let (code, body) = http_get(server.admin, "/metrics").await;
     assert_eq!(code, 200);
     assert!(body.contains("ot_connections 1"), "{body}");
     assert!(body.contains("ot_messages_purged_total{reason=\"expired\"} 0"), "{body}");
