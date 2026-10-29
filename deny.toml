@@ -6,6 +6,14 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # basic-toml n'est plus maintenue (pas une faille). Tirée seulement par
+    # askama, le moteur de gabarits du générateur uniffi_bindgen (option
+    # `bindgen` d'ot-ffi), qui s'exécute à la compilation et ne lit que ses
+    # propres fichiers de configuration. Aucune version d'uniffi ne s'en passe
+    # encore : à retirer dès qu'askama change de parseur (note 0042).
+    { id = "RUSTSEC-2026-0374", reason = "build-time only, via uniffi_bindgen/askama; no maintained alternative upstream yet" },
+]
 
 [licenses]
 version = 2
