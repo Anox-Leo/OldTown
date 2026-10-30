@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Arche terre cuite #D27443 et braise #FFC255, fond transparent (ouvertures transparentes). -->
+  <path fill="#D27443" fill-rule="evenodd" d="M18 118V64a46.0 46.0 0 0 1 92 0V118zM38 108V80a9.0 9.0 0 0 1 18 0V108zM72 108V80a9.0 9.0 0 0 1 18 0V108z"/>
+  <g fill="#FFC255">
+    <path d="M48 118a16 12 0 0 1 32 0z"/>
+    <rect x="61" y="90" width="6" height="6" rx="1" transform="rotate(45 64 93)"/>
+    <rect x="54.5" y="79" width="4" height="4" rx="1" transform="rotate(45 56.5 81)"/>
+    <rect x="66" y="70" width="3" height="3" rx=".8" transform="rotate(45 67.5 71.5)"/>
+  </g>
+</svg>
