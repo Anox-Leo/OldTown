@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Icône : fond nuit #232841, arche terre cuite #D27443 percée de deux ouvertures. -->
+  <rect width="128" height="128" rx="28" fill="#232841"/>
+  <path fill="#D27443" fill-rule="evenodd" d="M18 118V64a46.0 46.0 0 0 1 92 0V118zM38 108V80a9.0 9.0 0 0 1 18 0V108zM72 108V80a9.0 9.0 0 0 1 18 0V108z"/>
+</svg>
