@@ -2,7 +2,7 @@
 # démarrage de l'étape 3 (octobre 2026).
 
 [versions]
-agp = "9.4.1"
+agp = "9.5.0"
 kotlin = "2.4.21"
 compose-bom = "2026.09.00"
 activity = "1.13.0"
