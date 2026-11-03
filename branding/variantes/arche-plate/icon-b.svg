@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Variante B : portail de pierre sur fond nuit, en aplats. -->
+  <clipPath id="cadre"><rect width="128" height="128" rx="28"/></clipPath>
+  <g clip-path="url(#cadre)">
+  <rect width="128" height="128" fill="#232841"/>
+  <path d="M18 116V60a46.0 46.0 0 0 1 92 0V116z" fill="#D27443"/>
+  <path d="M12 116h104v8H12z" fill="#D27443"/>
+  <path d="M28 116V62a36.0 36.0 0 0 1 72 0V116z" fill="#A2492A"/>
+  <path d="M34 116V65a30.0 30.0 0 0 1 60 0V116z" fill="#D27443"/>
+  <path d="M38 104V76a9.0 9.0 0 0 1 18 0V104z" fill="#232841"/>
+  <path d="M72 104V76a9.0 9.0 0 0 1 18 0V104z" fill="#232841"/>
+  <g transform="translate(64 116) skewX(-7) translate(-64 -116)">
+    <path fill="#F2A33A" d="M54 116V87.2C54 64.3 60.5 58 64 52C67.5 58 74 64.3 74 87.2V116z"/>
+    <path fill="#FFD98A" d="M59.5 116V98.9C59.5 85.3 62.4 84 64 78C65.6 84 68.5 85.3 68.5 98.9V116z"/>
+  </g>
+  </g>
+</svg>

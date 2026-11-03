@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Arche de la lanterne, foyer abstrait « pointes » : nuit #232841, pierre #D27443/#A2492A, feu #FFC255. -->
+  <clipPath id="cadre"><rect width="128" height="128" rx="28"/></clipPath>
+  <g clip-path="url(#cadre)">
+  <rect width="128" height="128" fill="#232841"/>
+  <path d="M18 116V60a46.0 46.0 0 0 1 92 0V116z" fill="#D27443"/>
+  <path d="M12 116h104v8H12z" fill="#D27443"/>
+  <path d="M28 116V62a36.0 36.0 0 0 1 72 0V116z" fill="#232841" fill-opacity=".35"/>
+  <path d="M34 116V65a30.0 30.0 0 0 1 60 0V116z" fill="#A2492A"/>
+  <path d="M38 104V76a9.0 9.0 0 0 1 18 0V104z" fill="#232841"/>
+  <path d="M72 104V76a9.0 9.0 0 0 1 18 0V104z" fill="#232841"/>
+  <g fill="#FFC255"><path d="M46 116C46 104 50 94 53 84 56 94 58 100 58 116z"/><path d="M55 116C55 96 60 80 64 66 68 80 73 96 73 116z"/><path d="M70 116C70 106 73 98 76 90 79 98 82 106 82 116z"/></g>
+  </g>
+</svg>

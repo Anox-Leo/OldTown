@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Vue depuis une arcade de la lanterne de la Hightower, en aplats : pierre #D27443/#A2492A, nuit #232841, feu #F2A33A/#FFD98A. -->
+  <clipPath id="cadre"><rect width="128" height="128" rx="28"/></clipPath>
+  <g clip-path="url(#cadre)">
+  <rect width="128" height="128" fill="#D27443"/>
+  <path d="M24 128V62a40.0 40.0 0 0 1 80 0V128z" fill="#A2492A"/>
+  <path d="M32 128V66a32.0 32.0 0 0 1 64 0V128z" fill="#D27443"/>
+  <path d="M36 106V76a10.0 10.0 0 0 1 20 0V106z" fill="#232841"/>
+  <path d="M72 106V76a10.0 10.0 0 0 1 20 0V106z" fill="#232841"/>
+  <path d="M32 106h64v22H32z" fill="#A2492A"/>
+  <g transform="translate(64 106) skewX(-7) translate(-64 -106)">
+    <path fill="#F2A33A" d="M53 106V80.8C53 60.8 60.1 56 64 50C67.8 56 75 60.8 75 80.8V106z"/>
+    <path fill="#FFD98A" d="M59 106V91.6C59 80.2 62.2 80 64 74C65.8 80 69 80.2 69 91.6V106z"/>
+  </g>
+  </g>
+</svg>
