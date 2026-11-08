@@ -22,10 +22,10 @@ server.
 The same relay (`ot-server`) works in two ways; the relay URL is a setting
 of every client, so you can switch later.
 
-| Mode | What you need | VPN on the clients |
+| Mode | What you need |
 | --- | --- | --- |
-| **Public**, on a VPS or a home server | A domain name pointing to the machine, ports 80 and 443 reachable (VPS firewall, or port forwarding on your router; not behind a CGNAT). [Caddy](https://caddyserver.com) gets the TLS certificate. | No: works on a work computer where a VPN is not an option |
-| **Private**, with [Tailscale](https://tailscale.com) | Tailscale on the relay and on every device, MagicDNS and HTTPS certificates enabled | Yes |
+| **Public**, on a VPS or a home server | A domain name pointing to the machine, ports 80 and 443 reachable (VPS firewall, or port forwarding on your router; not behind a CGNAT). [Caddy](https://caddyserver.com) gets the TLS certificate.
+| **Private**, with [Tailscale](https://tailscale.com) | Tailscale on the relay and on every device, MagicDNS and HTTPS certificates enabled |
 
 Setting up a tailnet, a domain or a router is out of scope here.
 
