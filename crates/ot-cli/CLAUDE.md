@@ -3,17 +3,24 @@
 Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
 (`init`, `send`, `listen`, `devices` ; `group` et `pair` à l'étape 2 ;
 `pair new --qr`, `pair join --qr` et `pair sponsor` à l'étape 3 ;
-`send --file`, `listen --download-dir`, `files` et `download` à l'étape 5).
+`send --file`, `listen --download-dir`, `files` et `download` à l'étape 5 ;
+`otp-bridge`, note 0045).
 
 - Mince couche au-dessus de `ot-core` : pas de logique de protocole ici.
 - Fichiers locaux dans `files.rs` (`config.toml`, `device.key`,
   `seen.json`, et le `SecretStore` sur fichiers `FileStore`, sous le
   `StoreKeyring` d'`ot-core` : `exchange.key`, `group.json`, `roster.json`,
-  `quarantine.json`, `files.json`, `uploads.json`, tous en `0600`) ;
+  `quarantine.json`, `files.json`, `uploads.json`, tous en `0600` ;
+  `otp-sent.json`, codes déjà relayés par `otp-bridge`, en `0600`) ;
   source et destination des fichiers dans `transfer.rs` (fichier reçu écrit
   en `.<nom>.oldtown-part`, renommé sous un nom libre une fois vérifié) ;
   dossier choisi par `--home` ou `OT_HOME`, sinon celui de l'OS. Tout nouveau secret est créé en
   `0600` et passe par des tampons `Zeroizing`.
+- `otp-bridge` (notes 0045, 0048) : socket d'otp-relay (`tools/otp-relay`,
+  contrat `PROTOCOL.md`) lu dans `otp.rs` (lignes,
+  filtrage `judge`, codes déjà envoyés `Sent`), envoi par
+  `Client::send_otp`, une session tenue tant qu'il tourne. Jamais de code
+  ni de ligne du socket dans la sortie.
 - Les destinataires (`--to`, `--exclude`) se résolvent dans le roster, jamais
   dans la liste du relais.
 - Chaque commande ponctuelle ouvre une session et coupe brièvement un
