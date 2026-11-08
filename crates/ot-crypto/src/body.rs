@@ -52,6 +52,57 @@ pub enum Body {
         #[serde(with = "b64::array")]
         sha256: [u8; 32],
     },
+    /// Code à usage unique lu dans un mail (schéma `0x01`, note 0045),
+    /// envoyé par le pont `relais-otp`.
+    Otp(Otp),
+}
+
+/// Code à usage unique et ce qu'il faut pour le placer sur la bonne page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Otp {
+    /// Ce qu'il faut taper : 4 à 16 lettres ou chiffres ASCII.
+    pub code: String,
+    /// Le code tel qu'écrit dans le mail (`G-482913`).
+    pub display: String,
+    /// Nom affiché de l'expéditeur (`Google`), éventuellement vide.
+    pub sender_name: String,
+    /// Domaine de l'adresse de l'expéditeur (`google.com`), en minuscules.
+    pub sender_domain: String,
+    /// Vrai si l'expéditeur est authentifié (DMARC `pass` vu par le
+    /// fournisseur de messagerie).
+    pub sender_verified: bool,
+    /// Fin de validité, en secondes depuis l'époque Unix.
+    pub expires_at: i64,
+}
+
+impl Otp {
+    /// Longueur maximale de `display` et `sender_name`, en caractères.
+    pub const MAX_TEXT_CHARS: usize = 128;
+
+    fn check(&self) -> Result<()> {
+        let bad = |why: &str| Err(CryptoError::Body(format!("otp : {why}")));
+        if !(4..=16).contains(&self.code.len())
+            || !self.code.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return bad("code invalide");
+        }
+        if self.display.chars().count() > Self::MAX_TEXT_CHARS
+            || self.sender_name.chars().count() > Self::MAX_TEXT_CHARS
+        {
+            return bad("texte trop long");
+        }
+        let domain = &self.sender_domain;
+        if domain.is_empty()
+            || domain.len() > 253
+            || !domain
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        {
+            return bad("domaine invalide");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +160,7 @@ impl Body {
             Self::Roster { .. } => "roster",
             Self::GroupKey { .. } => "group_key",
             Self::File { .. } => "file",
+            Self::Otp(_) => "otp",
         }
     }
 
@@ -119,11 +171,16 @@ impl Body {
         Zeroizing::new(serde_json::to_vec(self).expect("Body est toujours sérialisable"))
     }
 
-    /// Lit un corps ; un `file` aux tailles incohérentes est refusé.
+    /// Lit un corps ; un `file` aux tailles incohérentes, un `otp` au code ou
+    /// au domaine invalide sont refusés.
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
         let body = serde_json::from_slice(bytes).map_err(|e| CryptoError::Body(e.to_string()))?;
-        if let Self::File { size, chunk_size, chunks, .. } = &body {
-            check_layout(*size, *chunk_size, *chunks)?;
+        match &body {
+            Self::File { size, chunk_size, chunks, .. } => {
+                check_layout(*size, *chunk_size, *chunks)?
+            }
+            Self::Otp(otp) => otp.check()?,
+            _ => {}
         }
         Ok(body)
     }
@@ -163,6 +220,50 @@ mod tests {
         // Le `Debug` d'un corps `file` ne montre pas la clé.
         assert!(!format!("{body:?}").contains("[1, 1"));
         assert!(Body::from_json(&file(4).to_json()).is_err());
+    }
+
+    fn otp() -> Otp {
+        Otp {
+            code: "482913".into(),
+            display: "G-482913".into(),
+            sender_name: "Google".into(),
+            sender_domain: "google.com".into(),
+            sender_verified: true,
+            expires_at: 1_793_628_791,
+        }
+    }
+
+    #[test]
+    fn otp_format() {
+        let body = Body::Otp(otp());
+        assert_eq!(
+            &**body.to_json(),
+            br#"{"kind":"otp","code":"482913","display":"G-482913","sender_name":"Google","sender_domain":"google.com","sender_verified":true,"expires_at":1793628791}"#
+        );
+        assert_eq!(Body::from_json(&body.to_json()).unwrap(), body);
+        assert_eq!(body.kind(), "otp");
+    }
+
+    #[test]
+    fn otp_rejects_bad_fields() {
+        let bad = |f: fn(&mut Otp)| {
+            let mut o = otp();
+            f(&mut o);
+            Body::from_json(&Body::Otp(o).to_json()).is_err()
+        };
+        assert!(bad(|o| o.code = "123".into()));
+        assert!(bad(|o| o.code = "12345678901234567".into()));
+        assert!(bad(|o| o.code = "48 913".into()));
+        assert!(bad(|o| o.code = "４８２９１３".into()));
+        assert!(bad(|o| o.sender_domain = String::new()));
+        assert!(bad(|o| o.sender_domain = "Google.com".into()));
+        assert!(bad(|o| o.sender_domain = "evil.com/x".into()));
+        assert!(bad(|o| o.display = "x".repeat(129)));
+        assert!(!bad(|o| o.code = "AB12cd".into()));
+        assert!(
+            Body::from_json(br#"{"kind":"otp","code":"482913","display":"","sender_name":"","sender_domain":"a.fr","sender_verified":false,"expires_at":0,"extra":1}"#)
+                .is_err()
+        );
     }
 
     #[test]

@@ -28,7 +28,7 @@ mod keys;
 mod offer;
 mod seal;
 
-pub use body::{Body, EpochKey, Member, Roster};
+pub use body::{Body, EpochKey, Member, Otp, Roster};
 pub use code::{PairingCode, TOKEN_LEN, token_hash, token_id};
 pub use ed25519_dalek::SigningKey;
 pub use file::{
