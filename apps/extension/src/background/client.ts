@@ -37,6 +37,23 @@ export type CoreEvent =
       size: number;
       /** Destinataires de l'enveloppe ; vide : tous les appareils. */
       to?: string[];
+    }
+  /** Code à usage unique (note 0045), relayé par le pont `relais-otp`. */
+  | {
+      type: 'otp';
+      seq: number;
+      msg_id: string;
+      from: string;
+      created_at: string;
+      code: string;
+      display: string;
+      sender_name: string;
+      sender_domain: string;
+      sender_verified: boolean;
+      /** Fin de validité, en secondes Unix. */
+      expires_at: number;
+      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
+      to?: string[];
     };
 
 export type ClientEvent =
@@ -445,7 +462,9 @@ export class RelayClient {
       const to = (env as { to?: string[] }).to ?? [];
       for (const event of out.events) {
         await this.emit(
-          event.type === 'message' || event.type === 'file' ? { ...event, to } : event,
+          event.type === 'message' || event.type === 'file' || event.type === 'otp'
+            ? { ...event, to }
+            : event,
         );
       }
       this.remember(msgId);

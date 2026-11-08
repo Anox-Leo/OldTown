@@ -39,7 +39,7 @@ pub use keyring::{
     Quarantined, RETIRED_KEY_LIFETIME, SecretStore, StoreKeyring, names,
 };
 pub use ot_crypto::{
-    self as crypto, ExchangeKeyPair, OFFER_PREFIX, PairingOffer, Roster, valid_device_name,
+    self as crypto, ExchangeKeyPair, OFFER_PREFIX, Otp, PairingOffer, Roster, valid_device_name,
 };
 pub use ot_proto::{
     self as proto, BlobId, Content, ContentKind, DeviceId, DeviceInfo, ErrorCode, Ulid,
@@ -53,5 +53,5 @@ pub use secure::{
 pub use tls::TlsRoots;
 #[cfg(feature = "net")]
 pub use transfer::{ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig};
-pub use types::{Accepted, ClientError, Event, PairingInvitation, Received};
+pub use types::{Accepted, ClientError, Event, PairingInvitation, Received, ReceivedOtp};
 pub use uri::{PAIR_URI_PREFIX, PairUri, classify};

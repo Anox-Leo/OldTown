@@ -1,13 +1,17 @@
 // L'extension (moteur du service worker, WebAssembly compris) contre un vrai
 // `ot-server`, avec la CLI `ot` comme parrain : QR inversé, code collé,
 // messages dans les deux sens, redémarrage, file hors ligne, maintien.
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import path from 'node:path';
+
 import { IDBFactory } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { Engine } from '../src/background/engine';
 import { IndexedDbKeySource } from '../src/background/secrets';
 import { type Item, channelOf } from '../src/shared/api';
-import { Cli, MemoryKV, Relay, eventually, loadWasm } from './support';
+import { Cli, MemoryKV, Relay, binary, eventually, loadWasm } from './support';
 
 const FAST = { backoffInitial: 50, backoffMax: 300, pingEvery: 200, idleTimeout: 2_000 };
 
@@ -99,6 +103,50 @@ describe('extension contre ot-server', () => {
     // Reçu de la CLI, adressé à tous : canal « Tous ».
     expect(item.to).toEqual([]);
     expect(channelOf(item, engine.state().device?.id)).toBe('');
+  });
+
+  it('reçoit un code relayé par ot otp-bridge (note 0045)', async () => {
+    // Faux otp-relay : une ligne `otp` à chaque connexion.
+    const socket = path.join(relay.dir, 'otp-relay.sock');
+    const expires = new Date(Date.now() + 10 * 60_000);
+    const line = JSON.stringify({
+      type: 'otp',
+      id: 'e2e',
+      code: '482913',
+      display: 'G-482913',
+      confidence: 1,
+      sender: { name: 'Google', address: 'noreply@google.com', domain: 'google.com' },
+      sender_verified: true,
+      expires_at: expires.toISOString(),
+    });
+    const server = createServer((c) => c.write(`${line}\n`));
+    await new Promise<void>((r) => server.listen(socket, r));
+    const items: Item[] = [];
+    engine.onChange((p) => p.type === 'item' && items.push(p.item));
+    const bridge = spawn(
+      binary('ot'),
+      ['--home', phone.home, 'otp-bridge', '--to', 'chrome', '--socket', socket],
+      { stdio: 'ignore' },
+    );
+    try {
+      const item = await eventually('code reçu', () => items.find((i) => i.kind === 'otp'));
+      expect(item).toMatchObject({
+        body: '482913',
+        fromName: 'telephone',
+        otp: {
+          display: 'G-482913',
+          senderName: 'Google',
+          senderDomain: 'google.com',
+          verified: true,
+          expiresAt: Math.floor(expires.getTime() / 1000) * 1000,
+        },
+      });
+      // Adressé à l'extension seule : conversation avec le pont.
+      expect(channelOf(item, engine.state().device?.id)).toBe(item.from);
+    } finally {
+      bridge.kill();
+      server.close();
+    }
   });
 
   it('rien de lisible dans le profil Chrome', async () => {

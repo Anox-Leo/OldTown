@@ -421,6 +421,25 @@ impl Forwarder {
                 self.remember(m.msg_id, &received, &mut out);
                 Event::Message { received }
             }
+            // Code à usage unique (note 0045) : l'appli ne le remplit nulle
+            // part ; elle le montre comme un texte, le code seul, à copier.
+            E::Otp(o) => {
+                let received = Received {
+                    msg_id: o.msg_id.to_string(),
+                    from_name: self.name_of(&o.from),
+                    from_id: o.from.to_string(),
+                    created_at_ms: millis(o.created_at),
+                    kind: crate::ContentKind::Text,
+                    body: o.otp.code,
+                    sensitive: false,
+                    file: None,
+                    to: o.to.iter().map(DeviceId::to_string).collect(),
+                    outgoing: false,
+                    pending: false,
+                };
+                self.remember(o.msg_id, &received, &mut out);
+                Event::Message { received }
+            }
             E::File(f) => {
                 let to = f.to.iter().map(DeviceId::to_string).collect();
                 let f = f.file;

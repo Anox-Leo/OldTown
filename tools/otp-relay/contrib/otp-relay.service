@@ -1,0 +1,32 @@
+[Unit]
+Description=otp-relay : détection des codes OTP reçus par mail (IMAP IDLE)
+Documentation=file://%h/.local/lib/otp-relay/README.md
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/python3 -m otp_relay run
+Environment=PYTHONPATH=%h/.local/lib/otp-relay
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=always
+RestartSec=5
+RuntimeDirectory=otp-relay
+RuntimeDirectoryMode=0700
+UMask=0077
+
+# Durcissement : lecture seule partout sauf le dossier du socket.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=%t/otp-relay
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,44 @@
+# Codes à usage unique relayés par OldTown (note 0045) : lit le socket
+# d'otp-relay (tools/otp-relay) et envoie chaque code, chiffré, aux appareils
+# choisis.
+#
+# Service utilisateur, sous le même compte qu'otp-relay (son socket refuse les
+# autres UID). Membre du groupe OldTown sous un nom dédié (relais-otp), avec
+# son propre dossier : il ne coupe la session d'aucun autre appareil (note
+# 0009). À copier dans ~/.config/systemd/user/.
+#
+# Réglages locaux (jamais dans le dépôt) dans
+# ~/.config/oldtown-otp/bridge.env, ex. :
+#   OT_OTP_TO=<nom de l'extension>[,<autre appareil>]
+
+[Unit]
+Description=OldTown : codes d'otp-relay vers mes appareils
+Wants=otp-relay.service
+After=otp-relay.service network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=OT_HOME=%h/.local/share/oldtown-otp
+EnvironmentFile=%h/.config/oldtown-otp/bridge.env
+ExecStart=%h/.local/bin/ot otp-bridge
+Restart=always
+RestartSec=10
+UMask=0077
+
+# Durcissement : lecture seule partout sauf le dossier de l'appareil.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=%h/.local/share/oldtown-otp
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=default.target

@@ -2,6 +2,13 @@
 // celle du relais (requêtes HTTP des fichiers, soumises à CORS sans
 // permission) et celle d'une image envoyée depuis une page.
 
+/**
+ * Accès demandé pour remplir les codes d'office (note 0045) : toutes les
+ * pages HTTPS, comme un gestionnaire de mots de passe. Le service worker ne
+ * remplit que sur le site de l'expéditeur.
+ */
+export const OTP_ORIGINS = ['https://*/*'];
+
 /** URL HTTP(S) du relais, d'après son URL WebSocket. */
 export function httpBase(serverUrl: string): string {
   const raw = serverUrl.trim();

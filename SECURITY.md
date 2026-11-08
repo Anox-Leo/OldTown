@@ -51,6 +51,15 @@ vulnerability*), not a public issue.
   messages accepted only from the extension's own pages; strict CSP; host
   permissions requested origin by origin; received files decrypted on the
   fly and shown sandboxed, never written to disk unless downloaded.
+- One-time codes: otp-relay opens the mailbox read-only (`BODY.PEEK`, never
+  marks mail read), keeps the app password in a `0600` file, masks codes in
+  its logs and serves them on a `0600` Unix socket checked by peer UID; it
+  trusts DMARC only from Gmail's own `Authentication-Results` header. The
+  bridge forwards only the code, sender name and domain,
+  DMARC result and expiry, never logs a code, and sends each code once. The
+  extension fills a page by itself only for an authenticated sender, on a
+  page of the same registrable domain (Public Suffix List, private suffixes
+  included) over HTTPS; never a password field.
 - Supply chain: `cargo deny` in CI (advisories, licenses, sources), CI
   actions pinned by commit.
 
@@ -61,3 +70,9 @@ vulnerability*), not a public issue.
 - A saved file (Downloads) is plaintext, like any download.
 - The extension briefly handles plaintext in JavaScript to pass it to
   WebCrypto.
+- The host running otp-relay holds a mailbox app password, which grants
+  full access to the mailbox, not just to codes.
+- A received one-time code is copied to the clipboard, so it may land in an
+  OS clipboard history. The bridge's host holds a group key.
+- Automatic code filling needs access to all HTTPS pages (optional, granted
+  on a click): a flaw in the extension would then reach every such page.

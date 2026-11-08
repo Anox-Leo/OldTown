@@ -35,6 +35,7 @@
     "contextMenus",
     "notifications",
     "offscreen",
+    "scripting",
     "storage"
   ],
   "optional_host_permissions": ["<all_urls>"],
@@ -50,6 +51,12 @@
         "default": "Alt+Shift+V"
       },
       "description": "Envoyer le presse-papiers au dernier destinataire"
+    },
+    "fill-otp": {
+      "suggested_key": {
+        "default": "Alt+Shift+O"
+      },
+      "description": "Remplir le dernier code reçu dans la page"
     }
   },
   "content_security_policy": {

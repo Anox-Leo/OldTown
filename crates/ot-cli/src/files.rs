@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 const CONFIG: &str = "config.toml";
 const KEY: &str = "device.key";
 const SEEN: &str = "seen.json";
+const OTP_SENT: &str = "otp-sent.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -90,6 +91,16 @@ impl Home {
     pub fn save_seen<'a>(&self, seen: impl Iterator<Item = &'a Ulid>) -> Result<()> {
         let ids: Vec<String> = seen.map(Ulid::to_string).collect();
         write_atomic(&self.0.join(SEEN), serde_json::to_string(&ids)?.as_bytes(), false)
+    }
+
+    /// Codes déjà relayés par `ot otp-bridge` ; absent ou illisible : aucun.
+    pub fn load_otp_sent(&self) -> crate::otp::Sent {
+        let text = fs::read_to_string(self.0.join(OTP_SENT)).unwrap_or_default();
+        crate::otp::Sent::from_json(&text)
+    }
+
+    pub fn save_otp_sent(&self, sent: &crate::otp::Sent) -> Result<()> {
+        write_atomic(&self.0.join(OTP_SENT), sent.to_json()?.as_bytes(), true)
     }
 
     /// Clés et état du groupe, dans le même dossier.
