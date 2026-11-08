@@ -82,15 +82,28 @@ export interface TransferView {
   error?: string;
 }
 
+/** Code à usage unique (note 0045). */
+export interface OtpView {
+  /** Le code tel qu'écrit dans le mail (`G-482913`) ; le code seul est dans `body`. */
+  display: string;
+  senderName: string;
+  senderDomain: string;
+  /** Expéditeur authentifié (DMARC). */
+  verified: boolean;
+  /** Fin de validité, en millisecondes Unix. */
+  expiresAt: number;
+}
+
 export interface Item {
   msgId: string;
   from: string;
   fromName: string;
   createdAt: string;
-  kind: 'text' | 'link' | 'file';
-  /** Texte, lien, ou nom du fichier. */
+  kind: 'text' | 'link' | 'file' | 'otp';
+  /** Texte, lien, nom du fichier, ou code à taper. */
   body: string;
   file?: FileView;
+  otp?: OtpView;
   /** Envoyé par cet appareil (sinon reçu). */
   outgoing?: boolean;
   /** Destinataires ; vide : tous les appareils (canal « Tous »). */

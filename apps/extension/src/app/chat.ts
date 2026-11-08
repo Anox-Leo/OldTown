@@ -96,6 +96,12 @@ import { connectionStatus, shortTime } from './status';
                   [class.expanded]="expanded() === item.msgId"
                   >{{ item.body }}</span
                 >
+                @if (item.otp; as o) {
+                  <span class="meta small"
+                    >{{ o.senderName || o.senderDomain }} · {{ o.senderDomain
+                    }}{{ o.verified ? '' : ' · non vérifié' }}</span
+                  >
+                }
               }
             </div>
             @if (item.file; as f) {

@@ -74,7 +74,7 @@ export class MemoryClientStorage implements ClientStorage {
   }
 }
 
-function binary(name: string): string {
+export function binary(name: string): string {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
   return process.env['OT_BIN_DIR']
     ? path.join(process.env['OT_BIN_DIR'], exe)
