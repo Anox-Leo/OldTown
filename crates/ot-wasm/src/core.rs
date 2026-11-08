@@ -8,7 +8,7 @@ use ot_core::crypto::{CHUNK_TAG_LEN, chunk_count, chunk_len, sealed_size};
 use ot_core::crypto::{PairingCode, PairingSecret};
 use ot_core::files::new_file_meta;
 use ot_core::{
-    BlobId, ClientError, Content, ContentKind, DeviceId, Effect, Event, FileInfo, GroupInfo,
+    BlobId, ClientError, Content, ContentKind, DeviceId, Effect, Event, FileInfo, GroupInfo, Otp,
     PendingUpload, SecretStore, Secure, StoreKeyring,
 };
 use ot_proto::{Envelope, b64};
@@ -72,6 +72,17 @@ pub enum EventOut {
         seq: i64,
         #[serde(flatten)]
         file: FileOut,
+    },
+    /// Code à usage unique (note 0045) : `code`, `display`, `sender_name`,
+    /// `sender_domain`, `sender_verified`, `expires_at` (secondes Unix).
+    Otp {
+        seq: i64,
+        msg_id: String,
+        from: String,
+        #[serde(with = "time::serde::rfc3339")]
+        created_at: OffsetDateTime,
+        #[serde(flatten)]
+        otp: Otp,
     },
 }
 
@@ -170,6 +181,13 @@ impl EventOut {
             }
             Event::KeyringError { message } => Self::KeyringError { message },
             Event::File(f) => Self::File { seq: f.seq, file: f.file.into() },
+            Event::Otp(o) => Self::Otp {
+                seq: o.seq,
+                msg_id: o.msg_id.to_string(),
+                from: o.from.to_string(),
+                created_at: o.created_at,
+                otp: o.otp,
+            },
             Event::Connected { .. } | Event::Disconnected { .. } | Event::AuthFailed { .. } => {
                 return None;
             }
@@ -625,6 +643,31 @@ mod tests {
             [EventOut::Message { kind: "text", body, seq: 3, .. }] if body == "bonjour"
         ));
         assert!(core.seal_text("  ", &[]).is_err());
+    }
+
+    #[test]
+    fn otp_is_handed_to_the_service_worker() {
+        let mut phone = sponsor();
+        let (vault, id) = extension();
+        let (mut core, _) = CoreState::open(vault, &id).unwrap();
+        let offer = core.offer("chrome").unwrap();
+        core.process(1, welcome(&mut phone, &offer.qr));
+
+        let otp = Otp {
+            code: "482913".into(),
+            display: "G-482913".into(),
+            sender_name: "Google".into(),
+            sender_domain: "google.com".into(),
+            sender_verified: true,
+            expires_at: 1_793_628_791,
+        };
+        let env = phone.secure.seal_otp(&otp, vec![]).unwrap();
+        let out = core.process(2, env);
+        let json = serde_json::to_value(&out.events).unwrap();
+        assert_eq!(json[0]["type"], "otp");
+        assert_eq!(json[0]["code"], "482913");
+        assert_eq!(json[0]["sender_domain"], "google.com");
+        assert_eq!(json[0]["expires_at"], 1_793_628_791);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ot_crypto::{PairingCode, PairingOffer};
+use ot_crypto::{Otp, PairingCode, PairingOffer};
 use ot_proto::{
     BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid,
     WS_PATH,
@@ -223,6 +223,14 @@ impl Client {
     ) -> Result<Envelope, ClientError> {
         let content = content.clone();
         self.with_secure(move |s| s.seal_content(&content, to)).await
+    }
+
+    /// Chiffre, signe et envoie un code à usage unique (note 0045), à des
+    /// membres du roster (vide : tous les autres appareils).
+    pub async fn send_otp(&self, otp: &Otp, to: Vec<DeviceId>) -> Result<Accepted, ClientError> {
+        let otp = otp.clone();
+        let env = self.with_secure(move |s| s.seal_otp(&otp, to)).await?;
+        self.send_envelope(env).await
     }
 
     /// Envoie une enveloppe déjà construite (par [`Client::seal`], ou à la

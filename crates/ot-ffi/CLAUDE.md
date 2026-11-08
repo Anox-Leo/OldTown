@@ -11,7 +11,8 @@ Kotlin. Fichiers (étape 5) : `OtClient::send_file`, `download`,
 (`Received::file`, son URI une fois enregistré). Envois (note 0033) :
 `send_text` et `send_file` rangent l'élément (`outgoing`, `pending` jusqu'à
 l'accusé) et le signalent par `Event::Sent` (`Event::Unsent` s'il échoue) ;
-chaque élément porte ses destinataires (`to`, vide : tous).
+chaque élément porte ses destinataires (`to`, vide : tous). Un code à usage
+unique (note 0045) devient un élément `Text` dont le corps est le code seul.
 
 - Types exposés simples (`types.rs`) : chaînes, entiers, enregistrements.
   Jamais de clé (pas même celle d'un fichier) ; seuls `Invitation` et
