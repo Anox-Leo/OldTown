@@ -1,0 +1,89 @@
+/* Pages simples de l'extension (envoi, aperçu), dans le thème de la popup. */
+@font-face {
+  font-family: 'DM Sans';
+  src: url('/fonts/dm-sans.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-display: swap;
+}
+:root {
+  color-scheme: light dark;
+  --bg: #fafaf9;
+  --fg: #1c1917;
+  --muted: #78716c;
+  --card: #ffffff;
+  --border: #e7e5e4;
+  --primary: #4f46e5;
+  --danger: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0a09;
+    --fg: #e7e5e4;
+    --muted: #a8a29e;
+    --card: #1c1917;
+    --border: #292524;
+    --primary: #818cf8;
+    --danger: #f87171;
+  }
+}
+body {
+  margin: 0;
+  padding: 16px;
+  font:
+    14px/1.45 'DM Sans',
+    system-ui,
+    sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+h1 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--danger);
+}
+button,
+select,
+input {
+  font: inherit;
+}
+button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+}
+button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.grow {
+  flex: 1;
+}
+[hidden] {
+  display: none !important;
+}

@@ -1,0 +1,55 @@
+name: Frontal
+
+# Relais public derrière Caddy (étape 8e, note 0038) : seulement quand le
+# relais, son protocole ou le déploiement Docker change, sous Linux. Construit
+# l'image, lance relais et Caddy, et vérifie frontal et limites
+# (deploy/tests/compose-test.sh).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/Caddyfile"
+      - "deploy/docker/**"
+      - "deploy/tests/compose-test.sh"
+      - "crates/ot-server/**"
+      - "crates/ot-proto/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/frontal.yml"
+  pull_request:
+    paths:
+      - "deploy/Caddyfile"
+      - "deploy/docker/**"
+      - "deploy/tests/compose-test.sh"
+      - "crates/ot-server/**"
+      - "crates/ot-proto/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".dockerignore"
+      - ".github/workflows/frontal.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: frontal-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Relais et Caddy (docker compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: shellcheck deploy/tests/compose-test.sh
+      - name: Caddyfile valide
+        run: |
+          docker run --rm -e OT_DOMAIN=relay.example.org \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - run: sh deploy/tests/compose-test.sh

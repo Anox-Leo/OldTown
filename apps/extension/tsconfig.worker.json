@@ -1,0 +1,15 @@
+/* Service worker, document offscreen et pages simples (esbuild ne vérifie pas les types). */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["chrome"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"]
+  },
+  "include": [
+    "src/background/**/*.ts",
+    "src/offscreen/**/*.ts",
+    "src/pages/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/wasm/*.d.ts"
+  ]
+}

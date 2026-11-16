@@ -1,4 +1,5 @@
-//! Étape 2, T4 : aucun jeton d'appairage dans les logs du relais.
+//! Étape 2, T4 : aucun jeton d'appairage dans les logs du relais ; étape 5,
+//! T2 : aucune signature ni nonce de requête HTTP.
 //!
 //! Seul test de son binaire : le subscriber `tracing` de test est propre au
 //! fil, et le cache d'intérêt des callsites est global au processus ; des
@@ -57,7 +58,9 @@ async fn token_never_logged() {
 
     let store = Store::in_memory().await.unwrap();
     let sponsor = add_device(&store, "mac").await;
-    let server = TestServer::start(store, test_config()).await;
+    let blobs = tempfile::TempDir::new().unwrap();
+    let config = ot_server::Config { blob_dir: blobs.path().to_owned(), ..test_config() };
+    let server = TestServer::start(store, config).await;
     let (mut raw, _) = Raw::login(&server, &sponsor).await;
     raw.send(&Frame::PairCreate).await;
     let Some(Frame::PairCreated { token, .. }) = raw.recv().await else {
@@ -66,9 +69,19 @@ async fn token_never_logged() {
     redeem(&server, &[9; PAIR_TOKEN_LEN], "android").await;
     redeem(&server, &token, "windows").await;
 
+    // Un fichier vers l'appareil appairé, par requêtes signées.
+    let body = br#"{"size":16,"chunk_size":16,"chunks":1}"#;
+    let headers = signed_headers(&sponsor, "POST", "/v1/blobs", body, ot_server::now_ms(), [7; 16]);
+    let res = http(server.addr, "POST", "/v1/blobs", &headers, body).await;
+    assert_eq!(res.status, 201);
+
     let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(text.contains("appareil appairé"), "les logs doivent être capturés : {text}");
+    assert!(text.contains("fichier créé"), "les logs doivent être capturés : {text}");
     for needle in [b64::encode(&token), format!("{token:?}"), format!("{:?}", token_hash(&token))] {
         assert!(!text.contains(&needle), "jeton dans les logs : {needle}");
+    }
+    for (name, value) in &headers[2..] {
+        assert!(!text.contains(value.as_str()), "{name} dans les logs");
     }
 }

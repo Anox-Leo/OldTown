@@ -1,0 +1,41 @@
+@startuml pairing
+!include style.iuml
+mainframe sd Add a device (reverse QR pairing)
+
+actor User
+participant "New device" as B
+participant "Member device\n(phone)" as A
+participant "Relay\n(ot-server)" as R
+participant "Other members" as M
+
+B -> B : generate Ed25519 and X25519 keys,\ndevice_id and a one-time secret S
+B ->> User : show QR(device_id, public keys, S, name, signature)
+User -> A : scan the QR
+activate A
+A -> A : verify the new device's signature
+A -> R : pair_register(device_id, name, public_key, signature)
+activate R
+R -> R : verify signature, register device
+R --> A : pair_registered(device_id)
+deactivate R
+A -> A : add the device to the roster;\nseal the group key for its X25519 key,\nbound to S (HKDF); sign
+A -> R : send(envelope to new device: welcome)
+A -> R : send(envelope to all: roster update)
+deactivate A
+R ->> M : deliver(roster update)
+
+loop until registered (every 1-3 s)
+  B -> R : connect, challenge, auth
+end
+R ->> B : deliver(welcome)
+activate B
+B -> B : open with its X25519 secret and S,\nverify the sponsor's signature
+B ->> User : joined the group
+deactivate B
+
+note over R
+  S only travels in the QR code:
+  the relay can refuse a pairing,
+  never read or forge the group key.
+end note
+@enduml

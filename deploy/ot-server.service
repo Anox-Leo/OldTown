@@ -1,4 +1,4 @@
-# Relais OldTown. Installation : voir README.md, section « Serveur ».
+# Relais OldTown. Installation : voir README.md, « Install ».
 #
 # Tourne sous l'utilisateur système ot-relay (créé à l'étape 0) plutôt qu'avec
 # DynamicUser, pour que l'administration locale puisse lancer
@@ -26,6 +26,10 @@ ExecStart=/usr/local/bin/ot-server serve
 #   Environment=OT_TLS_CERT=/var/lib/ot-relay/tls/relais.crt
 #   Environment=OT_TLS_KEY=/var/lib/ot-relay/tls/relais.key
 Environment=OT_LISTEN=127.0.0.1:7878
+# /metrics, seulement en local (étape 8e) : curl http://127.0.0.1:7879/metrics
+Environment=OT_ADMIN_LISTEN=127.0.0.1:7879
+# Derrière un frontal TLS (Caddy) sur la même machine, dans la surcharge :
+#   Environment=OT_TRUSTED_PROXY=127.0.0.1
 Environment=OT_DB=/var/lib/ot-relay/ot.db
 Environment=OT_TTL=7d
 Environment=OT_LOG_FORMAT=json

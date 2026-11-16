@@ -1,0 +1,11 @@
+[Unit]
+Description=Diagnostic du relais OldTown, à 00:00 et 12:00
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+# Rapport manqué (machine éteinte) : envoyé au démarrage.
+Persistent=true
+Unit=ot-diag@report.service
+
+[Install]
+WantedBy=timers.target

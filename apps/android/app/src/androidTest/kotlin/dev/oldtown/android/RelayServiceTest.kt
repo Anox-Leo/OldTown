@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -27,8 +28,20 @@ class RelayServiceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val store = RelayHub.store(context)
 
+    /** Vrai seulement si le téléphone n'était pas appairé : rien à protéger. */
+    private var ownsStore = false
+
+    /** Ces tests créent puis oublient un faux appareil : jamais sur un téléphone appairé. */
+    @Before
+    fun noRealDevice() {
+        assumeNoRealDevice(context)
+        ownsStore = true
+    }
+
+    /** JUnit 4 passe ici même si l'hypothèse a sauté le test : ne rien effacer alors. */
     @After
     fun tearDown() {
+        if (!ownsStore) return
         context.stopService(Intent(context, RelayService::class.java))
         forgetDevice(store)
     }

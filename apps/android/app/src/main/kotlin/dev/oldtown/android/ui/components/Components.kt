@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,7 +42,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.oldtown.android.ui.DeviceKind
 import dev.oldtown.android.ui.theme.Mono
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.android.ui.theme.OtShapes
@@ -214,6 +217,44 @@ fun ListRow(
 @Composable
 fun Divider() = HorizontalDivider(color = Ot.colors.border, thickness = 1.dp)
 
+/** Pictogramme d'un type d'appareil, pour son avatar. */
+fun DeviceKind.icon(): ImageVector = when (this) {
+    DeviceKind.PHONE -> OtIcons.Phone
+    DeviceKind.LAPTOP -> OtIcons.Laptop
+    DeviceKind.DESKTOP -> OtIcons.Desktop
+    DeviceKind.BROWSER -> OtIcons.Globe
+    DeviceKind.GROUP -> OtIcons.Users
+}
+
+/**
+ * Avatar rond d'un appareil (note 0031) : pictogramme blanc de son type sur
+ * sa couleur ([dev.oldtown.android.ui.avatarColor]), point vert s'il est en
+ * ligne.
+ */
+@Composable
+fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false) {
+    Box(Modifier.size(size)) {
+        Box(
+            Modifier.fillMaxSize().clip(CircleShape).background(Color(color)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(kind.icon(), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.5f))
+        }
+        if (online) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(size * 0.28f)
+                    .clip(CircleShape)
+                    .background(Ot.colors.screen)
+                    .padding(2.dp)
+                    .clip(CircleShape)
+                    .background(Ot.colors.success),
+            )
+        }
+    }
+}
+
 /** Pastille de couleur (état de connexion, présence). */
 @Composable
 fun Dot(color: Color, size: Int = 8) {
@@ -289,6 +330,7 @@ fun OtTextField(
     singleLine: Boolean = true,
     mono: Boolean = false,
     minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
@@ -304,6 +346,7 @@ fun OtTextField(
         textStyle = style,
         singleLine = singleLine,
         minLines = minLines,
+        maxLines = maxLines,
         cursorBrush = SolidColor(c.primary),
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,

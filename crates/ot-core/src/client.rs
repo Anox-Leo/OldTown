@@ -3,9 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ot_crypto::{PairingCode, PairingOffer};
+use ot_crypto::{Otp, PairingCode, PairingOffer};
 use ot_proto::{
-    Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid, WS_PATH,
+    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid,
+    WS_PATH,
 };
 use time::OffsetDateTime;
 use tokio::net::TcpStream;
@@ -15,9 +16,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use crate::files::{FileInfo, FileMeta, PendingUpload, new_file_meta};
 use crate::keyring::Keyring;
 use crate::secure::{Effect, GroupInfo, Secure};
 use crate::tls::{self, TlsRoots};
+use crate::transfer::{
+    ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig, Transfers, blocking,
+    hash_source,
+};
+use crate::types::{Accepted, ClientError, Event, PairingInvitation};
 use crate::{Dedup, Identity};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -46,6 +53,8 @@ pub struct ClientConfig {
     /// Silence du serveur (pings compris) au-delà duquel la connexion est
     /// considérée morte ; [`IDLE_TIMEOUT`] par défaut.
     pub idle_timeout: Duration,
+    /// Réglages des transferts de fichiers (étape 5).
+    pub transfer: TransferConfig,
 }
 
 impl ClientConfig {
@@ -64,6 +73,7 @@ impl ClientConfig {
             backoff: Backoff::default(),
             tls: TlsRoots::default(),
             idle_timeout: IDLE_TIMEOUT,
+            transfer: TransferConfig::default(),
         }
     }
 
@@ -119,93 +129,6 @@ impl Backoff {
     }
 }
 
-/// Message reçu, déchiffré, d'un membre du roster dont la signature est
-/// vérifiée, et pas encore vu.
-#[derive(Debug, Clone)]
-pub struct Received {
-    pub seq: i64,
-    pub msg_id: Ulid,
-    pub from: DeviceId,
-    pub created_at: OffsetDateTime,
-    pub content: Content,
-}
-
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// Session ouverte ; `pending` messages vont suivre.
-    Connected {
-        pending: u64,
-    },
-    /// Connexion perdue ou refusée ; le client réessaie seul.
-    Disconnected {
-        reason: String,
-    },
-    /// Le serveur a refusé l'authentification (appareil inconnu, révoqué ou
-    /// mauvaise clé). Le client réessaie quand même, avec le délai maximal.
-    AuthFailed {
-        message: String,
-    },
-    Message(Received),
-    /// Message rejeté (en clair, expéditeur hors roster, signature fausse,
-    /// déchiffrement impossible…) ; il est quand même acquitté.
-    Rejected {
-        msg_id: Ulid,
-        from: DeviceId,
-        reason: String,
-    },
-    /// Clés de groupe ou roster modifiés ; `epoch` est l'époque courante.
-    GroupChanged {
-        epoch: u32,
-    },
-    /// Parrain : l'appareil a rejoint le groupe.
-    PairingCompleted {
-        device_id: DeviceId,
-        name: String,
-    },
-    /// Le keyring n'a pas pu lire ou enregistrer l'état du groupe.
-    KeyringError {
-        message: String,
-    },
-}
-
-/// Code d'appairage à transmettre au nouvel appareil.
-#[derive(Debug, Clone)]
-pub struct PairingInvitation {
-    /// Code `ot1-…` : il contient le secret, à ne transmettre que par un
-    /// canal de confiance.
-    pub code: String,
-    pub expires_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Accepted {
-    pub msg_id: Ulid,
-    pub seq: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ClientError {
-    #[error("refusé par le serveur ({code:?}) : {message}")]
-    Rejected { code: ErrorCode, message: String },
-    #[error("client arrêté")]
-    Closed,
-    /// Pas de clé de groupe : le clair est refusé.
-    #[error(
-        "cet appareil n'a pas de groupe : `ot group init` sur le premier appareil, `ot pair join` sur les autres"
-    )]
-    NoGroup,
-    #[error("{0} n'est pas membre du groupe")]
-    NotMember(DeviceId),
-    #[error("chiffrement : {0}")]
-    Crypto(String),
-    #[error("appairage : {0}")]
-    Pairing(String),
-    #[error("connexion : {0}")]
-    Connection(String),
-    #[error("{0}")]
-    Invalid(String),
-}
-
 type Reply<T> = oneshot::Sender<Result<T, ClientError>>;
 
 /// Rotation : époque adoptée et accusés d'envoi des `group_key`.
@@ -216,11 +139,21 @@ enum Command {
     SendContent(Content, Vec<DeviceId>, Reply<Accepted>),
     ListDevices(Reply<Vec<DeviceInfo>>),
     PairCreate(Reply<PairingInvitation>),
-    PairJoin { code: PairingCode, sponsor: DeviceId, name: String, reply: Reply<Accepted> },
+    PairJoin {
+        code: PairingCode,
+        sponsor: DeviceId,
+        name: String,
+        reply: Reply<Accepted>,
+    },
     Rotate(Vec<DeviceId>, Reply<Rotation>),
     Group(oneshot::Sender<Option<GroupInfo>>),
     PairOffer(String, Reply<String>),
     Sponsor(Box<PairingOffer>, Reply<Accepted>),
+    /// Annonce d'un fichier déposé (corps `file`).
+    SendFile(Box<FileMeta>, Vec<DeviceId>, Reply<Accepted>),
+    /// Accès à l'état des fichiers (offres, dépôts en cours) : toutes les
+    /// écritures passent par la tâche du client, une à la fois.
+    WithSecure(Box<dyn FnOnce(&mut Secure) + Send>),
     Reconnect,
     Shutdown(oneshot::Sender<()>),
 }
@@ -230,6 +163,7 @@ enum Command {
 pub struct Client {
     device_id: DeviceId,
     cmd: mpsc::UnboundedSender<Command>,
+    transfers: Transfers,
 }
 
 /// Flux des événements du client.
@@ -246,7 +180,14 @@ impl Client {
     pub fn start(config: ClientConfig) -> (Self, Events) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (ev_tx, ev_rx) = mpsc::channel(256);
-        let client = Self { device_id: config.device_id.clone(), cmd: cmd_tx };
+        let transfers = Transfers::new(
+            &config.server_url,
+            &config.tls,
+            config.device_id.clone(),
+            config.identity.clone(),
+            config.transfer.clone(),
+        );
+        let client = Self { device_id: config.device_id.clone(), cmd: cmd_tx, transfers };
         tokio::spawn(Worker::new(config, cmd_rx, ev_tx).run());
         (client, Events(ev_rx))
     }
@@ -272,10 +213,194 @@ impl Client {
         self.request(|tx| Command::SendContent(content.clone(), to, tx)).await
     }
 
-    /// Envoie une enveloppe déjà construite, telle quelle. Réutiliser le même
-    /// `msg_id` est sans effet côté serveur.
+    /// Chiffre et signe un contenu comme [`Client::send`], sans l'envoyer :
+    /// l'appelant connaît ainsi le `msg_id` avant l'envoi (historique des
+    /// envois, note 0033), puis passe l'enveloppe à [`Client::send_envelope`].
+    pub async fn seal(
+        &self,
+        content: &Content,
+        to: Vec<DeviceId>,
+    ) -> Result<Envelope, ClientError> {
+        let content = content.clone();
+        self.with_secure(move |s| s.seal_content(&content, to)).await
+    }
+
+    /// Chiffre, signe et envoie un code à usage unique (note 0045), à des
+    /// membres du roster (vide : tous les autres appareils).
+    pub async fn send_otp(&self, otp: &Otp, to: Vec<DeviceId>) -> Result<Accepted, ClientError> {
+        let otp = otp.clone();
+        let env = self.with_secure(move |s| s.seal_otp(&otp, to)).await?;
+        self.send_envelope(env).await
+    }
+
+    /// Envoie une enveloppe déjà construite (par [`Client::seal`], ou à la
+    /// main dans les tests), telle quelle. Réutiliser le même `msg_id` est
+    /// sans effet côté serveur.
     pub async fn send_envelope(&self, env: Envelope) -> Result<Accepted, ClientError> {
         self.request(|tx| Command::Send(env, tx)).await
+    }
+
+    /// Exécute `f` dans la tâche du client, avec le cœur de groupe.
+    async fn with_secure<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Secure) -> Result<T, ClientError> + Send + 'static,
+    ) -> Result<T, ClientError> {
+        let (tx, rx) = oneshot::channel();
+        let run = Box::new(move |s: &mut Secure| {
+            let _ = tx.send(f(s));
+        });
+        self.cmd.send(Command::WithSecure(run)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)?
+    }
+
+    /// Envoie un fichier (étape 5) : dépôt chiffré par morceaux sur le
+    /// relais, puis message `file` aux destinataires. Relancé sur la même
+    /// source (`source_id`, même taille), reprend le dépôt interrompu.
+    pub async fn send_file(
+        &self,
+        file: OutgoingFile,
+        source: Arc<dyn ChunkSource>,
+        progress: Arc<dyn Progress>,
+    ) -> Result<Accepted, ClientError> {
+        self.send_file_info(file, source, progress).await.map(|(accepted, _)| accepted)
+    }
+
+    /// Comme [`Client::send_file`], et décrit en plus le fichier annoncé
+    /// (sans clé), pour le ranger dans l'historique des envois (note 0033).
+    /// `created_at` : l'heure de l'annonce acceptée.
+    pub async fn send_file_info(
+        &self,
+        file: OutgoingFile,
+        source: Arc<dyn ChunkSource>,
+        progress: Arc<dyn Progress>,
+    ) -> Result<(Accepted, FileInfo), ClientError> {
+        let t = &self.transfers;
+        let size = source.size();
+        let now = OffsetDateTime::now_utc();
+        // Sans groupe, inutile de déposer quoi que ce soit.
+        self.with_secure(|s| s.info().map(|_| ()).ok_or(ClientError::NoGroup)).await?;
+        let sid = file.source_id.clone();
+        let mut pending = self.with_secure(move |s| s.upload(&sid, size, now)).await?;
+        let mut missing = None;
+        if let Some(p) = pending.take_if(|p| p.to == file.to) {
+            match t.status(&p.meta.blob_id).await {
+                Ok(st) => {
+                    tracing::info!(blob = %p.meta.blob_id, missing = st.missing.len(), "reprise du dépôt");
+                    missing = Some(st.missing);
+                    pending = Some(p);
+                }
+                Err(ClientError::Expired) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let pending = match pending {
+            Some(p) => p,
+            None => {
+                let sha256 = hash_source(source.clone(), t.config.chunk_size).await?;
+                let (created, _) = t.create(size, &file.to).await?;
+                let meta = new_file_meta(
+                    created.blob_id,
+                    &file.name,
+                    &file.mime,
+                    size,
+                    t.config.chunk_size,
+                    sha256,
+                )
+                .ok_or_else(|| ClientError::Invalid("fichier trop gros".into()))?;
+                let p = PendingUpload {
+                    source_id: file.source_id.clone(),
+                    to: file.to.clone(),
+                    expires_at: created.expires_at,
+                    meta,
+                };
+                let saved = p.clone();
+                self.with_secure(move |s| s.save_upload(saved, now)).await?;
+                p
+            }
+        };
+        let missing = missing.unwrap_or_else(|| (0..pending.meta.chunks).collect());
+        t.upload(&pending.meta, missing, source, progress).await?;
+        let (meta, to) = (Box::new(pending.meta.clone()), pending.to.clone());
+        let accepted = self.request(|tx| Command::SendFile(meta, to, tx)).await?;
+        let sid = pending.source_id;
+        self.with_secure(move |s| s.forget_upload(&sid)).await?;
+        tracing::info!(blob = %pending.meta.blob_id, "fichier envoyé");
+        let info = FileInfo {
+            msg_id: accepted.msg_id,
+            from: self.device_id.clone(),
+            created_at: OffsetDateTime::now_utc(),
+            blob_id: pending.meta.blob_id.clone(),
+            name: pending.meta.name.clone(),
+            mime: pending.meta.mime.clone(),
+            size: pending.meta.size,
+        };
+        Ok((accepted, info))
+    }
+
+    /// Abandonne le dépôt en cours de cette source et libère la place sur
+    /// le relais.
+    pub async fn cancel_upload(&self, source_id: &str) -> Result<(), ClientError> {
+        let sid = source_id.to_owned();
+        let uploads = self.with_secure(move |s| s.uploads_of(&sid));
+        for p in uploads.await? {
+            self.transfers.cancel(&p.meta.blob_id).await?;
+        }
+        let sid = source_id.to_owned();
+        self.with_secure(move |s| s.forget_upload(&sid)).await
+    }
+
+    /// Fichiers annoncés encore téléchargeables (sans clé).
+    pub async fn files(&self) -> Result<Vec<FileInfo>, ClientError> {
+        self.with_secure(|s| s.files()).await
+    }
+
+    /// Télécharge un fichier annoncé dans `sink`, vérifie son SHA-256, le
+    /// finalise et prévient le relais. Un fichier expiré est oublié.
+    pub async fn download(
+        &self,
+        blob_id: &BlobId,
+        sink: Arc<dyn ChunkSink>,
+        progress: Arc<dyn Progress>,
+    ) -> Result<FileInfo, ClientError> {
+        let blob = blob_id.clone();
+        let file = self
+            .with_secure(move |s| s.file(&blob))
+            .await?
+            .ok_or_else(|| ClientError::Invalid("fichier inconnu sur cet appareil".into()))?;
+        let res = self.transfers.download(&file, sink.clone(), progress).await;
+        let res = match res {
+            Ok(()) => {
+                let dst = sink.clone();
+                blocking(move || dst.finish())
+                    .await?
+                    .map_err(|e| ClientError::Transfer(format!("fichier non enregistré : {e}")))
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(e) = res {
+            let dst = sink.clone();
+            let _ = blocking(move || dst.abort()).await;
+            if e == ClientError::Expired {
+                let blob = blob_id.clone();
+                self.with_secure(move |s| s.forget_file(&blob)).await?;
+            }
+            return Err(e);
+        }
+        // Le fichier est là : prévenir le relais n'est qu'un nettoyage (sinon
+        // il expire de lui-même).
+        if let Err(e) = self.transfers.done(blob_id).await {
+            tracing::warn!(blob = %blob_id, error = %e, "fin du retrait non signalée au relais");
+        }
+        let blob = blob_id.clone();
+        self.with_secure(move |s| s.forget_file(&blob)).await?;
+        tracing::info!(blob = %blob_id, "fichier reçu");
+        Ok(file.info())
+    }
+
+    /// Oublie un fichier annoncé sans le télécharger.
+    pub async fn forget_file(&self, blob_id: &BlobId) -> Result<(), ClientError> {
+        let blob = blob_id.clone();
+        self.with_secure(move |s| s.forget_file(&blob)).await
     }
 
     pub async fn list_devices(&self) -> Result<Vec<DeviceInfo>, ClientError> {
@@ -533,6 +658,17 @@ impl Worker {
                 let frame = registration.frame();
                 self.registrations.push(registration);
                 Next::Frames(vec![frame])
+            }
+            Command::SendFile(meta, to, tx) => match self.secure.seal_file(&meta, to) {
+                Ok(env) => self.queue(env, Some(tx)),
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    Next::Frames(Vec::new())
+                }
+            },
+            Command::WithSecure(f) => {
+                f(&mut self.secure);
+                Next::Frames(Vec::new())
             }
             Command::Reconnect => Next::Reconnect,
         }
@@ -797,6 +933,9 @@ impl Worker {
                     }
                 }
             }
+            // Réponse à un `ping` : ce client n'en envoie pas (les pings
+            // WebSocket du relais lui suffisent, note 0023).
+            Frame::Pong => {}
             Frame::Error { code: ErrorCode::AuthFailed, message, .. } => {
                 return Err(End::AuthFailed(message));
             }

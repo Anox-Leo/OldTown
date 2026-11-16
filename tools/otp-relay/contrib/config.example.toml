@@ -1,0 +1,29 @@
+# Configuration d'otp-relay : ~/.config/otp-relay/config.toml (chmod 600)
+
+[imap]
+username = "toi@gmail.com"
+# Mot de passe d'application Google (16 lettres) dans un fichier en chmod 600.
+# Alternative : variable d'environnement OTP_RELAY_IMAP_PASSWORD.
+password_file = "~/.config/otp-relay/imap-password"
+host = "imap.gmail.com"
+port = 993
+security = "ssl"            # ssl | starttls | none (127.0.0.1 uniquement, tests)
+mailbox = "INBOX"           # "[Gmail]/All Mail" couvre aussi les mails archivés par un filtre
+idle_refresh = 600          # renouvellement de l'IDLE et recherche des nouveaux mails, en secondes
+                            # (5 à 1500 ; 10 rattrape les retards de Gmail, qui coupe l'IDLE vers 29 min)
+max_age = 900               # un mail reçu il y a plus longtemps n'est jamais diffusé
+
+[socket]
+# Par défaut : $XDG_RUNTIME_DIR/otp-relay/otp-relay.sock
+# path = "/run/user/1000/otp-relay/otp-relay.sock"
+mode = "0600"               # "0660" pour ouvrir au groupe (et RuntimeDirectoryMode=0750 dans l'unité)
+# allowed_uids = [1000]     # UID autorisés à se connecter (SO_PEERCRED) ; défaut : l'utilisateur du daemon
+heartbeat = 30              # secondes entre deux « heartbeat »
+
+[events]
+code_ttl = 600              # durée de vie d'un code (replay, expiration), en secondes
+min_confidence = 0.4        # en dessous, le code n'est pas diffusé
+
+[log]
+level = "INFO"
+show_codes = false          # true : les codes apparaissent en clair dans le journal

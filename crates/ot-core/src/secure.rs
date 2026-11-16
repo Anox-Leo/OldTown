@@ -6,18 +6,22 @@
 use std::sync::Arc;
 
 use ot_crypto::{
-    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened,
+    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened, Otp,
     PairingCode, PairingOffer, PairingSecret, Roster, SealKey, fingerprint, open, seal,
 };
-use ot_proto::{Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
+use ot_proto::{BlobId, Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
 use time::OffsetDateTime;
 
 use crate::Identity;
-use crate::client::{ClientError, Event, Received};
+use crate::files::{
+    FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile, add_offer, prune_offers,
+    stored_from_body,
+};
 use crate::keyring::{
     GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, Quarantined, RETIRED_KEY_LIFETIME,
 };
 use crate::roster::{self, RosterError};
+use crate::types::{ClientError, Event, Received, ReceivedOtp};
 
 /// État du groupe, vu de cet appareil (pour l'affichage).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,9 +131,11 @@ pub fn group_info(keyring: &dyn Keyring) -> Result<Option<GroupInfo>, KeyringErr
     }
 }
 
-/// Ce que le client doit faire après le traitement d'un message.
+/// Ce que le client doit faire après le traitement d'un message : émettre un
+/// événement, ou envoyer une enveloppe (message système : roster, réponse
+/// d'appairage).
 #[derive(Debug)]
-pub(crate) enum Effect {
+pub enum Effect {
     Emit(Event),
     Send(Envelope),
 }
@@ -184,7 +190,12 @@ struct Joining {
     sponsor: DeviceId,
 }
 
-pub(crate) struct Secure {
+/// Cœur de groupe sans réseau : scelle les messages sortants, ouvre et
+/// vérifie les messages entrants, tient roster, époques, quarantaine et
+/// appairages en cours. Chaque changement est enregistré dans le
+/// [`Keyring`] avant de rendre la main. Utilisé par le [`crate::Client`]
+/// réseau et, compilé en WebAssembly, par l'extension (note 0023).
+pub struct Secure {
     me: DeviceId,
     identity: Identity,
     exchange: ExchangeKeyPair,
@@ -286,6 +297,97 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
+    /// Chiffre un code à usage unique (corps `otp`, note 0045) sous l'époque
+    /// courante, pour des membres du roster (vide : tous).
+    pub fn seal_otp(&self, otp: &Otp, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
+        let (keys, roster) = self.group()?;
+        if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
+            return Err(ClientError::NotMember(id.clone()));
+        }
+        let key = keys.current_key().ok_or(ClientError::NoGroup)?;
+        let body = Body::Otp(otp.clone());
+        self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
+    }
+
+    /// Chiffre l'annonce d'un fichier déposé (corps `file`, étape 5) sous
+    /// l'époque courante, pour des membres du roster (vide : tous).
+    pub fn seal_file(&self, meta: &FileMeta, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
+        let (keys, roster) = self.group()?;
+        if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
+            return Err(ClientError::NotMember(id.clone()));
+        }
+        let key = keys.current_key().ok_or(ClientError::NoGroup)?;
+        self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &meta.body()).map_err(crypto)
+    }
+
+    /// Offre reçue pour ce blob, avec sa clé (pour le téléchargement).
+    pub fn file(&self, blob_id: &BlobId) -> Result<Option<StoredFile>, ClientError> {
+        let files = self.keyring.load_files().map_err(keyring_err)?;
+        Ok(files.into_iter().find(|f| &f.blob_id == blob_id))
+    }
+
+    /// Fichiers annoncés encore connus, du plus ancien au plus récent.
+    pub fn files(&self) -> Result<Vec<FileInfo>, ClientError> {
+        let mut files = self.keyring.load_files().map_err(keyring_err)?;
+        prune_offers(&mut files, OffsetDateTime::now_utc());
+        Ok(files.iter().map(StoredFile::info).collect())
+    }
+
+    /// Oublie une offre (fichier téléchargé, ou expiré sur le relais).
+    pub fn forget_file(&self, blob_id: &BlobId) -> Result<(), ClientError> {
+        let mut files = self.keyring.load_files().map_err(keyring_err)?;
+        let before = files.len();
+        files.retain(|f| &f.blob_id != blob_id);
+        if files.len() != before {
+            self.keyring.save_files(&files).map_err(keyring_err)?;
+        }
+        Ok(())
+    }
+
+    /// Dépôt en cours pour cette source, s'il n'a pas expiré et si la taille
+    /// n'a pas changé.
+    pub fn upload(
+        &self,
+        source_id: &str,
+        size: u64,
+        now: OffsetDateTime,
+    ) -> Result<Option<PendingUpload>, ClientError> {
+        let uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        Ok(uploads
+            .into_iter()
+            .find(|u| u.source_id == source_id && u.meta.size == size && u.expires_at > now))
+    }
+
+    /// Tous les dépôts en cours de cette source, expirés compris.
+    pub fn uploads_of(&self, source_id: &str) -> Result<Vec<PendingUpload>, ClientError> {
+        let uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        Ok(uploads.into_iter().filter(|u| u.source_id == source_id).collect())
+    }
+
+    /// Enregistre un dépôt en cours (remplace celui de la même source) et
+    /// oublie les dépôts expirés.
+    pub fn save_upload(
+        &self,
+        upload: PendingUpload,
+        now: OffsetDateTime,
+    ) -> Result<(), ClientError> {
+        let mut uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        uploads.retain(|u| u.source_id != upload.source_id && u.expires_at > now);
+        uploads.push(upload);
+        self.keyring.save_uploads(&uploads).map_err(keyring_err)
+    }
+
+    /// Oublie le dépôt en cours de cette source (terminé ou abandonné).
+    pub fn forget_upload(&self, source_id: &str) -> Result<(), ClientError> {
+        let mut uploads = self.keyring.load_uploads().map_err(keyring_err)?;
+        let before = uploads.len();
+        uploads.retain(|u| u.source_id != source_id);
+        if uploads.len() != before {
+            self.keyring.save_uploads(&uploads).map_err(keyring_err)?;
+        }
+        Ok(())
+    }
+
     /// Le relais a créé un jeton : tire le secret et attend la demande.
     pub fn sponsor(
         &mut self,
@@ -337,6 +439,24 @@ impl Secure {
         .map_err(|e| ClientError::Invalid(e.to_string()))?;
         self.joining_qr = Some(secret);
         Ok(offer)
+    }
+
+    /// Nouvel appareil, QR inversé : reprend une offre affichée avant un
+    /// redémarrage (secret rangé par l'appli, note 0023).
+    pub fn restore_offer(&mut self, secret: PairingSecret) {
+        self.joining_qr = Some(secret);
+    }
+
+    /// Nouvel appareil, appairage par code : reprend l'attente de la réponse
+    /// du parrain après un redémarrage, sans renvoyer la demande.
+    pub fn restore_join(&mut self, code: &PairingCode, sponsor: DeviceId) {
+        self.joining =
+            Some(Joining { token_id: code.token_id(), secret: code.secret.clone(), sponsor });
+    }
+
+    /// Un appairage (par code ou QR inversé) attend encore sa réponse.
+    pub fn is_joining(&self) -> bool {
+        self.joining.is_some() || self.joining_qr.is_some()
     }
 
     /// Parrain, QR inversé : vérifie l'offre scannée avant de demander
@@ -509,6 +629,18 @@ impl Secure {
                     Body::Text { body } => Content::text(body),
                     Body::Link { body } => Content::link(body),
                     Body::Roster { roster } => return self.on_roster(env, epoch, roster, fx),
+                    body @ Body::File { .. } => return self.on_file(seq, env, body, now, fx),
+                    Body::Otp(otp) => {
+                        fx.push(Effect::Emit(Event::Otp(ReceivedOtp {
+                            seq,
+                            msg_id: env.msg_id,
+                            from: env.from.clone(),
+                            to: env.to.clone(),
+                            created_at: env.created_at,
+                            otp,
+                        })));
+                        return Ok(Handled::Done);
+                    }
                     other => {
                         return Err(Reject::Reason(format!(
                             "{} inattendu sous la clé de groupe",
@@ -520,6 +652,7 @@ impl Secure {
                     seq,
                     msg_id: env.msg_id,
                     from: env.from.clone(),
+                    to: env.to.clone(),
                     created_at: env.created_at,
                     content,
                 })));
@@ -568,6 +701,26 @@ impl Secure {
 
     /// Parrain : vérifie la demande, ajoute l'appareil, lui envoie la clé et
     /// le roster, puis le roster à tous.
+    /// Fichier annoncé : l'offre (clé comprise) est rangée avant que le
+    /// message soit acquitté, puis signalée à l'appli sans la clé.
+    fn on_file(
+        &mut self,
+        seq: i64,
+        env: &Envelope,
+        body: Body,
+        now: OffsetDateTime,
+        fx: &mut Vec<Effect>,
+    ) -> Result<Handled, Reject> {
+        let stored = stored_from_body(env.msg_id, env.from.clone(), env.created_at, now, body)
+            .ok_or("corps de fichier attendu")?;
+        let file = stored.info();
+        let mut files = self.keyring.load_files().map_err(|e| Reject::Reason(e.0))?;
+        add_offer(&mut files, stored, now);
+        self.keyring.save_files(&files).map_err(|e| Reject::Reason(e.0))?;
+        fx.push(Effect::Emit(Event::File(ReceivedFile { seq, file, to: env.to.clone() })));
+        Ok(Handled::Done)
+    }
+
     fn on_pair_request(
         &mut self,
         i: usize,
@@ -766,6 +919,11 @@ impl Secure {
     }
 }
 
+/// Erreur du keyring, remontée telle quelle à l'appli.
+fn keyring_err(e: KeyringError) -> ClientError {
+    ClientError::Invalid(e.to_string())
+}
+
 fn crypto(e: CryptoError) -> ClientError {
     ClientError::Crypto(e.to_string())
 }
@@ -867,6 +1025,36 @@ mod tests {
         assert!(!String::from_utf8_lossy(&env.payload.data).contains("bonjour"));
         let fx = d[1].receive(env);
         assert_eq!(texts(&fx), ["bonjour"]);
+    }
+
+    #[test]
+    fn otp_reaches_its_recipient_only() {
+        let mut d = group(3);
+        let otp = Otp {
+            code: "482913".into(),
+            display: "G-482913".into(),
+            sender_name: "Google".into(),
+            sender_domain: "google.com".into(),
+            sender_verified: true,
+            expires_at: 1_793_628_791,
+        };
+        let env = d[0].secure.seal_otp(&otp, vec![d[1].id.clone()]).unwrap();
+        assert!(!String::from_utf8_lossy(&env.payload.data).contains("482913"));
+        assert_eq!(env.to, [d[1].id.clone()]);
+        let fx = d[1].receive(env);
+        let got: Vec<_> = fx
+            .iter()
+            .filter_map(|f| match f {
+                Effect::Emit(Event::Otp(o)) => Some(o.otp.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, std::slice::from_ref(&otp));
+        let outsider = DeviceId::generate();
+        assert!(matches!(
+            d[0].secure.seal_otp(&otp, vec![outsider]),
+            Err(ClientError::NotMember(_))
+        ));
     }
 
     #[test]
@@ -1106,6 +1294,36 @@ mod tests {
         let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
         new.reload(); // l'offre n'existe qu'en mémoire
         assert_eq!(rejected(&new.receive(welcome)), ["appairage par QR inconnu ou terminé"]);
+    }
+
+    #[test]
+    fn restored_offer_accepts_the_welcome() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let offer = new.secure.offer("windows").unwrap();
+        let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
+        new.reload();
+        assert!(!new.secure.is_joining());
+        new.secure.restore_offer(offer.secret.clone());
+        assert!(new.secure.is_joining());
+        let fx = new.receive(welcome);
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
+        assert!(!new.secure.is_joining());
+    }
+
+    #[test]
+    fn restored_join_accepts_the_welcome() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let expires = OffsetDateTime::now_utc() + time::Duration::minutes(10);
+        let code = d[0].secure.sponsor([7; 10], expires).unwrap();
+        let request = new.secure.start_join(&code, d[0].id.clone(), "nouveau").unwrap();
+        let welcome = sends(&d[0].receive(request)).remove(0);
+        new.reload();
+        assert_eq!(rejected(&new.receive(welcome.clone())), ["appairage inconnu ou expiré"]);
+        new.secure.restore_join(&code, d[0].id.clone());
+        let fx = new.receive(welcome);
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
     }
 
     #[test]

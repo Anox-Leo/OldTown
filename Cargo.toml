@@ -7,10 +7,11 @@ members = [
     "crates/ot-server",
     "crates/ot-cli",
     "crates/ot-ffi",
+    "crates/ot-wasm",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -23,6 +24,8 @@ ot-core = { path = "crates/ot-core" }
 ot-server = { path = "crates/ot-server" }
 ot-ffi = { path = "crates/ot-ffi" }
 
+# STREAM (fichiers, étape 5) : sorti de `aead` 0.6 dans sa propre crate (note 0026).
+aead-stream = "0.6"
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
@@ -31,6 +34,11 @@ clap = { version = "4", features = ["derive", "env"] }
 directories = "6"
 ed25519-dalek = "3"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# Client HTTP des fichiers (étape 5) : déjà dans l'arbre par axum (note 0026).
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 getrandom = { version = "0.4", features = ["std"] }
 qrcode = { version = "0.14", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
@@ -53,6 +61,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ulid = { version = "3", features = ["serde"] }
 uniffi = "0.32"
+wasm-bindgen = "0.2.129"
 webpki-roots = "1"
 x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
@@ -62,6 +71,14 @@ zeroize = { version = "1", features = ["derive"] }
 # gardent le profil `release` habituel.
 [profile.android]
 inherits = "release"
+lto = true
+codegen-units = 1
+strip = true
+
+# WebAssembly de l'extension (`ot-wasm`) : optimisé pour la taille.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
 lto = true
 codegen-units = 1
 strip = true

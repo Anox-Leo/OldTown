@@ -24,6 +24,13 @@ pub enum OtError {
     /// Donnée saisie invalide (URL, nom…).
     #[error("{message}")]
     Invalid { message: String },
+    /// Fichier plus disponible sur le relais (expiré, annulé).
+    #[error("{message}")]
+    Expired { message: String },
+    /// Transfert de fichier en échec (réseau, fichier altéré, stockage) ;
+    /// le relancer reprend là où il s'est arrêté.
+    #[error("{message}")]
+    Transfer { message: String },
     #[error("{message}")]
     Internal { message: String },
 }
@@ -43,6 +50,8 @@ impl From<ClientError> for OtError {
             | ClientError::Pairing(_) => Self::Pairing { message },
             ClientError::NoGroup | ClientError::NotMember(_) => Self::NotInGroup { message },
             ClientError::Invalid(_) => Self::Invalid { message },
+            ClientError::Expired => Self::Expired { message },
+            ClientError::Transfer(_) => Self::Transfer { message },
             ClientError::Rejected { .. } | ClientError::Crypto(_) => Self::Internal { message },
         }
     }
@@ -83,6 +92,8 @@ pub struct DeviceState {
 pub enum ContentKind {
     Text,
     Link,
+    /// Fichier (étape 5) : détails dans `Received::file`.
+    File,
 }
 
 impl From<ot_core::ContentKind> for ContentKind {
@@ -94,7 +105,8 @@ impl From<ot_core::ContentKind> for ContentKind {
     }
 }
 
-/// Élément reçu, déchiffré et vérifié.
+/// Élément de l'historique : reçu (déchiffré et vérifié) ou envoyé d'ici
+/// (`outgoing`, note 0033).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct Received {
@@ -106,10 +118,22 @@ pub struct Received {
     pub created_at_ms: i64,
     pub kind: ContentKind,
     pub body: String,
-    /// Contenu à masquer (aperçu, presse-papiers). Toujours faux avant
-    /// l'étape 6, qui apporte le marquage.
+    /// Contenu à masquer (aperçu, presse-papiers). Toujours faux : le
+    /// marquage prévu à l'étape 6 est abandonné (note 0034).
     #[serde(default)]
     pub sensitive: bool,
+    /// Fichier annoncé (`kind` vaut `File`, `body` son nom).
+    #[serde(default)]
+    pub file: Option<crate::FileItem>,
+    /// Destinataires, lus dans l'enveloppe ; vide : tous les appareils.
+    #[serde(default)]
+    pub to: Vec<String>,
+    /// Envoyé depuis ce téléphone (`from_id` est alors le sien).
+    #[serde(default)]
+    pub outgoing: bool,
+    /// Envoi pas encore accepté par le relais.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// Événement du client, dans l'ordre d'arrivée.
@@ -123,6 +147,11 @@ pub enum Event {
     AuthFailed { message: String },
     /// Élément reçu, déjà rangé dans l'historique.
     Message { received: Received },
+    /// Élément envoyé d'ici, rangé ou mis à jour dans l'historique (en
+    /// cours, puis accepté). Jamais à notifier.
+    Sent { item: Received },
+    /// Envoi en échec : l'élément `msg_id` a quitté l'historique.
+    Unsent { msg_id: String },
     /// Message rejeté (expéditeur hors groupe, signature fausse…).
     Rejected { from_name: String, reason: String },
     /// Groupe ou roster modifié (appairage, rotation).

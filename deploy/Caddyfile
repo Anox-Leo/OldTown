@@ -1,0 +1,28 @@
+# Frontal TLS du relais OldTown (étape 8e, note 0038) : certificat
+# Let's Encrypt obtenu et renouvelé par Caddy, WebSocket et fichiers relayés
+# vers le relais en clair sur une adresse privée.
+#
+# Variables d'environnement :
+#   OT_DOMAIN    nom du relais (ex. relay.example.org), qui pointe vers cette
+#                machine ; ports 80 et 443 joignables depuis Internet.
+#   OT_UPSTREAM  adresse du relais ; 127.0.0.1:7878 par défaut (même machine),
+#                relay:7878 avec docker compose.
+#
+# Le relais doit croire l'en-tête X-Forwarded-For de Caddy, et de lui seul :
+# OT_TRUSTED_PROXY=<ip de Caddy vue par le relais> (note 0036). Sans directive
+# `log`, Caddy n'écrit aucun journal d'accès : pas d'IP de client sur le disque.
+
+{
+	servers {
+		timeouts {
+			# Un client qui envoie ses en-têtes au compte-gouttes est coupé.
+			read_header 10s
+		}
+	}
+}
+
+{$OT_DOMAIN} {
+	# Caddy remplace X-Forwarded-For par l'IP du client (il ne croit pas
+	# celui qu'un client enverrait) ; WebSocket relayé tel quel.
+	reverse_proxy {$OT_UPSTREAM:127.0.0.1:7878}
+}

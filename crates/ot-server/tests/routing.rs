@@ -48,6 +48,18 @@ async fn send_accept_deliver_ack() {
     panic!("l'ack n'a pas été enregistré");
 }
 
+/// Maintien de la connexion (extension Chrome, note 0023) : `ping` reçoit
+/// `pong`, sans rien changer d'autre.
+#[tokio::test]
+async fn ping_gets_pong() {
+    let (server, a, _) = setup().await;
+    let (mut ra, _) = Raw::login(&server, &a).await;
+    ra.send(&Frame::Ping).await;
+    assert_eq!(ra.recv().await, Some(Frame::Pong));
+    ra.send(&Frame::ListDevices).await;
+    assert!(matches!(ra.recv().await, Some(Frame::Devices { .. })));
+}
+
 #[tokio::test]
 async fn oversized_envelope_is_rejected() {
     let (server, a, _) = setup().await;
@@ -127,7 +139,9 @@ async fn healthz_and_metrics() {
     let (server, a, _) = setup().await;
     assert_eq!(http_get(server.addr, "/healthz").await, (200, "ok\n".into()));
     let _session = Raw::login(&server, &a).await;
-    let (code, body) = http_get(server.addr, "/metrics").await;
+    assert_eq!(http_get(server.addr, "/metrics").await.0, 404, "jamais sur le port public");
+    assert_eq!(http_get(server.admin, "/healthz").await, (200, "ok\n".into()));
+    let (code, body) = http_get(server.admin, "/metrics").await;
     assert_eq!(code, 200);
     assert!(body.contains("ot_connections 1"), "{body}");
     assert!(body.contains("ot_messages_purged_total{reason=\"expired\"} 0"), "{body}");

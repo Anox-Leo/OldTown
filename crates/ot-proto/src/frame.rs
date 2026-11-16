@@ -71,6 +71,12 @@ pub enum Frame {
     /// Serveur → parrain : appareil enregistré. Une erreur porte en `ref`
     /// l'identifiant demandé et laisse la session ouverte.
     PairRegistered { device_id: DeviceId },
+    /// Client → serveur, session authentifiée : maintien de la connexion.
+    /// L'extension Chrome en envoie toutes les 20 s, son service worker
+    /// s'arrêtant après 30 s sans message (note 0023).
+    Ping,
+    /// Serveur → client : réponse à `ping`.
+    Pong,
     /// Les deux sens : erreur typée. `auth_failed`, `pairing_invalid` et
     /// `name_taken` ferment la connexion.
     Error {
@@ -153,6 +159,8 @@ const KNOWN_TYPES: &[&str] = &[
     "pair_redeemed",
     "pair_register",
     "pair_registered",
+    "ping",
+    "pong",
     "error",
 ];
 
@@ -179,6 +187,8 @@ impl Frame {
             Self::PairRedeemed { .. } => "pair_redeemed",
             Self::PairRegister { .. } => "pair_register",
             Self::PairRegistered { .. } => "pair_registered",
+            Self::Ping => "ping",
+            Self::Pong => "pong",
             Self::Error { .. } => "error",
         }
     }

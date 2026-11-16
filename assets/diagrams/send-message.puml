@@ -1,0 +1,45 @@
+@startuml send-message
+!include style.iuml
+mainframe sd Send a text or a link
+
+actor User
+participant "Sender device" as A
+participant "Relay\n(ot-server)" as R
+database "SQLite" as DB
+participant "Recipient device" as B
+
+== Every connection: signed challenge ==
+A -> R : connect wss://relay/v1/ws
+activate R
+R --> A : challenge(nonce)
+A -> R : auth(device_id, Ed25519 signature of nonce)
+R -> R : verify with the registered public key
+R --> A : welcome(pending)
+deactivate R
+
+== Send ==
+User -> A : share / type text
+activate A
+A -> A : encrypt with the group key\n(XChaCha20-Poly1305),\nsign with the device key (Ed25519)
+A -> R : send(envelope{msg_id, from, to,\ncreated_at, payload = ciphertext})
+activate R
+R -> DB : store envelope for each recipient
+R --> A : accepted(msg_id, seq)
+deactivate R
+deactivate A
+
+alt recipient online
+  R ->> B : deliver(seq, envelope)
+else recipient offline
+  note over R, DB : queued until delivered (7 days max)
+  B -> R : connect, challenge, auth
+  R ->> B : deliver(seq, envelope)
+end
+
+activate B
+B -> B : sender in the group roster?\nsignature valid? decrypt
+B -> R : ack(seq)
+B ->> User : notification (Copy, Open)
+deactivate B
+R -> DB : purge acknowledged envelope
+@enduml

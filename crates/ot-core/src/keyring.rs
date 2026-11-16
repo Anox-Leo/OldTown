@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use ot_crypto::{ExchangeKeyPair, GroupKey, Roster};
 use ot_proto::{DeviceId, Envelope, b64};
+
+use crate::files::{PendingUpload, StoredFile};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
@@ -38,6 +40,12 @@ pub trait Keyring: Send + Sync {
     /// Messages d'époque inconnue, mis de côté (au plus [`MAX_QUARANTINE`]).
     fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError>;
     fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError>;
+    /// Fichiers annoncés, avec leur clé (étape 5).
+    fn load_files(&self) -> Result<Vec<StoredFile>, KeyringError>;
+    fn save_files(&self, files: &[StoredFile]) -> Result<(), KeyringError>;
+    /// Dépôts de fichiers en cours, avec leur clé (étape 5).
+    fn load_uploads(&self) -> Result<Vec<PendingUpload>, KeyringError>;
+    fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError>;
 }
 
 /// Octets nommés, rangés à l'abri par l'appli. Les noms sont courts, en ASCII
@@ -61,6 +69,10 @@ pub mod names {
     pub const ROSTER: &str = "roster.json";
     /// Messages mis de côté, en JSON.
     pub const QUARANTINE: &str = "quarantine.json";
+    /// Fichiers annoncés, avec leur clé, en JSON (étape 5).
+    pub const FILES: &str = "files.json";
+    /// Dépôts de fichiers en cours, avec leur clé, en JSON (étape 5).
+    pub const UPLOADS: &str = "uploads.json";
 }
 
 /// [`Keyring`] rangé dans un [`SecretStore`]. Le format des valeurs est celui
@@ -78,7 +90,14 @@ impl StoreKeyring {
 
     /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
     pub fn forget_group(&self) -> Result<(), KeyringError> {
-        for name in [names::EXCHANGE_KEY, names::GROUP, names::ROSTER, names::QUARANTINE] {
+        for name in [
+            names::EXCHANGE_KEY,
+            names::GROUP,
+            names::ROSTER,
+            names::QUARANTINE,
+            names::FILES,
+            names::UPLOADS,
+        ] {
             self.store.delete(name)?;
         }
         Ok(())
@@ -141,6 +160,22 @@ impl Keyring for StoreKeyring {
 
     fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError> {
         self.write_json(names::QUARANTINE, messages)
+    }
+
+    fn load_files(&self) -> Result<Vec<StoredFile>, KeyringError> {
+        Ok(self.read_json(names::FILES)?.unwrap_or_default())
+    }
+
+    fn save_files(&self, files: &[StoredFile]) -> Result<(), KeyringError> {
+        self.write_json(names::FILES, files)
+    }
+
+    fn load_uploads(&self) -> Result<Vec<PendingUpload>, KeyringError> {
+        Ok(self.read_json(names::UPLOADS)?.unwrap_or_default())
+    }
+
+    fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError> {
+        self.write_json(names::UPLOADS, uploads)
     }
 }
 
@@ -287,6 +322,8 @@ struct MemoryState {
     keys: Option<GroupKeys>,
     roster: Option<Roster>,
     quarantine: Vec<Quarantined>,
+    files: Vec<StoredFile>,
+    uploads: Vec<PendingUpload>,
 }
 
 impl MemoryKeyring {
@@ -326,6 +363,20 @@ impl Keyring for MemoryKeyring {
     }
     fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError> {
         self.lock().quarantine = messages.to_vec();
+        Ok(())
+    }
+    fn load_files(&self) -> Result<Vec<StoredFile>, KeyringError> {
+        Ok(self.lock().files.clone())
+    }
+    fn save_files(&self, files: &[StoredFile]) -> Result<(), KeyringError> {
+        self.lock().files = files.to_vec();
+        Ok(())
+    }
+    fn load_uploads(&self) -> Result<Vec<PendingUpload>, KeyringError> {
+        Ok(self.lock().uploads.clone())
+    }
+    fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError> {
+        self.lock().uploads = uploads.to_vec();
         Ok(())
     }
 }

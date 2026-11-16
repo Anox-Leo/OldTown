@@ -1,4 +1,6 @@
 mod files;
+mod otp;
+mod transfer;
 
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
@@ -8,14 +10,15 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use ot_core::{
-    Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, GroupInfo, Identity,
-    Received, TlsRoots,
+    BlobId, Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, FileInfo, GroupInfo,
+    Identity, OutgoingFile, Received, ReceivedOtp, TlsRoots,
 };
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::files::{Config, Home};
+use crate::transfer::{FileSink, FileSource, guess_mime, human_size, source_id};
 
 /// Délai maximal d'une commande ponctuelle (send, devices).
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
@@ -51,19 +54,38 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Envoie un texte ou un lien (lu sur l'entrée standard si absent).
+    /// Envoie un texte ou un lien (lu sur l'entrée standard si absent), ou
+    /// un fichier avec --file.
     Send {
         text: Vec<String>,
         /// Destinataire (nom d'un membre du groupe), répétable ; par défaut
         /// tous les autres.
         #[arg(long = "to")]
         to: Vec<String>,
+        /// Fichier à envoyer. Relancer la même commande reprend un envoi
+        /// interrompu.
+        #[arg(long, conflicts_with = "text")]
+        file: Option<PathBuf>,
     },
     /// Affiche les messages reçus au fil de l'eau.
     Listen {
         /// Une ligne JSON par message.
         #[arg(long)]
         json: bool,
+        /// Télécharge les fichiers reçus dans ce dossier ; sans cette option,
+        /// ils sont seulement annoncés (`ot download`).
+        #[arg(long)]
+        download_dir: Option<PathBuf>,
+    },
+    /// Liste les fichiers reçus pas encore téléchargés.
+    Files,
+    /// Télécharge un fichier reçu (identifiant donné par `ot files`).
+    Download {
+        /// Identifiant `blob_…`.
+        blob: String,
+        /// Dossier de destination (par défaut le dossier courant).
+        #[arg(long)]
+        to: Option<PathBuf>,
     },
     /// Liste les appareils enregistrés sur le relais et signale ceux qui ne
     /// sont pas membres du groupe.
@@ -74,6 +96,21 @@ enum Command {
     /// Appairage d'un nouvel appareil par code.
     #[command(subcommand)]
     Pair(PairCommand),
+    /// Relaie les codes à usage unique lus par otp-relay (socket Unix) vers
+    /// des membres du groupe. Tourne jusqu'à l'arrêt (service).
+    OtpBridge {
+        /// Destinataire (nom d'un membre du groupe), répétable ; ou, dans
+        /// `OT_OTP_TO`, des noms séparés par des virgules.
+        #[arg(long = "to", required = true, env = "OT_OTP_TO", value_delimiter = ',')]
+        to: Vec<String>,
+        /// Socket d'otp-relay (par défaut
+        /// `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`).
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        /// Confiance minimale d'un code (0 à 1).
+        #[arg(long, default_value_t = 0.6)]
+        min_confidence: f64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -141,8 +178,13 @@ fn main() -> Result<()> {
             Command::Init { server, name, device_id, force } => {
                 init(&home, server, name, device_id, force)
             }
-            Command::Send { text, to } => send(&home, text, to).await,
-            Command::Listen { json } => listen(&home, json, offset).await,
+            Command::Send { file: Some(path), to, .. } => send_file(&home, &path, to).await,
+            Command::Send { text, to, file: None } => send(&home, text, to).await,
+            Command::Listen { json, download_dir } => {
+                listen(&home, json, download_dir, offset).await
+            }
+            Command::Files => list_files(&home, offset).await,
+            Command::Download { blob, to } => download(&home, &blob, to).await,
             Command::Devices => devices(&home).await,
             Command::Group(GroupCommand::Init { force }) => group_init(&home, force),
             Command::Group(GroupCommand::Show) => group_show(&home),
@@ -155,6 +197,9 @@ fn main() -> Result<()> {
                 pair_join_qr(&home, server, name, force).await
             }
             Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
+            Command::OtpBridge { to, socket, min_confidence } => {
+                otp_bridge(&home, to, socket, min_confidence).await
+            }
         }
     })
 }
@@ -275,6 +320,87 @@ async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+async fn send_file(home: &Home, path: &std::path::Path, to: Vec<String>) -> Result<()> {
+    let group = group(home)?;
+    let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
+    let source = Arc::new(FileSource::open(path)?);
+    let name =
+        path.file_name().and_then(|n| n.to_str()).context("nom de fichier illisible")?.to_owned();
+    let size = ot_core::ChunkSource::size(&*source);
+    let file = OutgoingFile {
+        source_id: source_id(path)?,
+        name: name.clone(),
+        mime: guess_mime(path).to_owned(),
+        to: recipients,
+    };
+
+    let (client, mut events) = start(home)?;
+    connected(&mut events).await?;
+    eprintln!("envoi de {name} ({})…", human_size(size));
+    let res = client.send_file(file, source, progress_bar()).await;
+    client.shutdown().await;
+    let accepted = res.map_err(|e| {
+        anyhow!("{e}\nRelancer la même commande reprend l'envoi là où il s'est arrêté.")
+    })?;
+    eprintln!("\rfichier envoyé ({})", accepted.msg_id);
+    Ok(())
+}
+
+/// Pourcentage sur la sortie d'erreur, si c'est un terminal.
+fn progress_bar() -> Arc<dyn ot_core::Progress> {
+    let tty = std::io::stderr().is_terminal();
+    Arc::new(move |done: u64, total: u64| {
+        if tty && total > 0 {
+            eprint!("\r{:>3} % ({} / {})", done * 100 / total, human_size(done), human_size(total));
+        }
+    })
+}
+
+async fn list_files(home: &Home, offset: UtcOffset) -> Result<()> {
+    let (client, _events) = start(home)?;
+    let files = client.files().await;
+    client.shutdown().await;
+    let files = files?;
+    if files.is_empty() {
+        eprintln!("aucun fichier en attente");
+    }
+    let group = ot_core::group_info(&home.keyring()).ok().flatten();
+    let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]");
+    for f in files {
+        let when = f.created_at.to_offset(offset).format(&fmt)?;
+        let from = name_of(group.as_ref(), &f.from);
+        println!("{}  [{when}] {from} : {} ({})", f.blob_id, f.name, human_size(f.size));
+    }
+    Ok(())
+}
+
+async fn download(home: &Home, blob: &str, to: Option<PathBuf>) -> Result<()> {
+    let blob: BlobId = blob.parse().map_err(|e| anyhow!("{e}"))?;
+    let dir = match to {
+        Some(dir) => dir,
+        None => std::env::current_dir()?,
+    };
+    let (client, _events) = start(home)?;
+    let res = fetch(&client, &blob, &dir).await;
+    client.shutdown().await;
+    let path = res?;
+    eprintln!("\renregistré : {}", path.display());
+    Ok(())
+}
+
+/// Télécharge un fichier annoncé dans `dir` ; renvoie son chemin final.
+async fn fetch(client: &Client, blob: &BlobId, dir: &std::path::Path) -> Result<PathBuf> {
+    let files = client.files().await?;
+    let info = files
+        .iter()
+        .find(|f| &f.blob_id == blob)
+        .context("fichier inconnu sur cet appareil (voir `ot files`)")?;
+    let sink = Arc::new(FileSink::create(dir, &info.name)?);
+    client.download(blob, sink.clone(), progress_bar()).await?;
+    let saved = sink.saved.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    saved.context("fichier non enregistré")
+}
+
 async fn within<T, E: std::error::Error + Send + Sync + 'static>(
     fut: impl Future<Output = Result<T, E>>,
 ) -> Result<T> {
@@ -320,8 +446,68 @@ fn print_event(
             print_message(m, name_of(group, &m.from), json, offset)?;
             return Ok(true);
         }
+        Event::File(f) => {
+            print_file(&f.file, name_of(group, &f.file.from), json, offset)?;
+            return Ok(true);
+        }
+        Event::Otp(o) => {
+            print_otp(o, name_of(group, &o.from), json, offset)?;
+            return Ok(true);
+        }
     }
     Ok(false)
+}
+
+fn print_otp(o: &ReceivedOtp, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+    if json {
+        let line = serde_json::json!({
+            "msg_id": o.msg_id.to_string(),
+            "from": o.from,
+            "from_name": from,
+            "created_at": o.created_at.format(&Rfc3339)?,
+            "kind": "otp",
+            "code": o.otp.code,
+            "display": o.otp.display,
+            "sender_name": o.otp.sender_name,
+            "sender_domain": o.otp.sender_domain,
+            "sender_verified": o.otp.sender_verified,
+            "expires_at": o.otp.expires_at,
+        });
+        println!("{line}");
+    } else {
+        let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+        let when = o.created_at.to_offset(offset).format(&fmt)?;
+        let verified = if o.otp.sender_verified { "" } else { ", expéditeur non vérifié" };
+        println!("[{when}] {from} 🔑 {} ({}{verified})", o.otp.display, o.otp.sender_domain);
+    }
+    Ok(())
+}
+
+fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+    if json {
+        let line = serde_json::json!({
+            "msg_id": f.msg_id.to_string(),
+            "from": f.from,
+            "from_name": from,
+            "created_at": f.created_at.format(&Rfc3339)?,
+            "kind": "file",
+            "blob_id": f.blob_id,
+            "name": f.name,
+            "mime": f.mime,
+            "size": f.size,
+        });
+        println!("{line}");
+    } else {
+        let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+        let when = f.created_at.to_offset(offset).format(&fmt)?;
+        println!(
+            "[{when}] {from} 📎 {} ({}) : ot download {}",
+            f.name,
+            human_size(f.size),
+            f.blob_id
+        );
+    }
+    Ok(())
 }
 
 fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
@@ -346,7 +532,12 @@ fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Res
     Ok(())
 }
 
-async fn listen(home: &Home, json: bool, offset: UtcOffset) -> Result<()> {
+async fn listen(
+    home: &Home,
+    json: bool,
+    download_dir: Option<PathBuf>,
+    offset: UtcOffset,
+) -> Result<()> {
     let (client, mut events) = start(home)?;
     let mut seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, home.load_seen());
     let mut group = ot_core::group_info(&home.keyring()).ok().flatten();
@@ -365,10 +556,26 @@ async fn listen(home: &Home, json: bool, offset: UtcOffset) -> Result<()> {
         {
             group = g;
         }
+        if let (Event::File(f), Some(dir)) = (&event, &download_dir) {
+            // Téléchargement en tâche de fond : la réception continue.
+            let (client, dir, blob) = (client.clone(), dir.clone(), f.file.blob_id.clone());
+            tokio::spawn(async move {
+                match fetch(&client, &blob, &dir).await {
+                    Ok(path) => eprintln!("\rfichier enregistré : {}", path.display()),
+                    Err(e) => eprintln!("\r⚠ fichier {blob} non téléchargé : {e:#}"),
+                }
+            });
+        }
+        let msg_id = match &event {
+            Event::Message(m) => Some(m.msg_id),
+            Event::File(f) => Some(f.file.msg_id),
+            Event::Otp(o) => Some(o.msg_id),
+            _ => None,
+        };
         if print_event(&event, group.as_ref(), json, offset)?
-            && let Event::Message(m) = &event
+            && let Some(msg_id) = msg_id
         {
-            seen.insert(m.msg_id);
+            seen.insert(msg_id);
             if let Err(e) = home.save_seen(seen.iter()) {
                 eprintln!("état non sauvegardé : {e:#}");
             }
@@ -376,6 +583,156 @@ async fn listen(home: &Home, json: bool, offset: UtcOffset) -> Result<()> {
     }
     client.shutdown().await;
     Ok(())
+}
+
+/// Délai maximal entre deux tentatives de connexion au socket d'otp-relay.
+const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+async fn otp_bridge(
+    home: &Home,
+    to: Vec<String>,
+    socket: Option<PathBuf>,
+    min_confidence: f64,
+) -> Result<()> {
+    if !(0.0..=1.0).contains(&min_confidence) {
+        bail!("--min-confidence doit être compris entre 0 et 1");
+    }
+    let socket = match socket {
+        Some(path) => path,
+        None => otp::default_socket()?,
+    };
+    let to: Vec<String> =
+        to.iter().map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect();
+    if to.is_empty() {
+        bail!("aucun destinataire : --to ou OT_OTP_TO");
+    }
+    // Une faute dans un nom de destinataire se voit dès le démarrage.
+    let group = group(home)?;
+    for name in &to {
+        resolve(&group, name)?;
+    }
+
+    let (client, mut events) = start(home)?;
+    // Une seule session, tenue tant que le pont tourne ; il ne lit pas les
+    // messages qui lui arrivent.
+    tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            match event {
+                Event::Connected { .. } => eprintln!("relais : connecté"),
+                Event::Disconnected { reason } => {
+                    eprintln!("relais : déconnecté ({reason}) ; nouvel essai…")
+                }
+                Event::AuthFailed { message } => {
+                    eprintln!("relais : authentification refusée : {message}")
+                }
+                Event::KeyringError { message } => eprintln!("⚠ {message}"),
+                _ => {}
+            }
+        }
+    });
+
+    let mut sent = home.load_otp_sent();
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        let session =
+            otp_session(home, &client, &socket, &to, min_confidence, &mut sent, &mut backoff);
+        let result = tokio::select! {
+            r = session => r,
+            _ = tokio::signal::ctrl_c() => break,
+        };
+        match result {
+            Ok(()) => eprintln!("otp-relay : connexion fermée"),
+            Err(e) => eprintln!("otp-relay : {e:#}"),
+        }
+        eprintln!("otp-relay : nouvel essai dans {} s", backoff.as_secs());
+        tokio::select! {
+            () = tokio::time::sleep(backoff) => {}
+            _ = tokio::signal::ctrl_c() => break,
+        }
+        backoff = (backoff * 2).min(OTP_SOCKET_MAX_BACKOFF);
+    }
+    client.shutdown().await;
+    Ok(())
+}
+
+/// Une connexion au socket d'otp-relay, lue jusqu'à sa fermeture.
+async fn otp_session(
+    home: &Home,
+    client: &Client,
+    socket: &std::path::Path,
+    to: &[String],
+    min_confidence: f64,
+    sent: &mut otp::Sent,
+    backoff: &mut Duration,
+) -> Result<()> {
+    use tokio::io::AsyncBufReadExt;
+
+    let stream = tokio::net::UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("socket {} injoignable", socket.display()))?;
+    *backoff = Duration::from_secs(1);
+    let mut lines = tokio::io::BufReader::new(stream).lines();
+    while let Some(line) = lines.next_line().await? {
+        let ev = match otp::Line::parse(&line) {
+            // Jamais le texte de la ligne : il peut contenir un code.
+            Err(e) => {
+                eprintln!("otp-relay : ligne illisible (colonne {})", e.column());
+                continue;
+            }
+            Ok(otp::Line::Hello { protocol }) => {
+                if protocol != otp::PROTOCOL {
+                    eprintln!(
+                        "⚠ otp-relay parle le protocole {protocol}, ce pont attend le {}",
+                        otp::PROTOCOL
+                    );
+                }
+                continue;
+            }
+            Ok(otp::Line::Status { state }) => {
+                eprintln!("otp-relay : IMAP {state}");
+                continue;
+            }
+            Ok(otp::Line::Other) => continue,
+            Ok(otp::Line::Otp(ev)) => ev,
+        };
+        let now = OffsetDateTime::now_utc();
+        sent.prune(now);
+        let code = match otp::judge(&ev, now, min_confidence, sent) {
+            otp::Verdict::Send(code) => code,
+            otp::Verdict::AlreadySent => continue,
+            otp::Verdict::Skip(why) => {
+                eprintln!("code de {} ignoré : {why}", ev.domain());
+                continue;
+            }
+        };
+        // Retenu avant l'envoi : un code n'est jamais envoyé deux fois, même
+        // si le pont redémarre pendant l'envoi.
+        sent.insert(ev.id.clone(), code.expires_at);
+        if let Err(e) = home.save_otp_sent(sent) {
+            eprintln!("⚠ codes envoyés non sauvegardés : {e:#}");
+        }
+        tokio::spawn(send_otp(client.clone(), to.to_vec(), code));
+    }
+    Ok(())
+}
+
+/// Envoie un code aux destinataires, résolus dans le roster du moment ;
+/// abandonne à son expiration (relais injoignable jusque-là).
+async fn send_otp(client: Client, to: Vec<String>, code: ot_core::Otp) {
+    let domain = code.sender_domain.clone();
+    let left = code.expires_at - OffsetDateTime::now_utc().unix_timestamp();
+    let send = async {
+        let group = client.group().await?.ok_or(ot_core::ClientError::NoGroup)?;
+        let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
+        client.send_otp(&code, recipients).await?;
+        anyhow::Ok(())
+    };
+    let wait = Duration::from_secs(u64::try_from(left).unwrap_or(0).max(1));
+    match tokio::time::timeout(wait, send).await {
+        Ok(Ok(())) => eprintln!("code de {domain} envoyé"),
+        Ok(Err(e)) => eprintln!("⚠ code de {domain} non envoyé : {e:#}"),
+        Err(_) => eprintln!("⚠ code de {domain} expiré avant d'atteindre le relais"),
+    }
 }
 
 async fn devices(home: &Home) -> Result<()> {

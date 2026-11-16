@@ -1,5 +1,7 @@
 use ed25519_dalek::{Signer, SigningKey};
+use ot_proto::http::{HTTP_NONCE_LEN, http_request_message};
 use ot_proto::{DeviceId, NONCE_LEN, auth_message, b64, pair_redeem_message};
+use sha2::{Digest, Sha256};
 
 /// Paire de clés Ed25519 de l'appareil.
 pub struct Identity(SigningKey);
@@ -37,6 +39,19 @@ impl Identity {
     /// Signature de `pair_redeem` : preuve de possession de la clé.
     pub fn sign_pair_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
         self.0.sign(&pair_redeem_message(nonce, token_hash)).to_bytes()
+    }
+
+    /// Signature d'une requête HTTP de fichiers (étape 5, note 0026).
+    pub fn sign_http(
+        &self,
+        method: &str,
+        path: &str,
+        time_ms: u64,
+        nonce: &[u8; HTTP_NONCE_LEN],
+        body: &[u8],
+    ) -> [u8; 64] {
+        let hash: [u8; 32] = Sha256::digest(body).into();
+        self.0.sign(&http_request_message(method, path, time_ms, nonce, &hash)).to_bytes()
     }
 
     pub(crate) fn signing_key(&self) -> &SigningKey {

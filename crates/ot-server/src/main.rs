@@ -1,10 +1,11 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use ot_proto::b64;
+use ot_server::limits::LimitsConfig;
 use ot_server::store::Store;
 use ot_server::tls::Tls;
 use ot_server::{Config, Relay, now_ms};
@@ -26,33 +27,61 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Lance le relais.
-    Serve {
-        /// Adresse d'écoute : l'IP Tailscale du serveur, jamais 0.0.0.0.
-        #[arg(long, env = "OT_LISTEN", default_value = "127.0.0.1:7878")]
-        listen: SocketAddr,
-        /// Durée de vie d'un message non acquitté (ex. 7d, 24h).
-        #[arg(long, env = "OT_TTL", default_value = "7d", value_parser = parse_duration)]
-        ttl: Duration,
-        /// Intervalle de purge.
-        #[arg(long, env = "OT_PURGE_INTERVAL", default_value = "10m", value_parser = parse_duration)]
-        purge_interval: Duration,
-        /// Format des logs.
-        #[arg(long, env = "OT_LOG_FORMAT", default_value = "text")]
-        log_format: LogFormat,
-        /// Certificat TLS (chaîne PEM) : le relais sert alors en `wss://`.
-        /// Relu automatiquement quand il change (renouvellement).
-        #[arg(long, env = "OT_TLS_CERT", requires = "tls_key")]
-        tls_cert: Option<PathBuf>,
-        /// Clé privée TLS (PEM) du certificat.
-        #[arg(long, env = "OT_TLS_KEY", requires = "tls_cert")]
-        tls_key: Option<PathBuf>,
-    },
+    // En boîte : les options de `serve` rendraient l'enum bien plus grosse
+    // que les autres variantes (clippy::large_enum_variant, sous Windows).
+    Serve(Box<ServeArgs>),
     /// Gère les appareils autorisés.
     #[command(subcommand)]
     Device(DeviceCommand),
     /// Gère les messages stockés.
     #[command(subcommand)]
     Messages(MessagesCommand),
+}
+
+/// Options de `ot-server serve`.
+#[derive(Args)]
+struct ServeArgs {
+    /// Adresse d'écoute : l'IP Tailscale du serveur, ou `127.0.0.1`
+    /// derrière un frontal TLS (Caddy).
+    #[arg(long, env = "OT_LISTEN", default_value = "127.0.0.1:7878")]
+    listen: SocketAddr,
+    /// Adresse des routes d'administration (`/metrics`), à garder
+    /// locale (ex. 127.0.0.1:7879). Sans elle, pas de métriques.
+    #[arg(long, env = "OT_ADMIN_LISTEN")]
+    admin_listen: Option<SocketAddr>,
+    /// IP des frontaux (séparées par des virgules) dont on croit
+    /// l'en-tête `X-Forwarded-For` pour connaître l'IP des clients.
+    #[arg(long, env = "OT_TRUSTED_PROXY", value_delimiter = ',')]
+    trusted_proxy: Vec<IpAddr>,
+    /// Durée de vie d'un message non acquitté (ex. 7d, 24h).
+    #[arg(long, env = "OT_TTL", default_value = "7d", value_parser = parse_duration)]
+    ttl: Duration,
+    /// Intervalle de purge.
+    #[arg(long, env = "OT_PURGE_INTERVAL", default_value = "10m", value_parser = parse_duration)]
+    purge_interval: Duration,
+    /// Format des logs.
+    #[arg(long, env = "OT_LOG_FORMAT", default_value = "text")]
+    log_format: LogFormat,
+    /// Certificat TLS (chaîne PEM) : le relais sert alors en `wss://`.
+    /// Relu automatiquement quand il change (renouvellement).
+    #[arg(long, env = "OT_TLS_CERT", requires = "tls_key")]
+    tls_cert: Option<PathBuf>,
+    /// Clé privée TLS (PEM) du certificat.
+    #[arg(long, env = "OT_TLS_KEY", requires = "tls_cert")]
+    tls_key: Option<PathBuf>,
+    /// Dossier des fichiers en transit (morceaux chiffrés). Par défaut,
+    /// `blobs/` à côté de la base.
+    #[arg(long, env = "OT_BLOB_DIR")]
+    blob_dir: Option<PathBuf>,
+    /// Taille maximale d'un fichier (ex. 2G, 500M).
+    #[arg(long, env = "OT_MAX_FILE_SIZE", default_value = "2G", value_parser = parse_size)]
+    max_file_size: u64,
+    /// Espace disque total des fichiers en transit.
+    #[arg(long, env = "OT_BLOB_QUOTA", default_value = "20G", value_parser = parse_size)]
+    blob_quota: u64,
+    /// Durée de vie d'un fichier déposé.
+    #[arg(long, env = "OT_BLOB_TTL", default_value = "48h", value_parser = parse_duration)]
+    blob_ttl: Duration,
 }
 
 #[derive(Subcommand)]
@@ -86,10 +115,35 @@ enum LogFormat {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve { listen, ttl, purge_interval, log_format, tls_cert, tls_key } => {
+        Command::Serve(args) => {
+            let ServeArgs {
+                listen,
+                admin_listen,
+                trusted_proxy,
+                ttl,
+                purge_interval,
+                log_format,
+                tls_cert,
+                tls_key,
+                blob_dir,
+                max_file_size,
+                blob_quota,
+                blob_ttl,
+            } = *args;
             init_logs(log_format);
             let tls = tls_cert.zip(tls_key);
-            serve(cli.db, listen, tls, Config { ttl, purge_interval, ..Config::default() }).await
+            let blob_dir = blob_dir.unwrap_or_else(|| default_blob_dir(&cli.db));
+            let config = Config {
+                ttl,
+                purge_interval,
+                blob_dir,
+                max_file_size,
+                blob_quota,
+                blob_ttl,
+                limits: LimitsConfig { trusted_proxies: trusted_proxy, ..LimitsConfig::default() },
+                ..Config::default()
+            };
+            serve(cli.db, listen, admin_listen, tls, config).await
         }
         Command::Device(cmd) => device(&cli.db, cmd).await,
         Command::Messages(cmd) => messages(&cli.db, cmd).await,
@@ -108,6 +162,7 @@ fn init_logs(format: LogFormat) {
 async fn serve(
     db: PathBuf,
     listen: SocketAddr,
+    admin_listen: Option<SocketAddr>,
     tls: Option<(PathBuf, PathBuf)>,
     config: Config,
 ) -> Result<()> {
@@ -120,12 +175,41 @@ async fn serve(
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("écoute sur {listen}"))?;
+    let admin = match admin_listen {
+        Some(addr) => Some(
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("écoute d'administration sur {addr}"))?,
+        ),
+        None => None,
+    };
     let scheme = if tls.is_some() { "wss" } else { "ws" };
-    tracing::info!(%listen, scheme, db = %db.display(), ttl = ?config.ttl, "relais démarré");
+    tracing::info!(
+        %listen,
+        scheme,
+        db = %db.display(),
+        ttl = ?config.ttl,
+        blob_dir = %config.blob_dir.display(),
+        admin = ?admin_listen,
+        trusted_proxies = config.limits.trusted_proxies.len(),
+        "relais démarré"
+    );
     let relay = Relay::new(store.clone(), config);
+    // Arrêtée avec le relais ; une erreur n'arrête pas le relais.
+    let admin = admin.map(|listener| {
+        let relay = relay.clone();
+        tokio::spawn(async move {
+            if let Err(e) = ot_server::serve_admin(relay, listener, std::future::pending()).await {
+                tracing::error!(error = %e, "routes d'administration arrêtées");
+            }
+        })
+    });
     match tls {
         Some(tls) => ot_server::serve_tls(relay, listener, tls, shutdown_signal()).await?,
         None => ot_server::serve(relay, listener, shutdown_signal()).await?,
+    }
+    if let Some(admin) = admin {
+        admin.abort();
     }
     store.close().await;
     tracing::info!("relais arrêté");
@@ -209,6 +293,27 @@ fn fmt_ms(ms: i64) -> String {
         .unwrap_or_else(|| ms.to_string())
 }
 
+/// `blobs/` dans le dossier de la base.
+fn default_blob_dir(db: &Path) -> PathBuf {
+    db.parent().unwrap_or(Path::new("")).join("blobs")
+}
+
+/// Taille au format `<nombre><unité>`, unité parmi `K`, `M`, `G` (puissances
+/// de 1024) ; sans unité, en octets.
+fn parse_size(s: &str) -> Result<u64, String> {
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (n, unit) = s.split_at(split);
+    let n: u64 = n.parse().map_err(|_| format!("taille invalide : {s:?}"))?;
+    let shift = match unit {
+        "" => 0,
+        "K" => 10,
+        "M" => 20,
+        "G" => 30,
+        _ => return Err(format!("unité inconnue dans {s:?} (K, M, G)")),
+    };
+    n.checked_mul(1 << shift).ok_or_else(|| format!("taille trop grande : {s:?}"))
+}
+
 /// Durée au format `<nombre><unité>`, unité parmi `ms`, `s`, `m`, `h`, `d`.
 fn parse_duration(s: &str) -> Result<Duration, String> {
     let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
@@ -237,5 +342,24 @@ mod tests {
         assert_eq!(parse_duration("30").unwrap(), Duration::from_secs(30));
         assert!(parse_duration("3 jours").is_err());
         assert!(parse_duration("h").is_err());
+    }
+
+    #[test]
+    fn sizes() {
+        assert_eq!(parse_size("2G").unwrap(), 2 << 30);
+        assert_eq!(parse_size("500M").unwrap(), 500 << 20);
+        assert_eq!(parse_size("4096").unwrap(), 4096);
+        assert!(parse_size("2 Go").is_err());
+        assert!(parse_size("G").is_err());
+        assert!(parse_size("99999999999999G").is_err());
+    }
+
+    #[test]
+    fn blob_dir_next_to_the_database() {
+        assert_eq!(
+            default_blob_dir(Path::new("/var/lib/ot-relay/ot.db")),
+            Path::new("/var/lib/ot-relay/blobs")
+        );
+        assert_eq!(default_blob_dir(Path::new("ot.db")), Path::new("blobs"));
     }
 }

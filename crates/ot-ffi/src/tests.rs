@@ -48,7 +48,10 @@ async fn relay() -> (String, Store) {
     let store = Store::in_memory().await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    let relay = Relay::new(store.clone(), Config::default());
+    // Dossier des fichiers propre à chaque relais de test, sous le dossier
+    // temporaire du système.
+    let blobs = std::env::temp_dir().join(format!("ot-ffi-test-{}", ot_core::Ulid::generate()));
+    let relay = Relay::new(store.clone(), Config { blob_dir: blobs, ..Config::default() });
     tokio::spawn(ot_server::serve(relay, listener, std::future::pending()));
     (url, store)
 }
@@ -130,16 +133,29 @@ async fn phone_joins_by_code_then_exchanges() {
         (received.kind, received.body.as_str()),
         (ContentKind::Link, "https://example.org/a")
     );
+    assert!(received.to.is_empty() && !received.outgoing, "envoi à tous : {received:?}");
     assert_eq!(history(a_store.clone()).unwrap(), vec![received.clone()]);
+    // Chez B, l'envoi est rangé en cours, puis accepté (note 0033).
+    let Event::Sent { item } = next(&b, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && item.pending && item.msg_id == msg_id, "{item:?}");
+    let Event::Sent { item } = next(&b, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && !item.pending, "{item:?}");
+    assert_eq!((item.from_name.as_str(), item.to.len()), ("pixel", 0));
+    assert_eq!(history(b_store.clone()).unwrap(), vec![item]);
     clear_history(a_store.clone()).unwrap();
     assert!(history(a_store.clone()).unwrap().is_empty());
 
-    // Destinataire hors groupe, texte vide.
+    // Destinataire hors groupe, texte vide : rien de rangé.
     assert!(matches!(
         b.send_text("x".into(), vec![ot_core::DeviceId::generate().to_string()]).await,
         Err(OtError::NotInGroup { .. })
     ));
     assert!(matches!(b.send_text("  ".into(), vec![]).await, Err(OtError::Invalid { .. })));
+    assert_eq!(history(b_store.clone()).unwrap().len(), 1);
 
     let devices = a.devices().await.unwrap();
     assert!(devices.iter().all(|d| d.member), "{devices:?}");
@@ -151,7 +167,7 @@ async fn phone_joins_by_code_then_exchanges() {
 async fn phone_sponsors_by_reverse_qr() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
-    let a = OtClient::start(a_store).unwrap();
+    let a = OtClient::start(a_store.clone()).unwrap();
     next(&a, connected).await;
 
     // Un PC affiche son QR (comme `ot pair join --qr`).
@@ -182,6 +198,154 @@ async fn phone_sponsors_by_reverse_qr() {
         unreachable!()
     };
     assert_eq!((received.from_name.as_str(), received.body.as_str()), ("windows", "merci"));
+    assert!(received.to.is_empty());
+
+    // Adressé au téléphone seul : ses destinataires le disent.
+    let me: ot_core::DeviceId = a.device().device_id.parse().unwrap();
+    within(pc.send(&Content::text("pour toi"), vec![me.clone()])).await.unwrap();
+    let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
+        unreachable!()
+    };
+    assert_eq!((received.body.as_str(), received.to.clone()), ("pour toi", vec![me.to_string()]));
+
+    // Réponse du téléphone au PC seul : rangée avec ce destinataire.
+    let pc_id = pc.device_id().to_string();
+    a.send_text("reçu".into(), vec![pc_id.clone()]).await.unwrap();
+    let sent = history(a_store.clone()).unwrap();
+    assert!(sent[0].outgoing && !sent[0].pending, "{:?}", sent[0]);
+    assert_eq!((sent[0].body.as_str(), sent[0].to.clone()), ("reçu", vec![pc_id]));
+}
+
+/// Fichier en mémoire, comme le lirait Kotlin.
+struct MemSource(Vec<u8>);
+
+impl FileSource for MemSource {
+    fn size(&self) -> u64 {
+        self.0.len() as u64
+    }
+    fn read_at(&self, offset: u64, len: u32) -> Result<Vec<u8>, StoreError> {
+        let start = (offset as usize).min(self.0.len());
+        Ok(self.0[start..(start + len as usize).min(self.0.len())].to_vec())
+    }
+}
+
+#[derive(Default)]
+struct MemSink(Mutex<Vec<u8>>);
+
+impl FileSink for MemSink {
+    fn write_at(&self, offset: u64, data: Vec<u8>) -> Result<(), StoreError> {
+        let mut buf = self.0.lock().unwrap();
+        let end = buf.len().max(offset as usize + data.len());
+        buf.resize(end, 0);
+        buf[offset as usize..offset as usize + data.len()].copy_from_slice(&data);
+        Ok(())
+    }
+    fn finish(&self) -> Result<String, StoreError> {
+        Ok("content://media/downloads/7".into())
+    }
+    fn abort(&self) {
+        self.0.lock().unwrap().clear();
+    }
+}
+
+struct Quiet;
+
+impl TransferListener for Quiet {
+    fn on_progress(&self, _done: u64, _total: u64) {}
+}
+
+#[tokio::test]
+async fn files_both_ways() {
+    let (url, relay_store) = relay().await;
+    let a_store = phone(&url, &relay_store).await;
+    let a = OtClient::start(a_store.clone()).unwrap();
+    next(&a, connected).await;
+    // Un PC rejoint le groupe par QR inversé.
+    let pc_id = Identity::generate();
+    let mut pc = ClientConfig::new(
+        url.clone(),
+        ot_core::DeviceId::generate(),
+        pc_id,
+        Arc::new(MemoryKeyring::new()),
+    );
+    pc.backoff =
+        ot_core::Backoff { initial: Duration::from_millis(50), max: Duration::from_millis(200) };
+    let (pc, mut pc_events) = Client::start(pc);
+    a.sponsor(within(pc.pair_offer("windows")).await.unwrap()).await.unwrap();
+    within(async {
+        while !matches!(pc_events.next().await, Some(ot_core::Event::GroupChanged { .. })) {}
+    })
+    .await;
+
+    // Téléphone → PC.
+    let photo: Vec<u8> = (0..1_500_000u32).map(|i| (i % 251) as u8).collect();
+    let source = Arc::new(MemSource(photo.clone()));
+    let msg = a
+        .send_file(
+            source,
+            "content://media/images/1".into(),
+            "IMG_0001.jpg".into(),
+            "image/jpeg".into(),
+            vec![],
+            Arc::new(Quiet),
+        )
+        .await
+        .unwrap();
+    let file = within(async {
+        loop {
+            if let Some(ot_core::Event::File(f)) = pc_events.next().await {
+                return f.file;
+            }
+        }
+    })
+    .await;
+    assert_eq!((file.msg_id.to_string(), file.name.as_str()), (msg.clone(), "IMG_0001.jpg"));
+    // Rangé chez l'expéditeur une fois annoncé, sans état « en cours ».
+    let Event::Sent { item } = next(&a, |e| matches!(e, Event::Sent { .. })).await else {
+        unreachable!()
+    };
+    assert!(item.outgoing && !item.pending && item.msg_id == msg, "{item:?}");
+    assert_eq!((item.kind, item.body.as_str()), (ContentKind::File, "IMG_0001.jpg"));
+    let sent = item.file.clone().unwrap();
+    assert_eq!((sent.mime.as_str(), sent.size), ("image/jpeg", photo.len() as u64));
+    assert_eq!(history(a_store.clone()).unwrap()[0], item);
+
+    // PC → téléphone : rangé dans l'historique, téléchargé, URI notée.
+    let source = Arc::new(MemSource(photo.clone()));
+    let pc_file = ot_core::OutgoingFile {
+        source_id: "/home/x/scan.pdf".into(),
+        name: "scan.pdf".into(),
+        mime: "application/pdf".into(),
+        to: vec![],
+    };
+    let none = Arc::new(|_: u64, _: u64| {});
+    within(pc.send_file(pc_file, Arc::new(crate::files::Source(source)), none)).await.unwrap();
+    let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
+        unreachable!()
+    };
+    assert_eq!((received.kind, received.body.as_str()), (ContentKind::File, "scan.pdf"));
+    let item = received.file.clone().unwrap();
+    assert_eq!(
+        (item.mime.as_str(), item.size, item.saved_uri.clone()),
+        ("application/pdf", photo.len() as u64, None)
+    );
+    let sink = Arc::new(MemSink::default());
+    let saved = a.download(received.msg_id.clone(), sink.clone(), Arc::new(Quiet)).await.unwrap();
+    assert!(*sink.0.lock().unwrap() == photo);
+    assert_eq!(saved.saved_uri.as_deref(), Some("content://media/downloads/7"));
+    let history = history(a_store.clone()).unwrap();
+    assert_eq!(history[0].file.as_ref().unwrap().saved_uri, saved.saved_uri);
+    // Aucune clé de fichier dans l'historique rangé par le pont.
+    let raw = String::from_utf8(a_store.0.lock().unwrap()["history.json"].clone()).unwrap();
+    assert!(!raw.contains("\"key\"") && !raw.contains("nonce"), "{raw}");
+}
+
+#[test]
+fn old_history_without_files_still_reads() {
+    let old = r#"[{"msg_id":"m","from_id":"d","from_name":"mac","created_at_ms":1,"kind":"text","body":"x","sensitive":false}]"#;
+    let items: Vec<Received> = serde_json::from_str(old).unwrap();
+    assert_eq!(items[0].file, None);
+    assert!(items[0].to.is_empty() && !items[0].outgoing && !items[0].pending);
 }
 
 #[tokio::test]
@@ -222,9 +386,9 @@ fn qr_helpers() {
 }
 
 #[test]
-fn history_keeps_the_last_fifty() {
+fn history_keeps_the_last_hundred() {
     let local = Local::new(Arc::new(TestStore::default()));
-    for i in 0..60 {
+    for i in 0..110 {
         let item = Received {
             msg_id: format!("m{i}"),
             from_id: "dev".into(),
@@ -233,10 +397,21 @@ fn history_keeps_the_last_fifty() {
             kind: ContentKind::Text,
             body: format!("{i}"),
             sensitive: false,
+            file: None,
+            to: vec![],
+            outgoing: i % 2 == 0,
+            pending: i == 108,
         };
         local.push_history(item).unwrap();
     }
     let items = local.history().unwrap();
-    assert_eq!(items.len(), crate::local::HISTORY_LEN);
-    assert_eq!((items[0].body.as_str(), items[49].body.as_str()), ("59", "10"));
+    assert_eq!(items.len(), 100);
+    assert_eq!(crate::local::HISTORY_LEN, 100);
+    assert_eq!((items[0].body.as_str(), items[99].body.as_str()), ("109", "10"));
+    // Accusé du relais, puis échec d'un autre envoi.
+    assert!(!local.mark_sent("m108").unwrap().unwrap().pending);
+    assert_eq!(local.mark_sent("absent").unwrap(), None);
+    local.remove_history("m109").unwrap();
+    let items = local.history().unwrap();
+    assert_eq!((items.len(), items[0].body.as_str(), items[0].pending), (99, "108", false));
 }

@@ -1,6 +1,11 @@
 /target
-# Notes et réglages propres à mon installation, jamais publiés.
-/private/
+# Notes et réglages propres à mon installation, jamais publiés (dossier ou
+# lien symbolique).
+/private
+# Conception, plans et notes de décision : locaux, jamais publiés (idem).
+/docs
+# Consignes locales des agents, propres à une copie de travail.
+/CLAUDE.local.md
 *.db
 *.db-shm
 *.db-wal
@@ -8,3 +13,6 @@
 seen.json
 .env
 .env.*
+.DS_Store
+gradle-daemon-jvm.properties
+__pycache__/

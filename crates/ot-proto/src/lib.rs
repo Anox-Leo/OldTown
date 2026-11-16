@@ -2,12 +2,16 @@
 //! entre le serveur relais et les clients.
 //!
 //! Chaque trame est un objet JSON `{"v":1,"t":"<type>", ...}`. Le serveur ne
-//! dépend que de cette crate : il ne lit jamais `payload`.
+//! dépend que de cette crate : il ne lit jamais `payload`. L'API HTTP des
+//! fichiers (étape 5) est dans [`http`].
 
 pub mod b64;
+mod blob;
 mod envelope;
 mod frame;
+pub mod http;
 
+pub use blob::{BlobId, InvalidBlobId};
 pub use envelope::{Content, ContentKind, DeviceId, Encoding, Envelope, InvalidDeviceId, Payload};
 pub use frame::{DecodeError, DeviceInfo, ErrorCode, Frame};
 pub use ulid::Ulid;

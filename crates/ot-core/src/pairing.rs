@@ -8,8 +8,9 @@ use ot_proto::{DeviceId, ErrorCode, Frame};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::ClientError;
 use crate::Identity;
-use crate::client::{ClientError, HANDSHAKE_TIMEOUT, Ws, ws_url};
+use crate::client::{HANDSHAKE_TIMEOUT, Ws, ws_url};
 use crate::tls::{self, TlsRoots};
 
 /// Appareil enregistré par le relais.

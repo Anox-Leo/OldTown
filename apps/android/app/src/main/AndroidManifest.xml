@@ -58,7 +58,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- Fichiers et images : refusés poliment jusqu'à l'étape 5. -->
+            <!-- Fichiers, images, vidéos (étape 5), un ou plusieurs. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
@@ -66,6 +66,8 @@
                 <data android:mimeType="image/*" />
                 <data android:mimeType="application/*" />
                 <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="text/*" />
             </intent-filter>
         </activity>
 
@@ -76,7 +78,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Connexion permanente au relais personnel OldTown pour recevoir sans délai les textes et liens envoyés depuis mes autres appareils (pas de service push tiers)." />
+                android:value="Connexion permanente au relais personnel OldTown pour recevoir sans délai les textes, liens et fichiers envoyés depuis mes autres appareils (pas de service push tiers), et transferts de ces fichiers." />
         </service>
 
         <receiver

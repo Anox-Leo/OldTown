@@ -1,0 +1,208 @@
+name: Release
+
+# Sur un tag vX.Y.Z : vérifie que les versions concordent, crée un brouillon
+# de release GitHub, y attache les binaires (ot pour Linux, macOS, Windows ;
+# ot-server pour Linux), l'extension (.zip), l'APK signée et SHA256SUMS. Le
+# brouillon se relit puis se publie à la main.
+#
+# Secrets requis pour l'APK (Settings → Secrets and variables → Actions) :
+#   ANDROID_KEYSTORE_BASE64   fichier .jks en base64
+#   ANDROID_KEYSTORE_PASSWORD mot de passe du fichier
+#   ANDROID_KEY_ALIAS         alias de la clé
+#   ANDROID_KEY_PASSWORD      mot de passe de la clé
+on:
+  push:
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.ref_name }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  draft:
+    name: Versions et brouillon
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Le tag, le workspace Cargo, l'appli et l'extension portent la même
+      # version.
+      - name: Versions
+        run: |
+          want=${TAG#v}
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          android=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' apps/android/app/build.gradle.kts)
+          manifest=$(jq -r .version apps/extension/manifest.json)
+          package=$(jq -r .version apps/extension/package.json)
+          echo "tag $want, cargo $cargo, android $android, manifest $manifest, package $package"
+          for v in "$cargo" "$android" "$manifest" "$package"; do
+            [ "$v" = "$want" ] || { echo "::error::version $v différente du tag $TAG"; exit 1; }
+          done
+      - name: Brouillon
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" --draft --verify-tag --title "OldTown $TAG" --generate-notes
+
+  binaries:
+    name: Binaires (${{ matrix.name }})
+    needs: draft
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 : glibc 2.35, pour tourner aussi sur Debian 12 et les
+          # distributions un peu anciennes des VPS.
+          - { name: linux-x86_64, os: ubuntu-22.04, server: true, ext: "" }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, server: true, ext: "" }
+          - { name: macos-arm64, os: macos-latest, server: false, ext: "" }
+          - { name: windows-x86_64, os: windows-latest, server: false, ext: ".exe" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - name: Compilation
+        shell: bash
+        run: |
+          cargo build --release --locked -p ot-cli
+          mkdir dist
+          cp "target/release/ot${{ matrix.ext }}" "dist/ot-${{ matrix.name }}${{ matrix.ext }}"
+          if [ "${{ matrix.server }}" = true ]; then
+            cargo build --release --locked -p ot-server
+            cp target/release/ot-server "dist/ot-server-${{ matrix.name }}"
+          fi
+      - name: Envoi
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+
+  extension:
+    name: Extension
+    needs: draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      # Le générateur doit avoir exactement la version de la crate
+      # wasm-bindgen du Cargo.lock.
+      - name: wasm-bindgen-cli
+        run: |
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          cargo install --locked wasm-bindgen-cli --version "$version"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/extension/package-lock.json
+      - name: Construction
+        working-directory: apps/extension
+        run: |
+          npm ci
+          npm run build
+          cd dist/extension && zip -qr "$GITHUB_WORKSPACE/oldtown-extension-$TAG.zip" .
+      - name: Envoi
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "oldtown-extension-$TAG.zip" --clobber
+
+  android:
+    name: APK signée
+    needs: draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: cargo-ndk
+        run: cargo install --locked cargo-ndk
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      # Clé de signature : écrite hors du dépôt, référencée par
+      # local.properties comme sur une machine de développement.
+      - name: Clé de signature
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::secrets de signature Android manquants"
+            exit 1
+          fi
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "oldtown.signing.storeFile=$RUNNER_TEMP/release.jks"
+            echo "oldtown.signing.storePassword=$STORE_PASSWORD"
+            echo "oldtown.signing.keyAlias=$KEY_ALIAS"
+            echo "oldtown.signing.keyPassword=$KEY_PASSWORD"
+          } > apps/android/local.properties
+      - name: Gradle
+        working-directory: apps/android
+        run: ./gradlew --console=plain assembleRelease
+      - name: Envoi
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=apps/android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$apk" ] || { echo "::error::APK non signée"; exit 1; }
+          cp "$apk" "oldtown-$TAG.apk"
+          gh release upload "$TAG" "oldtown-$TAG.apk" --clobber
+      - name: Nettoyage
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks" apps/android/local.properties
+
+  checksums:
+    name: SHA256SUMS
+    needs: [binaries, extension, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Empreintes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$TAG" --pattern '*'
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber
