@@ -26,8 +26,7 @@ import { connectionStatus } from './status';
       <section class="card">
         <h2>Cet appareil</h2>
         <p>
-          <strong>{{ d.name }}</strong
-          ><span class="muted mono id">{{ d.id }}</span>
+          <strong>{{ d.name }}</strong><span class="muted mono id">{{ d.id }}</span>
         </p>
         <p class="small" [class]="status().tone">● {{ status().text }}</p>
         @if (s.connectionError && s.connection !== 'online') {
