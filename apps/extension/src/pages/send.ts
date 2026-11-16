@@ -2,19 +2,21 @@
 // sélecteur de fichiers de l'OS peut fermer la popup, et la copie dans l'OPFS
 // doit aller à son terme. Sert aussi aux demandes de permission d'hôte
 // (note 0027), qui exigent un clic : `?image=<url>&to=<id>` (image d'une page
-// que le site ne laisse pas lire) et `?grant=relay` (premier accès au
-// relais). Le choix de fichiers se fait d'ordinaire dans la popup (note
+// que le site ne laisse pas lire), `?grant=relay` (premier accès au
+// relais) et `?grant=otp` (remplir les codes d'office sur les pages HTTPS,
+// note 0045). Le choix de fichiers se fait d'ordinaire dans la popup (note
 // 0029) ; la page garde le sien en repli. Le service worker fait le reste ; la page peut se fermer.
 
 import type { Reply, Request, StateView } from '../shared/api';
 import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
-import { originPattern, relayOrigin } from '../shared/origins';
+import { OTP_ORIGINS, originPattern, relayOrigin } from '../shared/origins';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
 const image = params.get('image');
 const grantRelay = params.get('grant') === 'relay';
+const grantOtp = params.get('grant') === 'otp';
 
 async function request<T>(req: Request): Promise<T> {
   const reply = (await chrome.runtime.sendMessage(req)) as Reply<T> | undefined;
@@ -61,6 +63,29 @@ async function main(): Promise<void> {
   select.value = params.get('to') ?? state.recipient;
   const go = $<HTMLButtonElement>('go');
   const files = $<HTMLInputElement>('files');
+
+  if (grantOtp) {
+    $('title').textContent = 'Remplir les codes d’office';
+    files.hidden = true;
+    select.hidden = true;
+    $('ask').textContent =
+      'Autoriser OldTown à accéder aux pages HTTPS ? Il y remplira lui-même un code reçu, seulement sur le site qui l’a envoyé. (révocable dans les réglages du navigateur)';
+    $('ask').hidden = false;
+    go.textContent = 'Autoriser';
+    go.disabled = false;
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        if (!(await grant(OTP_ORIGINS))) throw new Error('Accès refusé.');
+        $('status').textContent =
+          'Autorisé : les prochains codes seront remplis d’office. Pour celui-ci : Alt+Shift+O.';
+        setTimeout(() => window.close(), 2500);
+      } catch (e) {
+        fail(e);
+      }
+    };
+    return;
+  }
 
   if (grantRelay) {
     $('title').textContent = 'Accès au relais';

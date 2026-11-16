@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use ot_crypto::{
-    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened,
+    Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened, Otp,
     PairingCode, PairingOffer, PairingSecret, Roster, SealKey, fingerprint, open, seal,
 };
 use ot_proto::{BlobId, Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
@@ -21,7 +21,7 @@ use crate::keyring::{
     GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, Quarantined, RETIRED_KEY_LIFETIME,
 };
 use crate::roster::{self, RosterError};
-use crate::types::{ClientError, Event, Received};
+use crate::types::{ClientError, Event, Received, ReceivedOtp};
 
 /// État du groupe, vu de cet appareil (pour l'affichage).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +294,18 @@ impl Secure {
             ContentKind::Text => Body::Text { body: content.body.clone() },
             ContentKind::Link => Body::Link { body: content.body.clone() },
         };
+        self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
+    }
+
+    /// Chiffre un code à usage unique (corps `otp`, note 0045) sous l'époque
+    /// courante, pour des membres du roster (vide : tous).
+    pub fn seal_otp(&self, otp: &Otp, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
+        let (keys, roster) = self.group()?;
+        if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
+            return Err(ClientError::NotMember(id.clone()));
+        }
+        let key = keys.current_key().ok_or(ClientError::NoGroup)?;
+        let body = Body::Otp(otp.clone());
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
@@ -618,6 +630,17 @@ impl Secure {
                     Body::Link { body } => Content::link(body),
                     Body::Roster { roster } => return self.on_roster(env, epoch, roster, fx),
                     body @ Body::File { .. } => return self.on_file(seq, env, body, now, fx),
+                    Body::Otp(otp) => {
+                        fx.push(Effect::Emit(Event::Otp(ReceivedOtp {
+                            seq,
+                            msg_id: env.msg_id,
+                            from: env.from.clone(),
+                            to: env.to.clone(),
+                            created_at: env.created_at,
+                            otp,
+                        })));
+                        return Ok(Handled::Done);
+                    }
                     other => {
                         return Err(Reject::Reason(format!(
                             "{} inattendu sous la clé de groupe",
@@ -1002,6 +1025,36 @@ mod tests {
         assert!(!String::from_utf8_lossy(&env.payload.data).contains("bonjour"));
         let fx = d[1].receive(env);
         assert_eq!(texts(&fx), ["bonjour"]);
+    }
+
+    #[test]
+    fn otp_reaches_its_recipient_only() {
+        let mut d = group(3);
+        let otp = Otp {
+            code: "482913".into(),
+            display: "G-482913".into(),
+            sender_name: "Google".into(),
+            sender_domain: "google.com".into(),
+            sender_verified: true,
+            expires_at: 1_793_628_791,
+        };
+        let env = d[0].secure.seal_otp(&otp, vec![d[1].id.clone()]).unwrap();
+        assert!(!String::from_utf8_lossy(&env.payload.data).contains("482913"));
+        assert_eq!(env.to, [d[1].id.clone()]);
+        let fx = d[1].receive(env);
+        let got: Vec<_> = fx
+            .iter()
+            .filter_map(|f| match f {
+                Effect::Emit(Event::Otp(o)) => Some(o.otp.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, std::slice::from_ref(&otp));
+        let outsider = DeviceId::generate();
+        assert!(matches!(
+            d[0].secure.seal_otp(&otp, vec![outsider]),
+            Err(ClientError::NotMember(_))
+        ));
     }
 
     #[test]

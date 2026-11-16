@@ -30,8 +30,9 @@ l'interface.
   La popup et les réglages passent par `chrome.runtime.sendMessage` et un
   port (`POPUP_PORT`, état poussé ; pas de notification tant qu'il est
   ouvert). Tout message est refusé s'il ne vient pas d'une page
-  `chrome-extension://<id>/` de l'extension. Pas de script de contenu, pas
-  d'`externally_connectable`.
+  `chrome-extension://<id>/` de l'extension. Pas de script de contenu
+  déclaré, pas d'`externally_connectable` ; seule `fillOtp` est injectée
+  (codes, note 0045).
 - **Service worker** : écouteurs Chrome enregistrés au premier niveau de
   `main.ts` ; pas d'`await` au premier niveau (interdit dans un service
   worker). `ping` toutes les 20 s, alarme de 30 s pour le réveiller
@@ -59,8 +60,17 @@ l'interface.
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
   navigateur au premier plan et élément récent → lien ouvert dans un onglet,
   texte → popup (`action.openPopup`) ; sinon notification. Raccourcis
-  `send-page` (`Alt+Shift+S`) et `send-clipboard` (`Alt+Shift+V`, lecture
-  par le document offscreen). Navigateur cible : Brave (Chromium).
+  `send-page` (`Alt+Shift+S`), `send-clipboard` (`Alt+Shift+V`, lecture
+  par le document offscreen) et `fill-otp` (`Alt+Shift+O`). Navigateur cible : Brave (Chromium).
+- **Codes à usage unique** (note 0045, `src/shared/otp.ts`) : élément
+  `kind: 'otp'` (`body` = le code, `otp` = affichage, expéditeur, DMARC,
+  expiration). Code valable reçu (`deliverOtp`) : copié ; rempli d'office
+  (`chrome.scripting`, cadre principal) seulement si expéditeur authentifié,
+  onglet actif en HTTPS sur son site (`sameSite` : même domaine
+  enregistrable, `tldts`) et accès aux pages HTTPS accordé (`OTP_ORIGINS`) ;
+  puis notification. Sinon raccourci `fill-otp` (`Alt+Shift+O`,
+  `activeTab`). Accès : bouton de la notification (`send.html?grant=otp`)
+  ou section des réglages. Code expiré : historique seulement.
 - **Fichiers envoyés** (étape 5, notes 0026, 0027, 0029) : le trombone de
   la popup ouvre le sélecteur de l'OS ; la popup copie le fichier dans
   l'OPFS (`outgoing/<id>`), puis le service worker l'envoie.
@@ -86,14 +96,17 @@ l'interface.
   (`test/vectors.test.ts`).
 - **Permissions** (`manifest.json`) : `activeTab`, `alarms`,
   `clipboardRead` (bouton et raccourci « presse-papiers » seulement),
-  `contextMenus`, `notifications`, `offscreen`, `storage` ;
-  `optional_host_permissions` `<all_urls>`, demandée origine par origine.
+  `contextMenus`, `notifications`, `offscreen`, `scripting` (remplissage
+  des codes, note 0045), `storage` ;
+  `optional_host_permissions` `<all_urls>`, demandée origine par origine,
+  ou `https://*/*` pour les codes (note 0045).
   CSP : `script-src 'self' 'wasm-unsafe-eval'`. Toute permission nouvelle se justifie dans une note.
 - **Identifiant fixe** : `key` du manifeste (clé publique) ; la clé privée,
   qui ne sert qu'à empaqueter, est dans `private/extension-key.pem`.
 - **Tests** : `npm test` = WebAssembly, puis Vitest sous Node
   (`vitest.worker.config.mts` : golden, vecteurs, stockage, et
-  `test/relay.test.ts` et `test/files.test.ts` contre un vrai `ot-server`
+  `test/otp.test.ts` sous jsdom, `test/relay.test.ts` et
+  `test/files.test.ts` contre un vrai `ot-server`
   avec la CLI `ot` comme parrain : binaires de `target/debug`, ou
   `OT_BIN_DIR`), puis `ng test`
   (interface). `npm run lint` = ESLint, Prettier et `tsc` du service worker

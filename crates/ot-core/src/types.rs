@@ -2,6 +2,7 @@
 //! événements, erreurs, messages reçus. Sans dépendance réseau, pour que le
 //! cœur se compile aussi en WebAssembly (extension, note 0023).
 
+use ot_crypto::Otp;
 use ot_proto::{Content, DeviceId, ErrorCode, Ulid};
 use time::OffsetDateTime;
 
@@ -18,6 +19,18 @@ pub struct Received {
     pub to: Vec<DeviceId>,
     pub created_at: OffsetDateTime,
     pub content: Content,
+}
+
+/// Code à usage unique reçu (note 0045), d'un membre du roster dont la
+/// signature est vérifiée. Il peut être déjà expiré : à l'appli d'en juger.
+#[derive(Debug, Clone)]
+pub struct ReceivedOtp {
+    pub seq: i64,
+    pub msg_id: Ulid,
+    pub from: DeviceId,
+    pub to: Vec<DeviceId>,
+    pub created_at: OffsetDateTime,
+    pub otp: Otp,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +52,8 @@ pub enum Event {
     /// Fichier annoncé (étape 5) : sa clé est rangée dans le keyring, le
     /// téléchargement se demande par son `blob_id`.
     File(ReceivedFile),
+    /// Code à usage unique (note 0045).
+    Otp(ReceivedOtp),
     /// Message rejeté (en clair, expéditeur hors roster, signature fausse,
     /// déchiffrement impossible…) ; il est quand même acquitté.
     Rejected {

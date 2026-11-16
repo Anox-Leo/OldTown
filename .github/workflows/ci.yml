@@ -69,6 +69,22 @@ jobs:
       - run: shellcheck deploy/ot-diag.sh deploy/tests/ot-diag-test.sh
       - run: sh deploy/tests/ot-diag-test.sh
 
+  otp-relay:
+    name: otp-relay (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - run: shellcheck tools/otp-relay/install.sh
+      # Tests unitaires ; celui de bout en bout (serveur IMAP jetable) reste manuel.
+      - run: python -m unittest discover -s tests -t .
+        working-directory: tools/otp-relay
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

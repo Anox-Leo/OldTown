@@ -8,7 +8,8 @@ import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '..
 import { POPUP_PORT, channelOf } from '../shared/api';
 import { humanSize } from '../shared/format';
 import * as opfs from '../shared/opfs';
-import { relayOrigin } from '../shared/origins';
+import { OTP_ORIGINS, relayOrigin } from '../shared/origins';
+import { type FillResult, fillOtp, isLive, sameSite } from '../shared/otp';
 import { AUTO_CACHE_MAX, fileUrl, isViewable, parseFilePath } from '../shared/files';
 import { Engine, type FileStorage } from './engine';
 import { type KeyValue, IndexedDbKeySource } from './secrets';
@@ -18,6 +19,7 @@ const MENU_ROOT = 'send';
 const MENU_ALL = 'to:';
 const COMMAND_SEND_PAGE = 'send-page';
 const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
+const COMMAND_FILL_OTP = 'fill-otp';
 /**
  * Un élément reçu s'ouvre de lui-même (navigateur au premier plan) seulement
  * s'il est récent : à la réouverture du navigateur, les messages en attente
@@ -25,6 +27,8 @@ const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
  */
 const AUTO_OPEN_MAX_AGE = 2 * 60_000;
 const NOTIFICATION_COPY = 0;
+/** Code reçu : « Remplir les codes d'office » (note 0045). */
+const NOTIFICATION_GRANT_OTP = 1;
 /** Délai pour que la popup ouverte pour un élément le réclame (note 0032). */
 const PENDING_CHAT_MAX_AGE = 10_000;
 
@@ -357,6 +361,8 @@ chrome.commands.onCommand.addListener((command, tab) => {
     if (url) void engine().then((e) => sendFromBrowser(url, e.state().recipient, true));
   } else if (command === COMMAND_SEND_CLIPBOARD) {
     void sendClipboard();
+  } else if (command === COMMAND_FILL_OTP && tab?.id !== undefined) {
+    void fillLastOtp(tab.id);
   }
 });
 
@@ -377,11 +383,11 @@ async function sendClipboard(): Promise<void> {
   await sendFromBrowser(text, e.state().recipient, true);
 }
 
-async function problem(message: string): Promise<void> {
+async function problem(message: string, title = 'OldTown : envoi impossible'): Promise<void> {
   await chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon-128.png',
-    title: 'OldTown : envoi impossible',
+    title,
     message,
   });
 }
@@ -465,6 +471,10 @@ async function deliver(e: Engine, item: Item): Promise<void> {
 async function deliverItem(e: Engine, item: Item): Promise<void> {
   // Un élément envoyé d'ici (note 0030) n'est annoncé nulle part.
   if (item.outgoing) return;
+  if (item.kind === 'otp') {
+    await deliverOtp(item);
+    return;
+  }
   const file = item.file;
   if (!file) {
     await deliver(e, item);
@@ -487,6 +497,105 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
     }
   }
   await notify(item);
+}
+
+// --- Codes à usage unique (note 0045) ---
+
+/**
+ * Code reçu, encore valable : copié, puis rempli d'office si l'onglet actif
+ * est en HTTPS sur le site de l'expéditeur (même domaine enregistrable), que
+ * l'expéditeur est authentifié (DMARC) et que l'accès aux pages HTTPS est
+ * accordé (`OTP_ORIGINS`). L'URL de l'onglet n'est lisible qu'avec cet
+ * accès (pas de permission `tabs`). Sinon, le raccourci `fill-otp` le
+ * place, sur un geste (`activeTab`).
+ */
+async function deliverOtp(item: Item): Promise<void> {
+  const otp = item.otp;
+  if (!otp || !isLive(otp.expiresAt)) return;
+  try {
+    await copy(item.body);
+  } catch (err) {
+    log('copie du code', err);
+  }
+  let filled = false;
+  let grant = false;
+  if (otp.verified) {
+    const tab = await activeTab();
+    const url = tab?.url ? new URL(tab.url) : undefined;
+    if (
+      tab?.id !== undefined &&
+      url?.protocol === 'https:' &&
+      sameSite(url.hostname, otp.senderDomain)
+    ) {
+      filled = (await fillTab(tab.id, item.body, false)) === 'filled';
+    }
+    grant = !filled && !(await chrome.permissions.contains({ origins: OTP_ORIGINS }));
+  }
+  if (popups.size > 0) return;
+  const from = otp.senderName ? `${otp.senderName} (${otp.senderDomain})` : otp.senderDomain;
+  await chrome.notifications.create(item.msgId, {
+    type: 'basic',
+    iconUrl: 'icons/icon-128.png',
+    title: `Code ${otp.display}`,
+    message: filled
+      ? `${from} : rempli dans la page et copié.`
+      : `${from} : copié. Le raccourci (Alt+Shift+O) le remplit dans la page.`,
+    contextMessage: otp.verified
+      ? undefined
+      : 'Expéditeur non vérifié : regardez bien la page avant de saisir le code.',
+    buttons: grant
+      ? [{ title: 'Copier' }, { title: 'Remplir les codes d’office' }]
+      : [{ title: 'Copier' }],
+  });
+}
+
+/** Onglet actif de la dernière fenêtre ; son URL seulement si l'accès est accordé. */
+async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remplit le code dans le cadre principal de l'onglet. */
+async function fillTab(
+  tabId: number,
+  code: string,
+  focused: boolean,
+): Promise<FillResult | 'error'> {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: fillOtp,
+      args: [code, focused],
+    });
+    return result?.result ?? 'error';
+  } catch (err) {
+    log('remplissage du code', err);
+    return 'error';
+  }
+}
+
+/** Raccourci `fill-otp` : le dernier code encore valable, dans l'onglet actif. */
+async function fillLastOtp(tabId: number): Promise<void> {
+  const items = await (await engine()).history();
+  const last = items
+    .filter((i) => i.kind === 'otp' && !i.outgoing && i.otp && isLive(i.otp.expiresAt))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  if (!last) {
+    await problem('Aucun code reçu encore valable.', 'OldTown : pas de code');
+    return;
+  }
+  const result = await fillTab(tabId, last.body, true);
+  if (result === 'filled') await flashSent();
+  else if (result === 'no-field') {
+    await problem(
+      'Aucun champ de code trouvé : cliquez dans le champ, puis refaites le raccourci.',
+      'OldTown : code non rempli',
+    );
+  } else await problem('Cette page ne peut pas être remplie.', 'OldTown : code non rempli');
 }
 
 /** Ce qu'un clic sur un fichier fait : l'ouvrir, le télécharger, ou montrer la popup. */
@@ -566,6 +675,10 @@ async function showExtension(): Promise<void> {
 }
 
 chrome.notifications.onButtonClicked.addListener((id, button) => {
+  if (button === NOTIFICATION_GRANT_OTP) {
+    void grantOtp(id).catch((e: unknown) => log('accès aux sites', e));
+    return;
+  }
   if (button !== NOTIFICATION_COPY) return;
   void (async () => {
     // Le texte est relu dans l'historique, pas porté par la notification.
@@ -574,6 +687,20 @@ chrome.notifications.onButtonClicked.addListener((id, button) => {
     await chrome.notifications.clear(id);
   })().catch((e: unknown) => log('copie', e));
 });
+
+/**
+ * Accès aux pages HTTPS, pour remplir les prochains codes d'office : demandé
+ * par la page d'envoi, sur un clic (note 0027).
+ */
+async function grantOtp(id: string): Promise<void> {
+  await chrome.notifications.clear(id);
+  await chrome.windows.create({
+    url: 'send.html?grant=otp',
+    type: 'popup',
+    width: 420,
+    height: 300,
+  });
+}
 
 // --- Presse-papiers (document offscreen) ---
 

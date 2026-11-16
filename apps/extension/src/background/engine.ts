@@ -484,6 +484,27 @@ export class Engine {
         }
         return;
       }
+      case 'otp': {
+        const item: Item = {
+          msgId: e.msg_id,
+          from: e.from,
+          fromName: this.nameOf(e.from),
+          createdAt: e.created_at,
+          kind: 'otp',
+          body: e.code,
+          otp: {
+            display: e.display || e.code,
+            senderName: e.sender_name,
+            senderDomain: e.sender_domain,
+            verified: e.sender_verified,
+            expiresAt: e.expires_at * 1000,
+          },
+          to: e.to ?? [],
+        };
+        await this.addToHistory(item);
+        this.push({ type: 'item', item });
+        return;
+      }
       case 'rejected':
         this.log(`message de ${this.nameOf(e.from)} rejeté : ${e.reason}`);
         return;

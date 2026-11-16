@@ -1,4 +1,5 @@
 mod files;
+mod otp;
 mod transfer;
 
 use std::io::{IsTerminal, Read};
@@ -10,7 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use ot_core::{
     BlobId, Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, FileInfo, GroupInfo,
-    Identity, OutgoingFile, Received, TlsRoots,
+    Identity, OutgoingFile, Received, ReceivedOtp, TlsRoots,
 };
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
@@ -95,6 +96,21 @@ enum Command {
     /// Appairage d'un nouvel appareil par code.
     #[command(subcommand)]
     Pair(PairCommand),
+    /// Relaie les codes à usage unique lus par otp-relay (socket Unix) vers
+    /// des membres du groupe. Tourne jusqu'à l'arrêt (service).
+    OtpBridge {
+        /// Destinataire (nom d'un membre du groupe), répétable ; ou, dans
+        /// `OT_OTP_TO`, des noms séparés par des virgules.
+        #[arg(long = "to", required = true, env = "OT_OTP_TO", value_delimiter = ',')]
+        to: Vec<String>,
+        /// Socket d'otp-relay (par défaut
+        /// `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`).
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        /// Confiance minimale d'un code (0 à 1).
+        #[arg(long, default_value_t = 0.6)]
+        min_confidence: f64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -181,6 +197,9 @@ fn main() -> Result<()> {
                 pair_join_qr(&home, server, name, force).await
             }
             Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
+            Command::OtpBridge { to, socket, min_confidence } => {
+                otp_bridge(&home, to, socket, min_confidence).await
+            }
         }
     })
 }
@@ -431,8 +450,37 @@ fn print_event(
             print_file(&f.file, name_of(group, &f.file.from), json, offset)?;
             return Ok(true);
         }
+        Event::Otp(o) => {
+            print_otp(o, name_of(group, &o.from), json, offset)?;
+            return Ok(true);
+        }
     }
     Ok(false)
+}
+
+fn print_otp(o: &ReceivedOtp, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+    if json {
+        let line = serde_json::json!({
+            "msg_id": o.msg_id.to_string(),
+            "from": o.from,
+            "from_name": from,
+            "created_at": o.created_at.format(&Rfc3339)?,
+            "kind": "otp",
+            "code": o.otp.code,
+            "display": o.otp.display,
+            "sender_name": o.otp.sender_name,
+            "sender_domain": o.otp.sender_domain,
+            "sender_verified": o.otp.sender_verified,
+            "expires_at": o.otp.expires_at,
+        });
+        println!("{line}");
+    } else {
+        let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+        let when = o.created_at.to_offset(offset).format(&fmt)?;
+        let verified = if o.otp.sender_verified { "" } else { ", expéditeur non vérifié" };
+        println!("[{when}] {from} 🔑 {} ({}{verified})", o.otp.display, o.otp.sender_domain);
+    }
+    Ok(())
 }
 
 fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
@@ -521,6 +569,7 @@ async fn listen(
         let msg_id = match &event {
             Event::Message(m) => Some(m.msg_id),
             Event::File(f) => Some(f.file.msg_id),
+            Event::Otp(o) => Some(o.msg_id),
             _ => None,
         };
         if print_event(&event, group.as_ref(), json, offset)?
@@ -534,6 +583,156 @@ async fn listen(
     }
     client.shutdown().await;
     Ok(())
+}
+
+/// Délai maximal entre deux tentatives de connexion au socket d'otp-relay.
+const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+async fn otp_bridge(
+    home: &Home,
+    to: Vec<String>,
+    socket: Option<PathBuf>,
+    min_confidence: f64,
+) -> Result<()> {
+    if !(0.0..=1.0).contains(&min_confidence) {
+        bail!("--min-confidence doit être compris entre 0 et 1");
+    }
+    let socket = match socket {
+        Some(path) => path,
+        None => otp::default_socket()?,
+    };
+    let to: Vec<String> =
+        to.iter().map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect();
+    if to.is_empty() {
+        bail!("aucun destinataire : --to ou OT_OTP_TO");
+    }
+    // Une faute dans un nom de destinataire se voit dès le démarrage.
+    let group = group(home)?;
+    for name in &to {
+        resolve(&group, name)?;
+    }
+
+    let (client, mut events) = start(home)?;
+    // Une seule session, tenue tant que le pont tourne ; il ne lit pas les
+    // messages qui lui arrivent.
+    tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            match event {
+                Event::Connected { .. } => eprintln!("relais : connecté"),
+                Event::Disconnected { reason } => {
+                    eprintln!("relais : déconnecté ({reason}) ; nouvel essai…")
+                }
+                Event::AuthFailed { message } => {
+                    eprintln!("relais : authentification refusée : {message}")
+                }
+                Event::KeyringError { message } => eprintln!("⚠ {message}"),
+                _ => {}
+            }
+        }
+    });
+
+    let mut sent = home.load_otp_sent();
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        let session =
+            otp_session(home, &client, &socket, &to, min_confidence, &mut sent, &mut backoff);
+        let result = tokio::select! {
+            r = session => r,
+            _ = tokio::signal::ctrl_c() => break,
+        };
+        match result {
+            Ok(()) => eprintln!("otp-relay : connexion fermée"),
+            Err(e) => eprintln!("otp-relay : {e:#}"),
+        }
+        eprintln!("otp-relay : nouvel essai dans {} s", backoff.as_secs());
+        tokio::select! {
+            () = tokio::time::sleep(backoff) => {}
+            _ = tokio::signal::ctrl_c() => break,
+        }
+        backoff = (backoff * 2).min(OTP_SOCKET_MAX_BACKOFF);
+    }
+    client.shutdown().await;
+    Ok(())
+}
+
+/// Une connexion au socket d'otp-relay, lue jusqu'à sa fermeture.
+async fn otp_session(
+    home: &Home,
+    client: &Client,
+    socket: &std::path::Path,
+    to: &[String],
+    min_confidence: f64,
+    sent: &mut otp::Sent,
+    backoff: &mut Duration,
+) -> Result<()> {
+    use tokio::io::AsyncBufReadExt;
+
+    let stream = tokio::net::UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("socket {} injoignable", socket.display()))?;
+    *backoff = Duration::from_secs(1);
+    let mut lines = tokio::io::BufReader::new(stream).lines();
+    while let Some(line) = lines.next_line().await? {
+        let ev = match otp::Line::parse(&line) {
+            // Jamais le texte de la ligne : il peut contenir un code.
+            Err(e) => {
+                eprintln!("otp-relay : ligne illisible (colonne {})", e.column());
+                continue;
+            }
+            Ok(otp::Line::Hello { protocol }) => {
+                if protocol != otp::PROTOCOL {
+                    eprintln!(
+                        "⚠ otp-relay parle le protocole {protocol}, ce pont attend le {}",
+                        otp::PROTOCOL
+                    );
+                }
+                continue;
+            }
+            Ok(otp::Line::Status { state }) => {
+                eprintln!("otp-relay : IMAP {state}");
+                continue;
+            }
+            Ok(otp::Line::Other) => continue,
+            Ok(otp::Line::Otp(ev)) => ev,
+        };
+        let now = OffsetDateTime::now_utc();
+        sent.prune(now);
+        let code = match otp::judge(&ev, now, min_confidence, sent) {
+            otp::Verdict::Send(code) => code,
+            otp::Verdict::AlreadySent => continue,
+            otp::Verdict::Skip(why) => {
+                eprintln!("code de {} ignoré : {why}", ev.domain());
+                continue;
+            }
+        };
+        // Retenu avant l'envoi : un code n'est jamais envoyé deux fois, même
+        // si le pont redémarre pendant l'envoi.
+        sent.insert(ev.id.clone(), code.expires_at);
+        if let Err(e) = home.save_otp_sent(sent) {
+            eprintln!("⚠ codes envoyés non sauvegardés : {e:#}");
+        }
+        tokio::spawn(send_otp(client.clone(), to.to_vec(), code));
+    }
+    Ok(())
+}
+
+/// Envoie un code aux destinataires, résolus dans le roster du moment ;
+/// abandonne à son expiration (relais injoignable jusque-là).
+async fn send_otp(client: Client, to: Vec<String>, code: ot_core::Otp) {
+    let domain = code.sender_domain.clone();
+    let left = code.expires_at - OffsetDateTime::now_utc().unix_timestamp();
+    let send = async {
+        let group = client.group().await?.ok_or(ot_core::ClientError::NoGroup)?;
+        let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
+        client.send_otp(&code, recipients).await?;
+        anyhow::Ok(())
+    };
+    let wait = Duration::from_secs(u64::try_from(left).unwrap_or(0).max(1));
+    match tokio::time::timeout(wait, send).await {
+        Ok(Ok(())) => eprintln!("code de {domain} envoyé"),
+        Ok(Err(e)) => eprintln!("⚠ code de {domain} non envoyé : {e:#}"),
+        Err(_) => eprintln!("⚠ code de {domain} expiré avant d'atteindre le relais"),
+    }
 }
 
 async fn devices(home: &Home) -> Result<()> {

@@ -25,3 +25,11 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # Angular (@angular/build, @angular/compiler-cli) n'accepte encore que
+      # TypeScript 6.0 : à retirer quand une version d'Angular accepte la 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # Suit la version de Node de la CI (24, workflows extension et release).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

@@ -26,7 +26,7 @@ information manque, la demander plutôt que la deviner.
 | `docs/actions-manuelles.md` | Actions que je dois faire à la main sur mes machines, dans l'ordre | Dès qu'une tâche exige une action de ma part |
 | `docs/revue-etapes-0-1.md` | Ce que l'étape 1 a appris, et les choix revus pour la suite | Au démarrage d'une étape |
 | `SECURITY.md` | Modèle de menace, liste avant publication | Toute tâche qui touche auth, crypto, stockage, réseau |
-| `crates/*/CLAUDE.md`, `apps/*/CLAUDE.md` | Règles propres à chaque composant | Avant de modifier ce composant |
+| `crates/*/CLAUDE.md`, `apps/*/CLAUDE.md`, `tools/*/CLAUDE.md` | Règles propres à chaque composant | Avant de modifier ce composant |
 
 **Ordre de priorité** en cas de contradiction : le code et `docs/decisions/`
 font foi, puis le plan de l'étape, puis `design.md`.
@@ -91,7 +91,8 @@ cargo deny check
 
 Plus, selon les dossiers touchés : `./gradlew lint test assembleDebug` dans
 `apps/android` (étape 3), `npm run lint && npm test` dans `apps/extension`
-(étape 4). Une commande qui ne passe pas se signale avec
+(étape 4), `python3 -m unittest discover -s tests -t .` dans
+`tools/otp-relay`. Une commande qui ne passe pas se signale avec
 sa sortie ; jamais de test désactivé pour passer.
 
 ## Compte rendu attendu
