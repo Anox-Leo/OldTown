@@ -13,6 +13,13 @@ ignore = [
     # propres fichiers de configuration. Aucune version d'uniffi ne s'en passe
     # encore : à retirer dès qu'askama change de parseur (note 0042).
     { id = "RUSTSEC-2026-0374", reason = "build-time only, via uniffi_bindgen/askama; no maintained alternative upstream yet" },
+    # SQLite embarqué par libsqlite3-sys < 0.39 : une paire base + `-wal`
+    # fabriquée peut faire lire de la mémoire non initialisée. Seul le relais
+    # l'utilise (les clients ne tirent ot-server qu'en dépendance de test), et
+    # il n'ouvre que sa propre base, écrite par lui seul. sqlx-sqlite 0.9.0, la
+    # dernière, exige libsqlite3-sys < 0.38 : à retirer dès qu'une version de
+    # sqlx accepte 0.39 (note 0055).
+    { id = "RUSTSEC-2026-0459", reason = "relay only opens its own database; sqlx 0.9.0 pins libsqlite3-sys < 0.38, no fixed version reachable yet" },
 ]
 
 [licenses]
