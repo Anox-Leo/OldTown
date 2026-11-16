@@ -22,10 +22,10 @@ server.
 The same relay (`ot-server`) works in two ways; the relay URL is a setting
 of every client, so you can switch later.
 
-| Mode | What you need | VPN on the clients |
-| --- | --- | --- |
-| **Public**, on a VPS or a home server | A domain name pointing to the machine, ports 80 and 443 reachable (VPS firewall, or port forwarding on your router; not behind a CGNAT). [Caddy](https://caddyserver.com) gets the TLS certificate. | No: works on a work computer where a VPN is not an option |
-| **Private**, with [Tailscale](https://tailscale.com) | Tailscale on the relay and on every device, MagicDNS and HTTPS certificates enabled | Yes |
+| Mode | What you need |
+| --- | --- |
+| **Public**, on a VPS or a home server | A domain name pointing to the machine, ports 80 and 443 reachable (VPS firewall, or port forwarding on your router; not behind a CGNAT). [Caddy](https://caddyserver.com) gets the TLS certificate.|
+| **Private**, with [Tailscale](https://tailscale.com) | Tailscale on the relay and on every device, MagicDNS and HTTPS certificates enabled |
 
 Setting up a tailnet, a domain or a router is out of scope here.
 
@@ -175,6 +175,16 @@ Scan the QR code shown in the terminal from the phone, as above.
   OldTown*; `Alt+Shift+S` sends the current tab, `Alt+Shift+V` the
   clipboard; the popup lists conversations per device. Chrome must be
   running to receive; the relay keeps messages for 7 days.
+- **One-time codes** (optional): [otp-relay](tools/otp-relay/README.md)
+  watches a mailbox over IMAP IDLE and publishes the codes it finds on a
+  local Unix socket; `ot otp-bridge` reads them and sends each one,
+  encrypted, to chosen devices. The extension copies a
+  received code; it fills the page's code field by itself only when the
+  sender is authenticated (DMARC), the active tab is on the sender's site
+  (same registrable domain) and access to HTTPS pages was granted, in the
+  settings or from the code's notification. Otherwise `Alt+Shift+O` fills
+  it.
+  Unit: `deploy/ot-otp-bridge.service`.
 - **Command line**:
 
   ```sh
@@ -182,6 +192,7 @@ Scan the QR code shown in the terminal from the phone, as above.
   ot send --to phone https://example.org # to one device
   ot send --file video.mp4 --to phone    # a file; run again to resume
   ot listen --download-dir ~/Downloads   # receive, files included
+  ot otp-bridge --to brave               # relay one-time codes (OT_OTP_TO)
   ot group show                          # members and key fingerprints
   ot group rotate --exclude phone        # lost device: new group key without it
   ots device revoke phone                # then, on the relay: refuse its connections

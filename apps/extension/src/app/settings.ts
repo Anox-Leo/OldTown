@@ -9,6 +9,7 @@ import {
 import { FormsModule } from '@angular/forms';
 
 import type { RelayDevice, StateView } from '../shared/api';
+import { OTP_ORIGINS } from '../shared/origins';
 import { BackgroundService } from './background.service';
 import { GroupComponent } from './group';
 import { connectionStatus } from './status';
@@ -72,10 +73,28 @@ import { connectionStatus } from './status';
       </section>
 
       <section class="card">
+        <h2>Codes à usage unique</h2>
+        @if (otpAccess()) {
+          <p class="small">
+            <span class="ok">●</span> Un code reçu est rempli d'office quand l'onglet actif est sur
+            le site qui l'a envoyé (expéditeur authentifié). Pour retirer l'accès : page de
+            l'extension dans le navigateur, « Accès aux sites ».
+          </p>
+        } @else {
+          <p class="small muted">
+            Un code reçu est copié ; Alt+Maj+O le remplit dans la page. Pour qu'il se remplisse seul
+            sur le site qui l'a envoyé, OldTown doit pouvoir accéder aux pages HTTPS.
+          </p>
+          <button (click)="grantOtp()">Remplir les codes d'office</button>
+        }
+      </section>
+
+      <section class="card">
         <h2>Raccourcis clavier</h2>
         <p class="small muted">
           Alt+Maj+S envoie l'adresse de l'onglet, Alt+Maj+V le presse-papiers, au dernier
-          destinataire choisi. La sélection s'envoie par le clic droit.
+          destinataire choisi ; Alt+Maj+O remplit le dernier code reçu dans la page. La sélection
+          s'envoie par le clic droit.
         </p>
         <button (click)="shortcuts()">Modifier les raccourcis</button>
       </section>
@@ -143,6 +162,8 @@ export class SettingsComponent {
   protected readonly status = computed(() => connectionStatus(this.state()));
   protected readonly devices = signal<RelayDevice[]>([]);
   protected readonly confirmForget = signal(false);
+  /** Accès aux pages HTTPS accordé (remplissage des codes, note 0045). */
+  protected readonly otpAccess = signal(false);
   protected serverUrl = '';
 
   constructor() {
@@ -150,6 +171,16 @@ export class SettingsComponent {
       this.serverUrl = this.state().device?.serverUrl ?? '';
     });
     void this.loadDevices();
+    void this.checkOtpAccess();
+  }
+
+  private async checkOtpAccess(): Promise<void> {
+    this.otpAccess.set(await chrome.permissions.contains({ origins: OTP_ORIGINS }));
+  }
+
+  /** Demandée sur le clic, depuis cette page (note 0027). */
+  protected async grantOtp(): Promise<void> {
+    this.otpAccess.set(await chrome.permissions.request({ origins: OTP_ORIGINS }));
   }
 
   protected async loadDevices(): Promise<void> {
