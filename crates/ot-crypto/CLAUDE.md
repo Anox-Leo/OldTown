@@ -1,12 +1,19 @@
 # ot-crypto
 
 Chiffrement de bout en bout : types de clés (`GroupKey`, `ExchangeKeyPair`,
-`PairingSecret`), `seal`/`open` pour les quatre schémas de `payload.data`
-(`0x04` : QR inversé, note 0022), données associées, signature, corps des
-messages (`Body`, `Roster`), code d'appairage (`PairingCode`), QR inversé
-(`PairingOffer`) et, à l'étape 5, chiffrement des fichiers par morceaux
+`PairingSecret`), `seal`/`open` pour les cinq schémas de `payload.data`
+(`0x04` : QR inversé, note 0022 ; `0x05` : plusieurs destinataires, entre
+personnes, étape 10), données associées, signature, corps des messages
+(`Body`, `Roster`), codes d'appairage et d'invitation (`PairingCode`,
+`InviteCode`), QR inversé (`PairingOffer`), objets signés de l'annuaire
+(`directory.rs` : `UserCert`, `RosterEntry`, ancre ; leurs règles de chaîne
+sont dans `ot-core`) et, à l'étape 5, chiffrement des fichiers par morceaux
 (`file.rs` : `FileKey`, `FileCipher`, `sanitize_file_name`, note 0026).
 
+- Chaque clé n'admet que ses corps (`KeyKind::admits`), au scellement comme
+  à l'ouverture : corps d'invitation sous la clé d'invitation seulement,
+  `service_welcome` en `0x04` seulement, `0x05` seulement `text`, `link`,
+  `file`, `otp`.
 - Aucune E/S, aucun réseau, aucun async, aucun tokio : la crate doit pouvoir
   se compiler pour Android (UniFFI) et en WebAssembly (extension, note 0017).
 - Primitives RustCrypto uniquement (`chacha20poly1305`, `aead-stream`,
