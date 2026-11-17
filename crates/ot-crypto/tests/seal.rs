@@ -1,4 +1,5 @@
-//! Aller-retour et altérations, pour les quatre schémas.
+//! Aller-retour et altérations, pour les schémas `0x01` à `0x04` et la clé
+//! d'invitation ; `0x05` a ses propres tests (`multi.rs`).
 
 use ot_crypto::{
     Body, CryptoError, ExchangeKeyPair, GroupKey, Header, OpenKey, PairingSecret, SealKey,
@@ -19,6 +20,13 @@ fn envelope() -> Envelope {
 
 fn body() -> Body {
     Body::Text { body: "bonjour".into() }
+}
+
+fn invite() -> Body {
+    Body::InviteWelcome {
+        cert: ot_proto::SignedBlob { data: b"{}".to_vec(), sig: [1; 64] },
+        admin_head: ot_crypto::directory::LogHead { seq: 2, hash: [3; 32] },
+    }
 }
 
 type SealFn = Box<dyn Fn(&Envelope, &SigningKey) -> Payload>;
@@ -43,6 +51,7 @@ fn cases() -> Vec<(&'static str, Case)> {
     let qr_recipient = ExchangeKeyPair::generate();
     let qr_pub = qr_recipient.public_key();
     let qr_secret = PairingSecret::generate();
+    let invite_secret = PairingSecret::generate();
     vec![
         (
             "groupe",
@@ -107,6 +116,25 @@ fn cases() -> Vec<(&'static str, Case)> {
                 }),
             },
         ),
+        (
+            "invitation",
+            Case {
+                seal: Box::new({
+                    let s = invite_secret.clone();
+                    move |env, sk| {
+                        seal(env, SealKey::Invite { token_id: [9; 8], secret: &s }, sk, &invite())
+                            .unwrap()
+                    }
+                }),
+                open: Box::new({
+                    let s = invite_secret.clone();
+                    move |env| open(env, OpenKey::Invite(&s))
+                }),
+                open_wrong: Box::new(move |env| {
+                    open(env, OpenKey::Invite(&PairingSecret::generate()))
+                }),
+            },
+        ),
     ]
 }
 
@@ -121,7 +149,8 @@ fn roundtrip_and_signature() {
         let mut env = envelope();
         env.payload = (case.seal)(&env, &sk);
         let opened = (case.open)(&env).unwrap_or_else(|e| panic!("{name} : {e}"));
-        assert_eq!(opened.body().unwrap(), body(), "{name}");
+        let expected = if name == "invitation" { invite() } else { body() };
+        assert_eq!(opened.body().unwrap(), expected, "{name}");
         opened.verify(&sk.verifying_key().to_bytes()).unwrap();
         let other = SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes();
         assert_eq!(opened.verify(&other), Err(CryptoError::BadSignature), "{name}");
@@ -139,6 +168,7 @@ fn every_tampering_is_rejected() {
             Header::Group { .. } => 5,
             Header::Pairing { .. } => 9,
             Header::Device { .. } | Header::PairQr { .. } => 33,
+            Header::Multi { recipients, .. } => 34 + recipients.len() * 64,
         };
         let tampered: Vec<(&str, Tamper)> = vec![
             ("en-tête", Box::new(|e: &mut Envelope| e.payload.data[1] ^= 1)),
@@ -181,6 +211,30 @@ fn key_of_another_scheme_is_refused() {
     env.payload = seal(&env, SealKey::Group { epoch: 1, key: &key }, &sk, &body()).unwrap();
     let secret = PairingSecret::generate();
     assert_eq!(open(&env, OpenKey::Pairing(&secret)).err(), Some(CryptoError::Decrypt));
+}
+
+/// L'invitation et l'appairage partagent l'en-tête `0x02` mais pas la clé :
+/// le même `S` n'ouvre pas l'un pour l'autre, et chaque clé n'admet que ses
+/// corps.
+#[test]
+fn invitation_and_pairing_keys_are_separate() {
+    let sk = signer();
+    let s = PairingSecret::generate();
+    let mut env = envelope();
+    env.payload =
+        seal(&env, SealKey::Invite { token_id: [1; 8], secret: &s }, &sk, &invite()).unwrap();
+    assert_eq!(open(&env, OpenKey::Pairing(&s)).err(), Some(CryptoError::Decrypt));
+    assert!(open(&env, OpenKey::Invite(&s)).is_ok());
+
+    let pair_request =
+        Body::PairRequest { name: "x".into(), sign_key: [1; 32], exchange_key: [2; 32] };
+    let key = SealKey::Invite { token_id: [1; 8], secret: &s };
+    assert!(matches!(seal(&env, key, &sk, &pair_request), Err(CryptoError::Malformed(_))));
+    assert!(matches!(seal(&env, key, &sk, &body()), Err(CryptoError::Malformed(_))));
+    let key = SealKey::Pairing { token_id: [1; 8], secret: &s };
+    assert!(matches!(seal(&env, key, &sk, &invite()), Err(CryptoError::Malformed(_))));
+    let key = SealKey::Group { epoch: 1, key: &GroupKey::generate() };
+    assert!(matches!(seal(&env, key, &sk, &invite()), Err(CryptoError::Malformed(_))));
 }
 
 #[test]

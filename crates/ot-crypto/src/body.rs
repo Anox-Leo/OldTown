@@ -1,9 +1,10 @@
 //! Corps des messages, sérialisés en JSON dans le clair (après la signature).
 
-use ot_proto::{BlobId, DeviceId, b64};
+use ot_proto::{BlobId, DeviceId, SignedBlob, UserId, b64};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use crate::directory::LogHead;
 use crate::file::{FILE_NONCE_LEN, check_layout};
 use crate::{CryptoError, FileKey, GroupKey, Result};
 
@@ -55,6 +56,33 @@ pub enum Body {
     /// Code à usage unique lu dans un mail (schéma `0x01`, note 0045),
     /// envoyé par le pont `relais-otp`.
     Otp(Otp),
+    /// Premier appareil d'une personne invitée → appareil de l'admin qui l'a
+    /// invitée (étape 10, en-tête `0x02` sous la clé d'invitation) : ses clés
+    /// publiques, à certifier.
+    InviteRequest {
+        user: UserId,
+        device_id: DeviceId,
+        name: String,
+        #[serde(with = "b64::array")]
+        sign_key: [u8; 32],
+        #[serde(with = "b64::array")]
+        exchange_key: [u8; 32],
+    },
+    /// Admin → invité (même clé) : le certificat de sa personne, et la tête
+    /// du journal de l'admin qui engage ce certificat (note 0056) : l'invité
+    /// refuse un journal de l'admin plus court ou différent.
+    InviteWelcome { cert: SignedBlob, admin_head: LogHead },
+    /// Admin → nouvel appareil de service (schéma `0x04`, à la place de
+    /// `pair_welcome`) : sa personne, son certificat, et l'ancre de
+    /// l'annuaire (pas de clé de groupe).
+    ServiceWelcome {
+        user: UserId,
+        cert: SignedBlob,
+        #[serde(with = "b64::array")]
+        anchor: [u8; 16],
+        /// Tête du journal de l'admin qui engage ce certificat (note 0056).
+        admin_head: LogHead,
+    },
 }
 
 /// Code à usage unique et ce qu'il faut pour le placer sur la bonne page.
@@ -161,6 +189,9 @@ impl Body {
             Self::GroupKey { .. } => "group_key",
             Self::File { .. } => "file",
             Self::Otp(_) => "otp",
+            Self::InviteRequest { .. } => "invite_request",
+            Self::InviteWelcome { .. } => "invite_welcome",
+            Self::ServiceWelcome { .. } => "service_welcome",
         }
     }
 
@@ -180,6 +211,9 @@ impl Body {
                 check_layout(*size, *chunk_size, *chunks)?
             }
             Self::Otp(otp) => otp.check()?,
+            Self::InviteRequest { name, .. } if !ot_proto::valid_device_name(name) => {
+                return Err(CryptoError::Body("invite_request : nom invalide".into()));
+            }
             _ => {}
         }
         Ok(body)

@@ -679,6 +679,9 @@ impl Secure {
                 let opened = open(env, OpenKey::PairQr(&self.exchange, secret))?;
                 self.adopt_welcome(env, opened, now, fx)
             }
+            // Messages d'une autre personne (étape 10) : lus à partir de
+            // l'annuaire vérifié, pas encore dans ce client.
+            Header::Multi { .. } => Err("schéma 0x05 pas encore pris en charge".into()),
         }
     }
 

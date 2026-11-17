@@ -1,0 +1,39 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "multi",
+    "recipients": [
+      {
+        "device": "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0",
+        "secret": "ZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIU="
+      }
+    ],
+    "ephemeral": "MjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFE=",
+    "message_key": "WltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHk="
+  },
+  "body": {
+    "kind": "file",
+    "blob_id": "blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V",
+    "name": "photo.jpg",
+    "mime": "image/jpeg",
+    "size": 2500000,
+    "chunk_size": 1048576,
+    "chunks": 3,
+    "key": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8=",
+    "nonce": "eHl6e3x9fn+AgYKDhIWGh4iJig==",
+    "sha256": "jI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqs="
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "BeBbGuMiAkg4CV/979hlRo3bd7FLLdJ1F16gq0KU+m16AQGSfjoKpLGujAMi0TZuI6B+9O8TMMvfeF8qoUr54a/4J2eJZ8qNYcDkVHTgiC+ryzoFvnlU2ZgvSuBUZn4x/sLR+0ffUgDYkItBf3YY2069m2BA30Q8B1uK70zUNg6pW0ZHSElKS0xNTk9QUVJTVFVWV1hZWltcXTBE6uOqCayYcjSu5dmqvZ1UDVAJzYmnIm7K15HNZ4egG4Pu/ZcQHsOsikie9XMNbPw4WTN3xypeilMrgdhRlMKxsdftYmGJ6q5EK8P6atlfwk9guMjRFBGMqnJKDjARflrt2k3BewpSxMmYtGTCP/wEHpRAtNNcBohQyAZa8XamOABYC2EGnoXXUQ/bC+ZIUMQhJyYPzN0tBn3sSKOKeQ+fvUvv3NJS2mR4JTAW689o9XP+hmMMocKnRyZH4Zq54fUhi9r95tAogDrXcmXXVVC2rRyCPAYU4MoMkSEYVWz6qOoenfxLKRIZR1IP7EXTKYNr7AVxUG8K7GvJ0kMM39BZAFfx8IcywGkOWTi3yRLQUjdQMGKv1gOjiz3kFrEz/GwUWN7d3np/Aj4aJSP8IW3w0AW3TQlgNNhYEsYmmyEZhNfFuaIa29cMs9KFBfir2lkDCTmw6w/8V0Bv9Dsm0e+bxOvYeXK+Fy4XEOywvgHIZyHtxhU="
+    }
+  }
+}

@@ -15,8 +15,6 @@ pub const TOKEN_LEN: usize = ot_proto::PAIR_TOKEN_LEN;
 const PREFIX: &str = "ot1-";
 const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 const RAW_LEN: usize = TOKEN_LEN + 16;
-/// 26 octets = 208 bits, soit 42 caractères base32.
-const ENCODED_LEN: usize = (RAW_LEN * 8).div_ceil(5);
 
 /// Code d'appairage : jeton du relais et secret du parrain.
 #[derive(Clone, PartialEq, Eq)]
@@ -31,57 +29,13 @@ impl PairingCode {
         let mut raw = Zeroizing::new([0u8; RAW_LEN]);
         raw[..TOKEN_LEN].copy_from_slice(&self.token);
         raw[TOKEN_LEN..].copy_from_slice(self.secret.as_bytes());
-        let mut out = Zeroizing::new(String::with_capacity(PREFIX.len() + ENCODED_LEN));
-        out.push_str(PREFIX);
-        let (mut acc, mut bits) = (0u16, 0u32);
-        for &byte in raw.iter() {
-            acc = (acc << 8) | u16::from(byte);
-            bits += 8;
-            while bits >= 5 {
-                bits -= 5;
-                out.push(char::from(ALPHABET[usize::from((acc >> bits) & 31)]));
-            }
-        }
-        if bits > 0 {
-            out.push(char::from(ALPHABET[usize::from((acc << (5 - bits)) & 31)]));
-        }
-        out
+        base32_encode(PREFIX, &raw[..])
     }
 
     /// Relit un code ; insensible à la casse, espaces et tirets ignorés après
     /// le préfixe (pour un code recopié à la main).
     pub fn parse(text: &str) -> Result<Self> {
-        let text = text.trim();
-        let rest = text
-            .get(..PREFIX.len())
-            .filter(|p| p.eq_ignore_ascii_case(PREFIX))
-            .map(|_| &text[PREFIX.len()..])
-            .ok_or(CryptoError::BadCode("préfixe ot1- attendu"))?;
-        let mut raw = Zeroizing::new([0u8; RAW_LEN]);
-        let (mut acc, mut bits, mut n, mut chars) = (0u16, 0u32, 0usize, 0usize);
-        for c in rest.chars().filter(|c| !matches!(c, ' ' | '-')) {
-            let c = c.to_ascii_lowercase();
-            let v = ALPHABET
-                .iter()
-                .position(|&a| char::from(a) == c)
-                .ok_or(CryptoError::BadCode("caractère hors de l'alphabet base32"))?;
-            chars += 1;
-            acc = (acc << 5) | v as u16;
-            bits += 5;
-            if bits >= 8 {
-                bits -= 8;
-                if n == RAW_LEN {
-                    return Err(CryptoError::BadCode("code trop long"));
-                }
-                raw[n] = (acc >> bits) as u8;
-                n += 1;
-            }
-        }
-        // Les bits de remplissage du dernier caractère doivent être nuls :
-        // un seul texte possible par code.
-        if chars != ENCODED_LEN || n != RAW_LEN || acc & ((1 << bits) - 1) != 0 {
-            return Err(CryptoError::BadCode("longueur incorrecte"));
-        }
+        let raw = base32_decode(text, PREFIX, RAW_LEN, "préfixe ot1- attendu")?;
         let mut token = [0; TOKEN_LEN];
         token.copy_from_slice(&raw[..TOKEN_LEN]);
         let mut secret = [0; 16];
@@ -92,6 +46,119 @@ impl PairingCode {
     /// Identifiant du jeton porté par l'en-tête `0x02`.
     pub fn token_id(&self) -> [u8; 8] {
         token_id(&self.token)
+    }
+}
+
+/// `préfixe ‖ base32(raw)` (RFC 4648, sans remplissage, en minuscules).
+fn base32_encode(prefix: &str, raw: &[u8]) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(prefix.len() + (raw.len() * 8).div_ceil(5)));
+    out.push_str(prefix);
+    let (mut acc, mut bits) = (0u16, 0u32);
+    for &byte in raw {
+        acc = (acc << 8) | u16::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(char::from(ALPHABET[usize::from((acc >> bits) & 31)]));
+        }
+    }
+    if bits > 0 {
+        out.push(char::from(ALPHABET[usize::from((acc << (5 - bits)) & 31)]));
+    }
+    out
+}
+
+/// Relit `préfixe ‖ base32` d'exactement `len` octets ; insensible à la
+/// casse, espaces et tirets ignorés après le préfixe. Les bits de
+/// remplissage du dernier caractère doivent être nuls : un seul texte
+/// possible par code.
+fn base32_decode(
+    text: &str,
+    prefix: &str,
+    len: usize,
+    bad_prefix: &'static str,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let text = text.trim();
+    let rest = text
+        .get(..prefix.len())
+        .filter(|p| p.eq_ignore_ascii_case(prefix))
+        .map(|_| &text[prefix.len()..])
+        .ok_or(CryptoError::BadCode(bad_prefix))?;
+    let mut raw = Zeroizing::new(vec![0u8; len]);
+    let (mut acc, mut bits, mut n, mut chars) = (0u16, 0u32, 0usize, 0usize);
+    for c in rest.chars().filter(|c| !matches!(c, ' ' | '-')) {
+        let c = c.to_ascii_lowercase();
+        let v = ALPHABET
+            .iter()
+            .position(|&a| char::from(a) == c)
+            .ok_or(CryptoError::BadCode("caractère hors de l'alphabet base32"))?;
+        chars += 1;
+        acc = ((acc << 5) | v as u16) & 0x0fff;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            if n == len {
+                return Err(CryptoError::BadCode("code trop long"));
+            }
+            raw[n] = (acc >> bits) as u8;
+            n += 1;
+        }
+    }
+    if chars != (len * 8).div_ceil(5) || n != len || acc & ((1 << bits) - 1) != 0 {
+        return Err(CryptoError::BadCode("longueur incorrecte"));
+    }
+    Ok(raw)
+}
+
+/// Code d'invitation d'une personne (étape 10, note 0052) : `ot2-` puis
+/// base32 de `version (0x01) ‖ T (10 o) ‖ S (16 o) ‖ ancre (16 o)`, soit 73
+/// caractères. Le relais ne voit que `T` ; `S` authentifie la demande de
+/// l'invité auprès de l'admin ; l'ancre est l'empreinte du certificat de
+/// l'admin, à laquelle l'invité vérifie tout l'annuaire.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InviteCode {
+    pub token: [u8; TOKEN_LEN],
+    pub secret: PairingSecret,
+    pub anchor: [u8; 16],
+}
+
+const INVITE_PREFIX: &str = "ot2-";
+const INVITE_VERSION: u8 = 1;
+const INVITE_RAW_LEN: usize = 1 + TOKEN_LEN + 16 + 16;
+
+impl InviteCode {
+    pub fn encode(&self) -> Zeroizing<String> {
+        let mut raw = Zeroizing::new([0u8; INVITE_RAW_LEN]);
+        raw[0] = INVITE_VERSION;
+        raw[1..1 + TOKEN_LEN].copy_from_slice(&self.token);
+        raw[1 + TOKEN_LEN..1 + TOKEN_LEN + 16].copy_from_slice(self.secret.as_bytes());
+        raw[1 + TOKEN_LEN + 16..].copy_from_slice(&self.anchor);
+        base32_encode(INVITE_PREFIX, &raw[..])
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        let raw = base32_decode(text, INVITE_PREFIX, INVITE_RAW_LEN, "préfixe ot2- attendu")?;
+        if raw[0] != INVITE_VERSION {
+            return Err(CryptoError::BadCode("version d'invitation inconnue"));
+        }
+        let mut token = [0; TOKEN_LEN];
+        token.copy_from_slice(&raw[1..1 + TOKEN_LEN]);
+        let mut secret = [0; 16];
+        secret.copy_from_slice(&raw[1 + TOKEN_LEN..1 + TOKEN_LEN + 16]);
+        let mut anchor = [0; 16];
+        anchor.copy_from_slice(&raw[1 + TOKEN_LEN + 16..]);
+        Ok(Self { token, secret: PairingSecret::from_bytes(secret), anchor })
+    }
+
+    /// Identifiant du jeton porté par l'en-tête `0x02`.
+    pub fn token_id(&self) -> [u8; 8] {
+        token_id(&self.token)
+    }
+}
+
+impl fmt::Debug for InviteCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("InviteCode(…)")
     }
 }
 
@@ -158,6 +225,34 @@ mod tests {
         let idx = ALPHABET.iter().position(|&a| char::from(a) == last).unwrap();
         tweaked.push(char::from(ALPHABET[idx ^ 1]));
         assert!(PairingCode::parse(&tweaked).is_err());
+    }
+
+    fn invite() -> InviteCode {
+        InviteCode {
+            token: std::array::from_fn(|i| i as u8),
+            secret: PairingSecret::from_bytes(std::array::from_fn(|i| 0xf0 | i as u8)),
+            anchor: std::array::from_fn(|i| 0x80 | i as u8),
+        }
+    }
+
+    #[test]
+    fn invite_roundtrip_and_rejects() {
+        let text = invite().encode();
+        assert_eq!(text.len(), 73);
+        assert!(text.starts_with("ot2-"));
+        assert_eq!(InviteCode::parse(&text).unwrap(), invite());
+        assert_eq!(InviteCode::parse(&text.to_uppercase()).unwrap(), invite());
+        assert!(InviteCode::parse(&text[..72]).is_err());
+        assert!(InviteCode::parse(&format!("ot1-{}", &text[4..])).is_err());
+        // Un code d'appairage n'est pas une invitation, et inversement.
+        assert!(PairingCode::parse(&text).is_err());
+        assert!(InviteCode::parse(&code().encode()).is_err());
+        // Version inconnue : premier octet 0x02 (deuxième caractère base32).
+        let mut v2 = text.to_string();
+        v2.replace_range(4..5, "a");
+        v2.replace_range(5..6, "i");
+        assert!(InviteCode::parse(&v2).is_err());
+        assert!(!format!("{:?}", invite()).contains("240"));
     }
 
     #[test]

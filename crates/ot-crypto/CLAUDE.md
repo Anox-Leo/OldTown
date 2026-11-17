@@ -1,12 +1,28 @@
 # ot-crypto
 
 Chiffrement de bout en bout : types de clés (`GroupKey`, `ExchangeKeyPair`,
-`PairingSecret`), `seal`/`open` pour les quatre schémas de `payload.data`
-(`0x04` : QR inversé, note 0022), données associées, signature, corps des
-messages (`Body`, `Roster`), code d'appairage (`PairingCode`), QR inversé
-(`PairingOffer`) et, à l'étape 5, chiffrement des fichiers par morceaux
+`PairingSecret`), `seal`/`open` pour les cinq schémas de `payload.data`
+(`0x04` : QR inversé, note 0022 ; `0x05` : plusieurs destinataires, entre
+personnes, étape 10), données associées, signature, corps des messages
+(`Body`, `Roster`), codes d'appairage et d'invitation (`PairingCode`,
+`InviteCode`), QR inversé (`PairingOffer`), objets signés de l'annuaire
+(`directory.rs` : `UserCert`, `RosterEntry`, ancre ; leurs règles de chaîne
+sont dans `ot-core`) et, à l'étape 5, chiffrement des fichiers par morceaux
 (`file.rs` : `FileKey`, `FileCipher`, `sanitize_file_name`, note 0026).
 
+- Chaque clé n'admet que ses corps (`KeyKind::admits`), au scellement comme
+  à l'ouverture : corps d'invitation sous la clé d'invitation seulement,
+  `service_welcome` en `0x04` seulement, `0x05` seulement `text`, `link`,
+  `file`, `otp`.
+- `0x05` (note 0056) : `msg_id` dans l'`info` HKDF de chaque `k_i` (le nonce
+  nul de `wrap_i` reste sûr même si l'éphémère se répète), et engagement
+  `SHA-256("ot-multi-commit-v1" ‖ K)` après la table, vérifié après l'AEAD :
+  tous les destinataires lisent le même clair.
+- Annuaire (note 0056) : le journal de l'admin engage l'empreinte
+  (`cert_hash`) du certificat courant de chaque personne (`certs`, trié,
+  sans doublon) ; `invite_welcome` et `service_welcome` portent la tête de
+  ce journal (`LogHead`). Pas de table JSON dans un objet signé : une clé en
+  double y serait lue en silence.
 - Aucune E/S, aucun réseau, aucun async, aucun tokio : la crate doit pouvoir
   se compiler pour Android (UniFFI) et en WebAssembly (extension, note 0017).
 - Primitives RustCrypto uniquement (`chacha20poly1305`, `aead-stream`,
