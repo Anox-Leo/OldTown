@@ -5,14 +5,19 @@
 
 use std::sync::Arc;
 
+use ot_crypto::directory::{GENESIS_PREV, Genesis, RosterEntry, UserCert, anchor, verify_root};
 use ot_crypto::{
     Body, CryptoError, EpochKey, ExchangeKeyPair, GroupKey, Header, Member, OpenKey, Opened, Otp,
     PairingCode, PairingOffer, PairingSecret, Roster, SealKey, fingerprint, open, seal,
 };
-use ot_proto::{BlobId, Content, ContentKind, DeviceId, DeviceInfo, Encoding, Envelope, Payload};
+use ot_proto::{
+    BlobId, Content, ContentKind, DeviceId, DeviceInfo, DirectoryUser, Encoding, Envelope, Known,
+    Payload, Role, SignedBlob, UserId,
+};
 use time::OffsetDateTime;
 
 use crate::Identity;
+use crate::directory::{DirectoryEvent, DirectoryState, Person};
 use crate::files::{
     FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile, add_offer, prune_offers,
     stored_from_body,
@@ -207,6 +212,12 @@ pub struct Secure {
     joining: Option<Joining>,
     /// QR inversé affiché : secret `S` attendu dans la réponse du parrain.
     joining_qr: Option<PairingSecret>,
+    /// Annuaire vérifié (étape 10), rangé dans le keyring.
+    directory: DirectoryState,
+    /// Personnes vérifiées au dernier tour complet de lecture.
+    people: Vec<Person>,
+    /// Fourche de ma personne déjà signalée (une alerte par fourche).
+    fork: bool,
 }
 
 impl Secure {
@@ -231,6 +242,10 @@ impl Secure {
             report(e);
             Vec::new()
         });
+        let directory = keyring.load_directory().unwrap_or_else(|e| {
+            report(e);
+            DirectoryState::default()
+        });
         let mut secure = Self {
             me,
             identity,
@@ -242,6 +257,9 @@ impl Secure {
             sponsoring: Vec::new(),
             joining: None,
             joining_qr: None,
+            directory,
+            people: Vec::new(),
+            fork: false,
         };
         let now = OffsetDateTime::now_utc();
         if secure.keys.as_mut().is_some_and(|k| k.prune(now)) {
@@ -257,6 +275,147 @@ impl Secure {
 
     pub fn info(&self) -> Option<GroupInfo> {
         Some(GroupInfo::new(self.keys.as_ref()?, self.roster.as_ref()?))
+    }
+
+    /// L'appareil connaît l'ancre de l'annuaire : il le lit et le vérifie.
+    /// Sans elle (installation à une personne), l'annuaire reste vide.
+    pub fn has_anchor(&self) -> bool {
+        self.directory.anchor.is_some()
+    }
+
+    /// Dernier `seq` vérifié par personne, pour `directory_get`.
+    pub fn directory_known(&self) -> Known {
+        self.directory.known()
+    }
+
+    /// Personnes vérifiées au dernier tour complet de lecture (moi compris).
+    pub fn people(&self) -> Vec<Person> {
+        self.people.clone()
+    }
+
+    /// État vérifié de l'annuaire (ancre, journaux).
+    pub fn directory_state(&self) -> &DirectoryState {
+        &self.directory
+    }
+
+    /// Applique un tour complet de lecture de l'annuaire. Renvoie les effets
+    /// (événements) et `true` si un autre tour est à faire, `known` à jour.
+    pub fn apply_directory(
+        &mut self,
+        me: &UserId,
+        admin: &UserId,
+        users: &[DirectoryUser],
+    ) -> (Vec<Effect>, bool) {
+        let mut fx = Vec::new();
+        let before = self.directory.clone();
+        let applied = self.directory.apply(admin, users);
+        if self.directory != before
+            && let Err(e) = self.keyring.save_directory(&self.directory)
+        {
+            fx.push(Effect::Emit(Event::KeyringError { message: e.0 }));
+        }
+        for event in applied.events {
+            let event = match event {
+                DirectoryEvent::Changed => Event::DirectoryChanged,
+                DirectoryEvent::Rejected { user, reason } => {
+                    tracing::warn!(user = %user, %reason, "objet de l'annuaire refusé");
+                    Event::DirectoryRejected { user, reason: reason.to_string() }
+                }
+                DirectoryEvent::KeysChanged { user } => Event::KeysChanged { user },
+                DirectoryEvent::Refetch { .. } => continue,
+            };
+            fx.push(Effect::Emit(event));
+        }
+        if let Some(people) = applied.people {
+            // Profils et présence ne sont pas dans l'état rangé : un changement
+            // de la vue compte aussi.
+            if people != self.people
+                && !fx.iter().any(|f| matches!(f, Effect::Emit(Event::DirectoryChanged)))
+            {
+                fx.push(Effect::Emit(Event::DirectoryChanged));
+            }
+            self.people = people;
+        }
+        let fork = self.roster.as_ref().is_some_and(|r| self.directory.is_fork(me, r));
+        if fork && !self.fork {
+            tracing::warn!("le journal publié de ma personne diffère de mon roster");
+            fx.push(Effect::Emit(Event::DirectoryFork));
+        }
+        self.fork = fork;
+        (fx, applied.again)
+    }
+
+    /// Objets de `admin_init` (note 0052) : certificat racine auto-signé par
+    /// cet appareil (son `genesis`) et entrée 1 du journal de l'admin, son
+    /// roster courant. Rien n'est rangé avant [`Secure::adopt_admin_root`].
+    pub fn admin_root(
+        &self,
+        admin: &UserId,
+        name: &str,
+        now: OffsetDateTime,
+    ) -> Result<(SignedBlob, SignedBlob), ClientError> {
+        let (_, roster) = self.group()?;
+        if self.has_anchor() {
+            return Err(ClientError::Invalid("l'annuaire a déjà une ancre".into()));
+        }
+        let me = roster.member(&self.me).ok_or_else(|| ClientError::NotMember(self.me.clone()))?;
+        let genesis = Genesis {
+            device_id: self.me.clone(),
+            name: me.name.clone(),
+            sign_key: self.identity.public_key(),
+            exchange_key: self.exchange.public_key(),
+        };
+        let key = self.identity.signing_key();
+        let cert = UserCert::new(
+            admin.clone(),
+            name,
+            Role::Admin,
+            genesis,
+            now.unix_timestamp(),
+            self.me.clone(),
+        )
+        .sign(key)
+        .map_err(crypto)?;
+        let entry =
+            RosterEntry::new(admin.clone(), 1, GENESIS_PREV, self.me.clone(), roster.clone())
+                .sign(key)
+                .map_err(crypto)?;
+        Ok((cert, entry))
+    }
+
+    /// Certificat racine déjà publié par un autre appareil de l'admin :
+    /// adopté seulement s'il est pour `admin`, auto-signé, et si son
+    /// `genesis` est membre de mon roster avec les mêmes clés. Mon roster
+    /// est vérifié par mon groupe : le relais ne peut pas y glisser un
+    /// appareil.
+    pub fn adopt_existing_root(
+        &mut self,
+        admin: &UserId,
+        cert: &SignedBlob,
+    ) -> Result<Vec<Effect>, ClientError> {
+        let (_, roster) = self.group()?;
+        let root = verify_root(cert, &anchor(cert)).map_err(crypto)?;
+        let g = &root.genesis;
+        let mine = roster
+            .member(&g.device_id)
+            .is_some_and(|m| m.sign_key == g.sign_key && m.exchange_key == g.exchange_key);
+        if &root.user != admin || !mine {
+            return Err(ClientError::Invalid(
+                "certificat de l'admin publié par un appareil hors de mon groupe".into(),
+            ));
+        }
+        Ok(self.adopt_admin_root(cert))
+    }
+
+    /// `admin_init` accepté par le relais : l'ancre est celle de ce
+    /// certificat ; le journal se vérifie ensuite à la lecture.
+    pub fn adopt_admin_root(&mut self, cert: &SignedBlob) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        self.directory = DirectoryState::with_anchor(anchor(cert));
+        if let Err(e) = self.keyring.save_directory(&self.directory) {
+            fx.push(Effect::Emit(Event::KeyringError { message: e.0 }));
+        }
+        fx
     }
 
     fn group(&self) -> Result<(&GroupKeys, &Roster), ClientError> {
@@ -1339,5 +1498,104 @@ mod tests {
         assert_eq!(init_group(&keyring, &id, "mac", &identity, false), Err(GroupError::Exists(1)));
         let again = init_group(&keyring, &id, "mac", &identity, true).unwrap();
         assert_ne!(again.key_fingerprint, info.key_fingerprint);
+    }
+
+    fn profile(d: &Dev) -> ot_proto::DirectoryDevice {
+        ot_proto::DirectoryDevice {
+            id: d.id.clone(),
+            name: "relais".into(),
+            kind: None,
+            reachable: true,
+            default: false,
+            features: vec![ot_proto::Feature::users_v1()],
+            online: false,
+        }
+    }
+
+    fn admin_user(
+        admin: &UserId,
+        cert: &SignedBlob,
+        log: Vec<ot_proto::LogEntry>,
+        devs: &[&Dev],
+    ) -> DirectoryUser {
+        DirectoryUser {
+            id: admin.clone(),
+            name: "relais".into(),
+            role: Role::Admin,
+            state: ot_proto::UserState::Active,
+            cert: Some(cert.clone()),
+            log,
+            more: false,
+            muted: false,
+            devices: devs.iter().map(|d| profile(d)).collect(),
+        }
+    }
+
+    fn emitted(fx: &[Effect], pred: impl Fn(&Event) -> bool) -> usize {
+        fx.iter().filter(|f| matches!(f, Effect::Emit(e) if pred(e))).count()
+    }
+
+    #[test]
+    fn admin_root_is_kept_and_the_directory_survives_a_restart() {
+        let mut devs = group(2);
+        let admin = UserId::generate();
+        assert!(Dev::new().secure.admin_root(&admin, "Alice", OffsetDateTime::now_utc()).is_err());
+        let (cert, entry) =
+            devs[0].secure.admin_root(&admin, "Alice", OffsetDateTime::now_utc()).unwrap();
+        assert!(!devs[0].secure.has_anchor(), "rien avant la réponse du relais");
+        devs[0].secure.adopt_admin_root(&cert);
+        assert!(devs[0].secure.admin_root(&admin, "Alice", OffsetDateTime::now_utc()).is_err());
+
+        let log = vec![ot_proto::LogEntry { seq: 1, entry }];
+        let users = [admin_user(&admin, &cert, log, &[&devs[0], &devs[1]])];
+        let (fx, again) = devs[0].secure.apply_directory(&admin, &admin, &users);
+        assert!(!again);
+        assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryChanged)), 1, "{fx:?}");
+        assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryRejected { .. })), 0);
+        let people = devs[0].secure.people();
+        assert_eq!((people.len(), people[0].name.as_str()), (1, "Alice"));
+        assert_eq!(people[0].devices.len(), 2);
+
+        devs[0].reload();
+        assert!(devs[0].secure.has_anchor());
+        assert_eq!(devs[0].secure.directory_known().get(&admin), Some(&1));
+
+        // L'autre appareil du groupe adopte la racine ; un appareil d'un
+        // autre groupe, non.
+        assert!(devs[1].secure.adopt_existing_root(&admin, &cert).is_ok());
+        assert!(devs[1].secure.has_anchor());
+        let mut stranger = group(1).remove(0);
+        assert!(stranger.secure.adopt_existing_root(&admin, &cert).is_err());
+        assert!(stranger.secure.adopt_existing_root(&UserId::generate(), &cert).is_err());
+        stranger.reload();
+        assert!(!stranger.secure.has_anchor());
+    }
+
+    #[test]
+    fn a_fork_of_my_person_is_reported_once() {
+        let mut devs = group(2);
+        let admin = UserId::generate();
+        let (cert, entry) =
+            devs[0].secure.admin_root(&admin, "Alice", OffsetDateTime::now_utc()).unwrap();
+        devs[0].secure.adopt_admin_root(&cert);
+        let log = vec![ot_proto::LogEntry { seq: 1, entry }];
+        let users = [admin_user(&admin, &cert, log, &[&devs[0]])];
+        let (fx, _) = devs[0].secure.apply_directory(&admin, &admin, &users);
+        assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryFork)), 0);
+
+        // Mon roster local, même version, n'a plus d1 mais un autre appareil.
+        let other = Dev::new();
+        let roster = Roster {
+            epoch: 1,
+            version: 1,
+            members: vec![devs[0].member("d0"), other.member("autre")],
+        };
+        devs[0].keyring.save_roster(&roster).unwrap();
+        devs[0].reload();
+        let users = [admin_user(&admin, &cert, Vec::new(), &[&devs[0]])];
+        let (fx, _) = devs[0].secure.apply_directory(&admin, &admin, &users);
+        assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryFork)), 1);
+        let (fx, _) = devs[0].secure.apply_directory(&admin, &admin, &users);
+        assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryFork)), 0, "une seule alerte");
     }
 }

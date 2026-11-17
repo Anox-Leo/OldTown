@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use ot_crypto::{ExchangeKeyPair, GroupKey, Roster};
 use ot_proto::{DeviceId, Envelope, b64};
 
+use crate::directory::DirectoryState;
 use crate::files::{PendingUpload, StoredFile};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,10 @@ pub trait Keyring: Send + Sync {
     /// Dépôts de fichiers en cours, avec leur clé (étape 5).
     fn load_uploads(&self) -> Result<Vec<PendingUpload>, KeyringError>;
     fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError>;
+    /// Annuaire vérifié (étape 10) : ancre, certificats et dernière entrée
+    /// vérifiée par personne. Vide sans ancre (installation à une personne).
+    fn load_directory(&self) -> Result<DirectoryState, KeyringError>;
+    fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError>;
 }
 
 /// Octets nommés, rangés à l'abri par l'appli. Les noms sont courts, en ASCII
@@ -73,6 +78,8 @@ pub mod names {
     pub const FILES: &str = "files.json";
     /// Dépôts de fichiers en cours, avec leur clé, en JSON (étape 5).
     pub const UPLOADS: &str = "uploads.json";
+    /// Annuaire vérifié, en JSON (étape 10).
+    pub const DIRECTORY: &str = "directory.json";
 }
 
 /// [`Keyring`] rangé dans un [`SecretStore`]. Le format des valeurs est celui
@@ -97,6 +104,7 @@ impl StoreKeyring {
             names::QUARANTINE,
             names::FILES,
             names::UPLOADS,
+            names::DIRECTORY,
         ] {
             self.store.delete(name)?;
         }
@@ -176,6 +184,14 @@ impl Keyring for StoreKeyring {
 
     fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError> {
         self.write_json(names::UPLOADS, uploads)
+    }
+
+    fn load_directory(&self) -> Result<DirectoryState, KeyringError> {
+        Ok(self.read_json(names::DIRECTORY)?.unwrap_or_default())
+    }
+
+    fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError> {
+        self.write_json(names::DIRECTORY, state)
     }
 }
 
@@ -324,6 +340,7 @@ struct MemoryState {
     quarantine: Vec<Quarantined>,
     files: Vec<StoredFile>,
     uploads: Vec<PendingUpload>,
+    directory: DirectoryState,
 }
 
 impl MemoryKeyring {
@@ -379,6 +396,13 @@ impl Keyring for MemoryKeyring {
         self.lock().uploads = uploads.to_vec();
         Ok(())
     }
+    fn load_directory(&self) -> Result<DirectoryState, KeyringError> {
+        Ok(self.lock().directory.clone())
+    }
+    fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError> {
+        self.lock().directory = state.clone();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -418,6 +442,11 @@ mod tests {
         let keys = GroupKeys::new(1, GroupKey::generate());
         keyring.save_group_keys(&keys).unwrap();
         assert_eq!(keyring.load_group_keys().unwrap(), Some(keys));
+
+        assert_eq!(keyring.load_directory().unwrap(), DirectoryState::default());
+        let directory = DirectoryState::with_anchor([3; 16]);
+        keyring.save_directory(&directory).unwrap();
+        assert_eq!(keyring.load_directory().unwrap(), directory);
 
         keyring.forget_group().unwrap();
         assert!(store.names().is_empty());

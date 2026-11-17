@@ -50,6 +50,16 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   lit et écrit par `ChunkSource` et `ChunkSink`, fournis par l'appli et
   appelés hors du runtime (`spawn_blocking`). Un retrait n'est finalisé
   (`ChunkSink::finish`) qu'après la vérification du SHA-256.
+- Annuaire (étape 10) : `directory.rs` (sans réseau) vérifie tout jusqu'à
+  l'ancre (certificat racine, journal de l'admin, empreintes `certs`,
+  certificats, journaux des personnes, profils filtrés sur le roster
+  vérifié) et ne croit jamais le relais ; l'état vérifié est rangé dans le
+  `Keyring` (`directory.json`). Le client le lit à chaque connexion et à
+  chaque `directory_changed` (`DirectoryRead` : pages par `next`, tours tant
+  qu'un journal a `more`), seulement s'il a une ancre. Les refus sans
+  référence du relais (`pair_create`, `directory_get`, `admin_init`) sont
+  rendus à la plus ancienne demande en attente (`Pending`) : le relais
+  répond dans l'ordre.
 - Jamais de contenu, de clé ni de jeton dans les logs `tracing`.
 - Tests : unitaires dans le crate ; les scénarios avec un vrai relais vivent
   dans `crates/ot-server/tests/` (relais en processus).

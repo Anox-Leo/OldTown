@@ -3,7 +3,7 @@
 //! cœur se compile aussi en WebAssembly (extension, note 0023).
 
 use ot_crypto::Otp;
-use ot_proto::{Content, DeviceId, ErrorCode, Ulid};
+use ot_proto::{Content, DeviceId, ErrorCode, Ulid, UserId};
 use time::OffsetDateTime;
 
 use crate::files::ReceivedFile;
@@ -73,6 +73,23 @@ pub enum Event {
     /// Le keyring n'a pas pu lire ou enregistrer l'état du groupe.
     KeyringError {
         message: String,
+    },
+    /// Annuaire relu (étape 10) : des personnes, appareils ou profils
+    /// vérifiés ont changé ; à relire par `Client::directory`.
+    DirectoryChanged,
+    /// Un objet de l'annuaire (certificat, entrée de journal) a été refusé :
+    /// la personne reste à sa dernière entrée vérifiée, ou disparaît.
+    DirectoryRejected {
+        user: UserId,
+        reason: String,
+    },
+    /// Le journal publié de ma personne porte, à version égale, d'autres
+    /// appareils que mon roster : alerte de sécurité.
+    DirectoryFork,
+    /// Une personne a de nouvelles clés (réinvitation) : à dire, comme le
+    /// font les messageries chiffrées.
+    KeysChanged {
+        user: UserId,
     },
 }
 
