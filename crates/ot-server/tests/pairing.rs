@@ -203,10 +203,10 @@ async fn store_never_keeps_token_in_clear() {
     let token = [0xA5u8; PAIR_TOKEN_LEN];
     store.create_pairing(&sponsor.id, &token_hash(&token), 0, 1_000).await.unwrap();
     assert!(matches!(
-        store.redeem_pairing(&token_hash(&[0; PAIR_TOKEN_LEN]), "x", &[2; 32], 1).await,
+        store.redeem_pairing(&token_hash(&[0; PAIR_TOKEN_LEN]), "x", &[2; 32], 8, 1).await,
         Err(StoreError::PairingInvalid)
     ));
-    store.redeem_pairing(&token_hash(&token), "windows", &[2; 32], 1).await.unwrap();
+    store.redeem_pairing(&token_hash(&token), "windows", &[2; 32], 8, 1).await.unwrap();
     store.close().await;
 
     let mut bytes = std::fs::read(&path).unwrap();

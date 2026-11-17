@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::http::HeaderMap;
+use ot_proto::UserId;
 use tokio::time::Instant;
 
 /// Nombre maximal d'IP suivies pour leurs échecs ; au-delà, les nouvelles
@@ -211,6 +212,58 @@ impl Limits {
     }
 }
 
+/// Débit des envois de chaque membre (étape 10) : seau de `per_minute`
+/// jetons, regagnés au fil de la minute (fenêtre glissante). En mémoire,
+/// comme le reste : un redémarrage remet les seaux à plein.
+#[derive(Debug)]
+pub struct SendRate {
+    per_minute: u32,
+    buckets: Mutex<HashMap<UserId, Bucket>>,
+}
+
+impl SendRate {
+    pub fn new(per_minute: u32) -> Self {
+        Self { per_minute, buckets: Mutex::default() }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<UserId, Bucket>> {
+        self.buckets.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn refill(&self, bucket: &mut Bucket) {
+        let now = Instant::now();
+        let full = f64::from(self.per_minute);
+        let gained = now.duration_since(bucket.at).as_secs_f64() * full / 60.0;
+        bucket.tokens = (bucket.tokens + gained).min(full);
+        bucket.at = now;
+    }
+
+    /// Prend un jeton pour un envoi de `user` ; `false` si le seau est vide.
+    pub fn take(&self, user: &UserId) -> bool {
+        let full = f64::from(self.per_minute);
+        let mut buckets = self.lock();
+        let bucket = buckets
+            .entry(user.clone())
+            .or_insert_with(|| Bucket { tokens: full, at: Instant::now() });
+        self.refill(bucket);
+        if bucket.tokens < 1.0 {
+            return false;
+        }
+        bucket.tokens -= 1.0;
+        true
+    }
+
+    /// Oublie les personnes revenues à un seau plein.
+    pub fn prune(&self) {
+        let full = f64::from(self.per_minute);
+        let mut buckets = self.lock();
+        buckets.retain(|_, b| {
+            self.refill(b);
+            b.tokens < full
+        });
+    }
+}
+
 /// Place d'une connexion non authentifiée.
 #[derive(Debug)]
 pub struct Permit {
@@ -342,6 +395,23 @@ mod tests {
         junk.insert("x-forwarded-for", HeaderValue::from_static("pas une ip"));
         assert_eq!(l.client_ip(peer("127.0.0.1"), &junk), ip("127.0.0.1"));
         assert_eq!(l.client_ip(peer("127.0.0.1"), &HeaderMap::new()), ip("127.0.0.1"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn send_rate_is_per_user_and_refills() {
+        let rate = SendRate::new(3);
+        let (a, b) = (UserId::generate(), UserId::generate());
+        for _ in 0..3 {
+            assert!(rate.take(&a));
+        }
+        assert!(!rate.take(&a), "seau vide");
+        assert!(rate.take(&b), "une autre personne n'est pas touchée");
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert!(rate.take(&a), "un envoi regagné en 20 s");
+        assert!(!rate.take(&a));
+        tokio::time::advance(Duration::from_secs(120)).await;
+        rate.prune();
+        assert!(rate.lock().is_empty(), "seaux pleins oubliés");
     }
 
     #[test]

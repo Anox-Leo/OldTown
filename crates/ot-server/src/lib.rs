@@ -9,6 +9,7 @@ mod registry;
 mod session;
 pub mod store;
 pub mod tls;
+pub mod users;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -29,7 +30,7 @@ use tokio::sync::watch;
 
 use crate::auth::NonceCache;
 use crate::blobs::BlobDir;
-use crate::limits::{Limits, LimitsConfig, Refused};
+use crate::limits::{Limits, LimitsConfig, Refused, SendRate};
 use crate::metrics::Metrics;
 use crate::registry::Registry;
 use crate::store::{PurgeStats, Store};
@@ -60,6 +61,44 @@ pub struct Config {
     pub blob_ttl: Duration,
     /// Protections d'un relais exposé (étape 8e).
     pub limits: LimitsConfig,
+    /// Limites propres à chaque membre (étape 10) : l'admin et les services
+    /// n'ont que les limites globales.
+    pub users: UserLimits,
+}
+
+/// Limites d'un membre (étape 10, `OT_USER_*`). Sauf les appareils, elles
+/// valent aussi pour une personne de service ; l'admin n'a que les limites
+/// globales.
+#[derive(Debug, Clone)]
+pub struct UserLimits {
+    /// Appareils actifs par membre.
+    pub max_devices: usize,
+    /// Taille chiffrée cumulée des fichiers en transit d'un membre.
+    pub blob_quota: u64,
+    /// Envois (`send` et `roster_publish`) par minute d'un membre.
+    pub send_rate: u32,
+    /// Taille cumulée des messages d'un membre en attente de livraison.
+    pub pending_quota: u64,
+    /// Taille cumulée du journal de roster d'un membre.
+    pub log_quota: u64,
+    /// Durée de validité d'une invitation (D45).
+    pub invite_ttl: Duration,
+    /// Invitations utilisables à la fois.
+    pub max_open_invitations: u64,
+}
+
+impl Default for UserLimits {
+    fn default() -> Self {
+        Self {
+            max_devices: 8,
+            blob_quota: 2 << 30,
+            send_rate: 120,
+            pending_quota: 256 << 20,
+            log_quota: 4 << 20,
+            invite_ttl: Duration::from_secs(48 * 3600),
+            max_open_invitations: 5,
+        }
+    }
 }
 
 /// Nombre maximal de nonces HTTP retenus pendant la fenêtre.
@@ -79,6 +118,7 @@ impl Default for Config {
             blob_quota: 20 << 30,
             blob_ttl: Duration::from_secs(48 * 3600),
             limits: LimitsConfig::default(),
+            users: UserLimits::default(),
         }
     }
 }
@@ -98,6 +138,8 @@ struct Inner {
     blob_dir: BlobDir,
     nonces: NonceCache,
     limits: Arc<Limits>,
+    /// Débit des envois de chaque membre et service (étape 10).
+    send_rate: SendRate,
 }
 
 impl Relay {
@@ -108,6 +150,7 @@ impl Relay {
                 blob_dir: BlobDir::new(config.blob_dir.clone()),
                 nonces: NonceCache::new(MAX_HTTP_NONCES),
                 limits: Limits::new(config.limits.clone()),
+                send_rate: SendRate::new(config.users.send_rate),
                 config,
                 registry: Registry::default(),
                 metrics: Metrics::default(),
@@ -143,6 +186,7 @@ impl Relay {
     /// compteurs. Renvoie les chiffres des messages et des jetons.
     pub async fn purge_once(&self) -> store::Result<PurgeStats> {
         self.inner.limits.prune();
+        self.inner.send_rate.prune();
         let stats = self.inner.store.purge(now_ms()).await?;
         let m = &self.inner.metrics;
         m.purged_acked.fetch_add(stats.acked, std::sync::atomic::Ordering::Relaxed);
@@ -152,6 +196,7 @@ impl Relay {
                 acked = stats.acked,
                 expired = stats.expired,
                 pairings = stats.pairings,
+                invitations = stats.invitations,
                 "purge"
             );
         }
@@ -192,7 +237,8 @@ impl Relay {
         let now = now_ms();
         let pending = self.inner.store.total_pending(now).await?;
         let blob_bytes = self.inner.store.blob_bytes(now).await?;
-        Ok(self.inner.metrics.render(pending, blob_bytes))
+        let users = self.inner.store.user_counts().await?;
+        Ok(self.inner.metrics.render(pending, blob_bytes, &users))
     }
 
     /// Ferme la session ouverte d'un appareil (après révocation, par exemple).

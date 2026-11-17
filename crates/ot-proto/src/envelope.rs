@@ -42,8 +42,10 @@ impl FromStr for DeviceId {
     type Err = InvalidDeviceId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.strip_prefix(Self::PREFIX).map(Ulid::from_string) {
-            Some(Ok(_)) => Ok(Self(s.to_owned())),
+        // Forme canonique seulement (majuscules, sans dépassement) : deux
+        // textes différents ne désignent jamais le même ULID (étape 10).
+        match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
+            Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidDeviceId(s.to_owned())),
         }
     }
@@ -77,7 +79,9 @@ pub struct Envelope {
     /// ULID généré par l'expéditeur, sert à l'idempotence et au dédoublonnage.
     pub msg_id: Ulid,
     pub from: DeviceId,
-    /// Vide : tous les autres appareils de l'expéditeur.
+    /// Vide : tous les autres appareils de la personne de l'expéditeur
+    /// (étape 10 ; avant, tous les autres appareils du relais). Au plus
+    /// [`crate::MAX_RECIPIENTS`] appareils nommés.
     #[serde(default)]
     pub to: Vec<DeviceId>,
     #[serde(with = "time::serde::rfc3339")]

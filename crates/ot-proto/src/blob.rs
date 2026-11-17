@@ -30,8 +30,9 @@ impl FromStr for BlobId {
     type Err = InvalidBlobId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.strip_prefix(Self::PREFIX).map(Ulid::from_string) {
-            Some(Ok(_)) => Ok(Self(s.to_owned())),
+        // Forme canonique seulement, comme `DeviceId`.
+        match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
+            Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidBlobId(s.to_owned())),
         }
     }
@@ -69,6 +70,7 @@ mod tests {
         // Seul le préfixe `blob_` est accepté : un identifiant d'appareil non.
         assert!("dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<BlobId>().is_err());
         assert!("blob_pas-un-ulid".parse::<BlobId>().is_err());
+        assert!("blob_01j9z3q5rt8yb6zk4c2d7e9f1g".parse::<BlobId>().is_err(), "minuscules");
         // Un identifiant sert de nom de dossier sur le relais : jamais de `/`.
         assert!("blob_../../etc".parse::<BlobId>().is_err());
     }

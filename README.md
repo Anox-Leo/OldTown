@@ -110,8 +110,14 @@ Clients will use `wss://<machine>.<tailnet>.ts.net:7878`.
 
 Relay settings (environment variables, all optional): `OT_TTL` (unread
 messages kept `7d`), `OT_MAX_FILE_SIZE` (`2G`), `OT_BLOB_QUOTA` (disk space
-for files in transit, `20G`), `OT_BLOB_TTL` (`48h`); see
-`ot-server serve --help`.
+for files in transit, `20G`), `OT_BLOB_TTL` (`48h`); per member of a
+multi-person relay, `OT_USER_MAX_DEVICES` (`8`), and per member or service
+account, `OT_USER_BLOB_QUOTA` (`2G`), `OT_USER_SEND_RATE` (`120` sends or
+roster updates per minute), `OT_USER_PENDING_QUOTA` (undelivered messages,
+`256M`) and `OT_USER_LOG_QUOTA` (signed roster log, `4M`); see `ot-server
+serve --help`. People and links can be inspected or fixed over SSH with
+`ot-server user list|rename|revoke`, `ot-server link list|remove` and, after
+losing every admin device, `ot-server admin reset`.
 
 ### 2. First device: the command line
 

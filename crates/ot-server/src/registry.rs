@@ -15,6 +15,9 @@ pub struct Session {
     pub wake: Notify,
     /// Demande à la session de se fermer (remplacée par une plus récente).
     pub kick: Notify,
+    /// L'annuaire de l'appareil a changé : lui envoyer `directory_changed`
+    /// (étape 10).
+    pub directory: Notify,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +33,7 @@ impl Registry {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             wake: Notify::new(),
             kick: Notify::new(),
+            directory: Notify::new(),
         });
         let old = self.lock().insert(device.clone(), session.clone());
         if let Some(old) = old {
@@ -55,6 +59,27 @@ impl Registry {
     pub fn kick(&self, device: &DeviceId) {
         if let Some(s) = self.lock().remove(device) {
             s.kick.notify_one();
+        }
+    }
+
+    /// Prévient les sessions ouvertes de ces appareils que leur annuaire a
+    /// changé.
+    pub fn directory_changed<'a>(&self, devices: impl IntoIterator<Item = &'a DeviceId>) {
+        let sessions = self.lock();
+        for d in devices {
+            if let Some(s) = sessions.get(d) {
+                s.directory.notify_one();
+            }
+        }
+    }
+
+    /// Prévient toutes les sessions ouvertes sauf celle de `except` (l'annuaire
+    /// de l'admin, l'ancre de tous, a changé).
+    pub fn directory_changed_all(&self, except: &DeviceId) {
+        for (d, s) in self.lock().iter() {
+            if d != except {
+                s.directory.notify_one();
+            }
         }
     }
 

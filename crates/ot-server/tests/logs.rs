@@ -1,5 +1,6 @@
 //! Étape 2, T4 : aucun jeton d'appairage dans les logs du relais ; étape 5,
-//! T2 : aucune signature ni nonce de requête HTTP.
+//! T2 : aucune signature ni nonce de requête HTTP ; étape 10 : aucun jeton
+//! d'invitation ni son hash.
 //!
 //! Seul test de son binaire : le subscriber `tracing` de test est propre au
 //! fil, et le cache d'intérêt des callsites est global au processus ; des
@@ -75,8 +76,51 @@ async fn token_never_logged() {
     let res = http(server.addr, "POST", "/v1/blobs", &headers, body).await;
     assert_eq!(res.status, 201);
 
+    // Invitation (étape 10) : jeton créé puis utilisé.
+    let cert = ot_proto::SignedBlob { data: b"{}".to_vec(), sig: [1; 64] };
+    raw.send(&Frame::AdminInit { cert: cert.clone(), entry: cert }).await;
+    assert!(matches!(raw.recv().await, Some(Frame::AdminInitialized { .. })));
+    raw.send(&Frame::UserInvite {
+        name: "Bob".into(),
+        role: ot_proto::Role::Member,
+        links: vec![],
+    })
+    .await;
+    let invite = loop {
+        match raw.recv().await {
+            Some(Frame::UserInvited { token, .. }) => break token,
+            Some(Frame::DirectoryChanged) => {}
+            other => panic!("user_invited attendu, reçu {other:?}"),
+        }
+    };
+    {
+        use ed25519_dalek::Signer;
+        let id = Identity::generate();
+        let mut r = Raw::connect(&server).await;
+        let nonce = r.challenge().await;
+        let msg = ot_proto::invite_redeem_message(&nonce, &token_hash(&invite));
+        let sig = ed25519_dalek::SigningKey::from_bytes(&id.to_bytes()).sign(&msg).to_bytes();
+        r.send(&Frame::InviteRedeem {
+            token: invite,
+            name: "bob-phone".into(),
+            public_key: id.public_key(),
+            sig,
+        })
+        .await;
+        while r.recv().await.is_some() {}
+    }
+
     let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
     assert!(text.contains("appareil appairé"), "les logs doivent être capturés : {text}");
+    assert!(text.contains("invitation utilisée"), "les logs doivent être capturés : {text}");
+    for needle in [
+        b64::encode(&invite),
+        format!("{invite:?}"),
+        format!("{:?}", token_hash(&invite)),
+        b64::encode(&token_hash(&invite)),
+    ] {
+        assert!(!text.contains(&needle), "jeton d'invitation dans les logs : {needle}");
+    }
     assert!(text.contains("fichier créé"), "les logs doivent être capturés : {text}");
     for needle in [b64::encode(&token), format!("{token:?}"), format!("{:?}", token_hash(&token))] {
         assert!(!text.contains(&needle), "jeton dans les logs : {needle}");

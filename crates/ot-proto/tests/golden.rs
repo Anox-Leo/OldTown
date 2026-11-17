@@ -231,6 +231,10 @@ fn device_id_format() {
     assert_eq!(id.as_str().parse::<DeviceId>().unwrap(), id);
     assert!("01J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<DeviceId>().is_err());
     assert!("dev_".parse::<DeviceId>().is_err());
+    // Forme canonique seulement (étape 10) : ni minuscules, ni ULID qui
+    // dépasse 128 bits, qui désigneraient le même ULID qu'un autre texte.
+    assert!("dev_01j9z3k8v7q2w4e6r8t0y1v3h5".parse::<DeviceId>().is_err());
+    assert!("dev_Z1J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<DeviceId>().is_err());
 }
 
 #[test]
