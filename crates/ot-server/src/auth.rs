@@ -7,7 +7,8 @@ use std::sync::Mutex;
 use ed25519_dalek::{Signature, VerifyingKey};
 use ot_proto::http::{HTTP_NONCE_LEN, HTTP_WINDOW_MS, http_request_message};
 use ot_proto::{
-    DeviceId, NONCE_LEN, PAIR_TOKEN_LEN, auth_message, pair_redeem_message, pair_register_message,
+    DeviceId, NONCE_LEN, PAIR_TOKEN_LEN, auth_message, invite_redeem_message, pair_redeem_message,
+    pair_register_message,
 };
 use sha2::{Digest, Sha256};
 
@@ -47,6 +48,17 @@ pub fn verify_redeem(
     sig: &[u8; 64],
 ) -> bool {
     verify_sig(public_key, &pair_redeem_message(nonce, token_hash), sig)
+}
+
+/// Vérifie la signature de `"ot-invite-v1" ‖ nonce ‖ sha256(jeton)` par la
+/// clé du premier appareil d'une personne invitée (étape 10).
+pub fn verify_invite(
+    public_key: &[u8; 32],
+    nonce: &[u8; NONCE_LEN],
+    token_hash: &[u8; 32],
+    sig: &[u8; 64],
+) -> bool {
+    verify_sig(public_key, &invite_redeem_message(nonce, token_hash), sig)
 }
 
 /// Vérifie la signature de `pair_register` par la clé du nouvel appareil.

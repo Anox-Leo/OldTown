@@ -1,8 +1,13 @@
 //! Une connexion WebSocket : défi, authentification, puis boucle de session.
+//! Les trames de l'étape 10 (annuaire, réseau, administration) sont dans
+//! [`people`].
+
+mod people;
 
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use ot_proto::{
-    DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES, MAX_NAME_CHARS, valid_device_name,
+    DeviceId, DeviceInfo, ErrorCode, Frame, MAX_ENVELOPE_BYTES, MAX_NAME_CHARS, Role, UserId,
+    valid_device_name,
 };
 use std::net::IpAddr;
 use std::sync::atomic::Ordering::Relaxed;
@@ -27,8 +32,8 @@ pub async fn run(relay: Relay, mut socket: WebSocket, ip: IpAddr, permit: Permit
     let inner = &*relay.inner;
     let authenticated = authenticate(inner, &mut socket, ip).await;
     drop(permit);
-    let device = match authenticated {
-        Ok(device) => device,
+    let (device, user, role) = match authenticated {
+        Ok(peer) => (peer.device, peer.user, peer.role),
         Err(Close(reason)) => {
             tracing::debug!(reason, "connexion refusée");
             close(&mut socket, reason).await;
@@ -40,7 +45,7 @@ pub async fn run(relay: Relay, mut socket: WebSocket, ip: IpAddr, permit: Permit
     inner.metrics.connections.fetch_add(1, Relaxed);
     tracing::info!(device = %device, "session ouverte");
 
-    let mut s = Active { inner, device, cursor: 0, socket };
+    let mut s = Active { inner, device, user, role, cursor: 0, socket };
     let reason = match s.serve(&session).await {
         Ok(()) => "fin de session",
         Err(Close(reason)) => reason,
@@ -68,7 +73,7 @@ async fn authenticate(
     inner: &Inner,
     socket: &mut WebSocket,
     ip: IpAddr,
-) -> Result<DeviceId, Close> {
+) -> Result<crate::users::Peer, Close> {
     let nonce = auth::new_nonce();
     let deadline = Instant::now() + inner.config.auth_timeout;
     send(socket, &Frame::Challenge { nonce }).await?;
@@ -112,7 +117,29 @@ async fn authenticate(
                     tracing::warn!(device = %device_id, "signature invalide");
                     return auth_failed(inner, socket, ip, "signature invalide").await;
                 }
-                return Ok(device_id);
+                return match inner.store.peer(&device_id).await {
+                    Ok(Some(peer)) => Ok(peer),
+                    Ok(None) => auth_failed(inner, socket, ip, "personne révoquée").await,
+                    Err(e) => {
+                        tracing::error!(error = %e, "lecture de la personne");
+                        let error = Frame::error(ErrorCode::AuthFailed, "erreur interne", None);
+                        send(socket, &error).await?;
+                        Err(Close("auth_failed"))
+                    }
+                };
+            }
+            Ok(Frame::InviteRedeem { token, name, public_key, sig }) => {
+                let redeemed =
+                    people::redeem_invite(inner, socket, &nonce, &token, &name, &public_key, &sig);
+                return match redeemed.await {
+                    Ok(never) => match never {},
+                    Err(Rejected::Invalid) => {
+                        inner.limits.failed(ip);
+                        Err(Close("invitation refusée"))
+                    }
+                    Err(Rejected::Other) => Err(Close("invitation refusée")),
+                    Err(Rejected::Closed(close)) => Err(close),
+                };
             }
             Ok(Frame::PairRedeem { token, name, public_key, sig }) => {
                 let redeemed = redeem(inner, socket, &nonce, &token, &name, &public_key, &sig);
@@ -140,7 +167,7 @@ async fn auth_failed(
     socket: &mut WebSocket,
     ip: IpAddr,
     message: &'static str,
-) -> Result<DeviceId, Close> {
+) -> Result<crate::users::Peer, Close> {
     Metrics::inc(&inner.metrics.auth_failures);
     inner.limits.failed(ip);
     send(socket, &Frame::error(ErrorCode::AuthFailed, message, None)).await?;
@@ -193,7 +220,8 @@ async fn redeem(
         )
         .await;
     }
-    match inner.store.redeem_pairing(&hash, name, public_key, now_ms()).await {
+    let max = inner.config.users.max_devices;
+    match inner.store.redeem_pairing(&hash, name, public_key, max, now_ms()).await {
         Ok(r) => {
             Metrics::inc(&inner.metrics.pairings_redeemed);
             tracing::info!(device = %r.device.id, sponsor = %r.sponsor, "appareil appairé");
@@ -212,6 +240,11 @@ async fn redeem(
         Err(StoreError::NameTaken(name)) => {
             let msg = format!("le nom {name:?} est déjà pris");
             pairing_rejected(inner, socket, ErrorCode::NameTaken, msg).await
+        }
+        Err(StoreError::UserQuota(what)) => {
+            Metrics::inc(&inner.metrics.refused_quota);
+            let msg = format!("quota atteint : {what}");
+            pairing_rejected(inner, socket, ErrorCode::QuotaExceeded, msg).await
         }
         Err(e) => {
             tracing::error!(error = %e, "appairage");
@@ -234,6 +267,10 @@ async fn pairing_rejected(
 struct Active<'a> {
     inner: &'a Inner,
     device: DeviceId,
+    /// Personne de l'appareil (étape 10) ; son rôle ne change jamais, son
+    /// état se relit en base à chaque décision.
+    user: UserId,
+    role: Role,
     /// Dernier `seq` livré pendant cette session.
     cursor: i64,
     socket: WebSocket,
@@ -270,6 +307,9 @@ impl Active<'_> {
                 }
                 () = session.wake.notified() => self.deliver().await?,
                 () = session.kick.notified() => return Err(Close("remplacée par une nouvelle session")),
+                () = session.directory.notified() => {
+                    send(&mut self.socket, &Frame::DirectoryChanged).await?;
+                }
                 () = &mut stop => return Err(Close("arrêt du serveur")),
                 _ = ping.tick() => {
                     if last_rx.elapsed() > ping_every * 5 / 2 {
@@ -327,20 +367,13 @@ impl Active<'_> {
                 }
                 None
             }
-            Frame::ListDevices => Some(devices(self.inner).await?),
+            Frame::ListDevices => Some(devices(self.inner, &self.user).await?),
             Frame::Ping => Some(Frame::Pong),
-            Frame::PairCreate => Some(self.pair_create().await?),
-            Frame::PairRegister { device_id, name, public_key, sig } => {
-                Some(self.pair_register(device_id, &name, &public_key, &sig).await)
-            }
             Frame::Error { code, .. } => {
                 tracing::debug!(device = %self.device, ?code, "erreur signalée par le client");
                 None
             }
-            other => {
-                let msg = format!("trame {} inattendue", other.type_name());
-                Some(Frame::error(ErrorCode::UnexpectedFrame, msg, None))
-            }
+            frame => self.on_people_frame(frame).await?,
         };
         match reply {
             Some(frame) => send(&mut self.socket, &frame).await,
@@ -394,7 +427,16 @@ impl Active<'_> {
             tracing::warn!(sponsor = %self.device, "enregistrement : signature invalide");
             return reject(m, ErrorCode::PairingInvalid, "signature invalide".into());
         }
-        match self.inner.store.register_device(&device_id, name, public_key, now_ms()).await {
+        let max = self.inner.config.users.max_devices;
+        let registered = self.inner.store.register_device(
+            &self.device,
+            &device_id,
+            name,
+            public_key,
+            max,
+            now_ms(),
+        );
+        match registered.await {
             Ok(d) => {
                 Metrics::inc(&m.pairings_registered);
                 tracing::info!(device = %d.id, sponsor = %self.device, "appareil enregistré par son parrain");
@@ -408,6 +450,14 @@ impl Active<'_> {
             }
             Err(StoreError::NameTaken(name)) => {
                 reject(m, ErrorCode::NameTaken, format!("le nom {name:?} est déjà pris"))
+            }
+            Err(StoreError::UserQuota(what)) => {
+                Metrics::inc(&m.refused_quota);
+                reject(m, ErrorCode::QuotaExceeded, format!("quota atteint : {what}"))
+            }
+            Err(StoreError::Forbidden(why)) => {
+                Metrics::inc(&m.refused_forbidden);
+                reject(m, ErrorCode::Forbidden, why.into())
             }
             Err(e) => {
                 tracing::error!(error = %e, "enregistrement d'un appareil");
@@ -435,6 +485,14 @@ impl Active<'_> {
             );
         }
 
+        if self.role == Role::Member && !self.inner.send_rate.take(&self.user) {
+            Metrics::inc(&self.inner.metrics.refused_quota);
+            return reject(
+                ErrorCode::QuotaExceeded,
+                "trop d'envois : réessayer dans une minute".into(),
+            );
+        }
+
         let now = now_ms();
         let ttl = self.inner.config.ttl.as_millis() as i64;
         let new = NewMessage {
@@ -452,6 +510,15 @@ impl Active<'_> {
             Err(StoreError::MsgIdConflict) => {
                 return reject(ErrorCode::MsgIdConflict, "msg_id déjà utilisé".into());
             }
+            Err(StoreError::NotAllowed(id)) => {
+                Metrics::inc(&self.inner.metrics.refused_not_allowed);
+                return reject(ErrorCode::NotAllowed, format!("destinataire hors réseau : {id}"));
+            }
+            Err(StoreError::Forbidden(why)) => {
+                Metrics::inc(&self.inner.metrics.refused_forbidden);
+                return reject(ErrorCode::Forbidden, why.into());
+            }
+            Err(StoreError::Invalid(why)) => return reject(ErrorCode::BadFrame, why.into()),
             Err(e) => {
                 tracing::error!(error = %e, "stockage du message");
                 return reject(ErrorCode::Internal, "erreur interne".into());
@@ -476,11 +543,12 @@ impl Active<'_> {
     }
 }
 
-async fn devices(inner: &Inner) -> Result<Frame, Close> {
-    let devices = inner.store.devices().await.map_err(db)?;
+/// `list_devices` : les appareils actifs de ma personne seulement (étape
+/// 10) ; un ancien client ne voit jamais les autres personnes.
+async fn devices(inner: &Inner, user: &UserId) -> Result<Frame, Close> {
+    let devices = inner.store.user_devices(user).await.map_err(db)?;
     let devices = devices
         .into_iter()
-        .filter(|d| d.revoked_at.is_none())
         .map(|d| DeviceInfo { online: inner.registry.is_online(&d.id), id: d.id, name: d.name })
         .collect();
     Ok(Frame::Devices { devices })

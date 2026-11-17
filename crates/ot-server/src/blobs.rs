@@ -105,6 +105,15 @@ impl From<StoreError> for ApiError {
                 "espace du relais plein : réessayer quand d'autres fichiers auront été retirés",
             ),
             StoreError::UnknownBlob => Self::not_found(),
+            StoreError::NotAllowed(id) => {
+                Self::new(HttpErrorCode::NotAllowed, format!("destinataire hors réseau : {id}"))
+            }
+            StoreError::Forbidden(why) => Self::new(HttpErrorCode::Forbidden, why),
+            StoreError::Invalid(why) => Self::bad(why),
+            StoreError::UserQuota(_) => Self::new(
+                HttpErrorCode::QuotaExceeded,
+                "espace de fichiers de cette personne plein : réessayer quand ses fichiers auront été retirés",
+            ),
             e => Self::internal("base inaccessible", e),
         }
     }
@@ -238,12 +247,23 @@ async fn create(
         to: &req.to,
         expires_at,
     };
-    let recipients = match inner.store.create_blob(blob, inner.config.blob_quota, now).await {
+    let (quota, user_quota) = (inner.config.blob_quota, inner.config.users.blob_quota);
+    let recipients = match inner.store.create_blob(blob, quota, user_quota, now).await {
         Ok(r) => r,
         Err(e) => {
-            if matches!(e, StoreError::QuotaExceeded) {
-                Metrics::inc(&inner.metrics.blobs_rejected);
-                tracing::warn!(device = %device, size = req.size, "quota des fichiers atteint");
+            match &e {
+                StoreError::QuotaExceeded => {
+                    Metrics::inc(&inner.metrics.blobs_rejected);
+                    tracing::warn!(device = %device, size = req.size, "quota des fichiers atteint");
+                }
+                StoreError::UserQuota(_) => {
+                    Metrics::inc(&inner.metrics.blobs_rejected);
+                    Metrics::inc(&inner.metrics.refused_quota);
+                    tracing::warn!(device = %device, size = req.size, "quota d'un membre atteint");
+                }
+                StoreError::NotAllowed(_) => Metrics::inc(&inner.metrics.refused_not_allowed),
+                StoreError::Forbidden(_) => Metrics::inc(&inner.metrics.refused_forbidden),
+                _ => {}
             }
             return Err(e.into());
         }

@@ -8,7 +8,7 @@ use ot_proto::b64;
 use ot_server::limits::LimitsConfig;
 use ot_server::store::Store;
 use ot_server::tls::Tls;
-use ot_server::{Config, Relay, now_ms};
+use ot_server::{Config, Relay, UserLimits, now_ms};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tracing_subscriber::EnvFilter;
@@ -36,6 +36,45 @@ enum Command {
     /// Gère les messages stockés.
     #[command(subcommand)]
     Messages(MessagesCommand),
+    /// Gère les personnes (recours par SSH, étape 10).
+    #[command(subcommand)]
+    User(UserCommand),
+    /// Gère le réseau des liens entre personnes.
+    #[command(subcommand)]
+    Link(LinkCommand),
+    /// Recours de l'admin.
+    #[command(subcommand)]
+    Admin(AdminCommand),
+}
+
+#[derive(Subcommand)]
+enum UserCommand {
+    /// Liste les personnes, révoquées comprises, et leurs appareils actifs.
+    List,
+    /// Renomme une personne (nom ou identifiant).
+    Rename { user: String, name: String },
+    /// Révoque une personne : ses appareils, ses liens, ses fichiers.
+    Revoke { user: String },
+}
+
+#[derive(Subcommand)]
+enum LinkCommand {
+    /// Liste les liens (« A → B » : A peut écrire à B).
+    List,
+    /// Retire le lien entre deux personnes (les deux sens ; depuis un
+    /// service, son seul sens).
+    Remove { from: String, to: String },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// Oublie le certificat de l'admin après la perte de tous ses appareils :
+    /// toutes les autres personnes sont à réinviter. Arrêter le relais avant.
+    Reset {
+        /// Confirme sans question (scripts).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Options de `ot-server serve`.
@@ -82,6 +121,16 @@ struct ServeArgs {
     /// Durée de vie d'un fichier déposé.
     #[arg(long, env = "OT_BLOB_TTL", default_value = "48h", value_parser = parse_duration)]
     blob_ttl: Duration,
+    /// Appareils actifs par membre (étape 10 ; l'admin et les services n'ont
+    /// pas de limite propre).
+    #[arg(long, env = "OT_USER_MAX_DEVICES", default_value = "8")]
+    user_max_devices: usize,
+    /// Espace des fichiers en transit d'un membre.
+    #[arg(long, env = "OT_USER_BLOB_QUOTA", default_value = "2G", value_parser = parse_size)]
+    user_blob_quota: u64,
+    /// Envois par minute d'un membre.
+    #[arg(long, env = "OT_USER_SEND_RATE", default_value = "120")]
+    user_send_rate: u32,
 }
 
 #[derive(Subcommand)]
@@ -129,6 +178,9 @@ async fn main() -> Result<()> {
                 max_file_size,
                 blob_quota,
                 blob_ttl,
+                user_max_devices,
+                user_blob_quota,
+                user_send_rate,
             } = *args;
             init_logs(log_format);
             let tls = tls_cert.zip(tls_key);
@@ -141,12 +193,21 @@ async fn main() -> Result<()> {
                 blob_quota,
                 blob_ttl,
                 limits: LimitsConfig { trusted_proxies: trusted_proxy, ..LimitsConfig::default() },
+                users: UserLimits {
+                    max_devices: user_max_devices,
+                    blob_quota: user_blob_quota,
+                    send_rate: user_send_rate,
+                    ..UserLimits::default()
+                },
                 ..Config::default()
             };
             serve(cli.db, listen, admin_listen, tls, config).await
         }
         Command::Device(cmd) => device(&cli.db, cmd).await,
         Command::Messages(cmd) => messages(&cli.db, cmd).await,
+        Command::User(cmd) => user(&cli.db, cmd).await,
+        Command::Link(cmd) => link(&cli.db, cmd).await,
+        Command::Admin(cmd) => admin(&cli.db, cmd).await,
     }
 }
 
@@ -246,15 +307,18 @@ async fn device(db: &Path, cmd: DeviceCommand) -> Result<()> {
             eprintln!("  ot init --device-id {}", d.id);
         }
         DeviceCommand::List => {
+            let names: std::collections::HashMap<_, _> =
+                store.users().await?.into_iter().map(|u| (u.id, u.name)).collect();
             for d in store.devices().await? {
-                let state = match d.revoked_at {
-                    Some(t) => format!("révoqué le {}", fmt_ms(t)),
-                    None => match d.last_seen_at {
-                        Some(t) => format!("vu le {}", fmt_ms(t)),
-                        None => "jamais connecté".into(),
-                    },
-                };
-                println!("{}  {:<16} {}  {}", d.id, d.name, b64::encode(&d.public_key), state);
+                let owner = names.get(&d.user_id).map_or("?", String::as_str);
+                println!(
+                    "{}  {:<16} {:<12} {}  {}",
+                    d.id,
+                    d.name,
+                    owner,
+                    b64::encode(&d.public_key),
+                    device_state(&d)
+                );
             }
         }
         DeviceCommand::Revoke { device } => {
@@ -277,11 +341,107 @@ async fn messages(db: &Path, cmd: MessagesCommand) -> Result<()> {
         MessagesCommand::Purge { all: false } => {
             let stats = store.purge(now_ms()).await?;
             println!(
-                "{} acquitté(s), {} expiré(s), {} jeton(s) d'appairage supprimé(s)",
-                stats.acked, stats.expired, stats.pairings
+                "{} acquitté(s), {} expiré(s), {} jeton(s) d'appairage et {} invitation(s) supprimé(s)",
+                stats.acked, stats.expired, stats.pairings, stats.invitations
             );
         }
     }
+    store.close().await;
+    Ok(())
+}
+
+fn device_state(d: &ot_server::store::Device) -> String {
+    match d.revoked_at {
+        Some(t) => format!("révoqué le {}", fmt_ms(t)),
+        None => match d.last_seen_at {
+            Some(t) => format!("vu le {}", fmt_ms(t)),
+            None => "jamais connecté".into(),
+        },
+    }
+}
+
+async fn user(db: &Path, cmd: UserCommand) -> Result<()> {
+    let store = Store::open(db).await.with_context(|| format!("ouverture de {}", db.display()))?;
+    match cmd {
+        UserCommand::List => {
+            for u in store.users().await? {
+                let cert = if u.cert.is_some() { "certifiée" } else { "sans certificat" };
+                println!(
+                    "{}  {:<16} {:<7} {:<7} {}",
+                    u.id,
+                    u.name,
+                    u.role.as_str(),
+                    u.state.as_str(),
+                    cert
+                );
+                for d in store.user_devices(&u.id).await? {
+                    println!("    {}  {:<16} {}", d.id, d.name, device_state(&d));
+                }
+            }
+        }
+        UserCommand::Rename { user, name } => {
+            let name = name.trim();
+            if !ot_proto::valid_user_name(name) {
+                bail!("nom invalide : 1 à {} caractères imprimables", ot_proto::MAX_NAME_CHARS);
+            }
+            let u = store.find_user(&user).await?;
+            store.rename_user(&u.id, name).await?;
+            println!("{} renommée « {name} »", u.id);
+            eprintln!("Les clients verront le nouveau nom à leur prochaine connexion.");
+        }
+        UserCommand::Revoke { user } => {
+            let u = store.find_user(&user).await?;
+            let revoked = store.revoke_user(&u.id, now_ms()).await?;
+            println!("{} révoquée ({} appareil(s))", u.id, revoked.devices.len());
+            eprintln!(
+                "Une session déjà ouverte reste active jusqu'à sa prochaine reconnexion ; \
+                 les fichiers en transit sont effacés au prochain démarrage du relais."
+            );
+        }
+    }
+    store.close().await;
+    Ok(())
+}
+
+async fn link(db: &Path, cmd: LinkCommand) -> Result<()> {
+    let store = Store::open(db).await.with_context(|| format!("ouverture de {}", db.display()))?;
+    match cmd {
+        LinkCommand::List => {
+            let names: std::collections::HashMap<_, _> =
+                store.users().await?.into_iter().map(|u| (u.id, u.name)).collect();
+            for l in store.links().await? {
+                let name = |id| names.get(id).map_or("?", String::as_str);
+                println!("{} → {}   ({} → {})", name(&l.from), name(&l.to), l.from, l.to);
+            }
+        }
+        LinkCommand::Remove { from, to } => {
+            let (a, b) = (store.find_user(&from).await?, store.find_user(&to).await?);
+            store.set_link(&a.id, &b.id, false, now_ms()).await?;
+            println!("lien {} → {} retiré", a.name, b.name);
+        }
+    }
+    store.close().await;
+    Ok(())
+}
+
+async fn admin(db: &Path, cmd: AdminCommand) -> Result<()> {
+    let AdminCommand::Reset { yes } = cmd;
+    let store = Store::open(db).await.with_context(|| format!("ouverture de {}", db.display()))?;
+    if !yes {
+        eprintln!(
+            "L'admin perd son certificat : toutes les autres personnes passent en attente \
+             et sont à réinviter, les services à recréer."
+        );
+        eprint!("Taper « reset » pour confirmer : ");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).context("lecture de la confirmation")?;
+        if answer.trim() != "reset" {
+            bail!("abandon : rien n'a changé");
+        }
+    }
+    let n = store.admin_reset().await?;
+    println!("certificat de l'admin oublié ; {n} personne(s) en attente");
+    eprintln!("Sur un appareil de l'admin : `ot admin init`, puis réinviter chaque personne.");
     store.close().await;
     Ok(())
 }

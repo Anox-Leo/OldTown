@@ -31,6 +31,15 @@ pub struct Metrics {
     /// Connexions et requêtes refusées par les limites (étape 8e).
     pub limited_busy: AtomicU64,
     pub limited_failures: AtomicU64,
+    /// Trames et fichiers refusés par le réseau ou les quotas (étape 10).
+    pub refused_forbidden: AtomicU64,
+    pub refused_not_allowed: AtomicU64,
+    pub refused_quota: AtomicU64,
+    /// Invitations : créées, utilisées, refusées, certifiées.
+    pub invitations_created: AtomicU64,
+    pub invitations_redeemed: AtomicU64,
+    pub invitations_rejected: AtomicU64,
+    pub invitations_certified: AtomicU64,
 }
 
 impl Metrics {
@@ -38,7 +47,12 @@ impl Metrics {
         counter.fetch_add(1, Relaxed);
     }
 
-    pub fn render(&self, pending: u64, blob_bytes: u64) -> String {
+    pub fn render(
+        &self,
+        pending: u64,
+        blob_bytes: u64,
+        users: &[(ot_proto::Role, ot_proto::UserState, u64)],
+    ) -> String {
         let mut out = String::new();
         let mut metric = |name: &str, kind: &str, help: &str, values: &[(&str, u64)]| {
             let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} {kind}");
@@ -145,6 +159,36 @@ impl Metrics {
                 ("{reason=\"failures\"}", get(&self.limited_failures)),
             ],
         );
+        metric(
+            "ot_refused_total",
+            "counter",
+            "Trames et fichiers refusés : trame interdite, destinataire hors réseau, quota d'une personne.",
+            &[
+                ("{reason=\"forbidden\"}", get(&self.refused_forbidden)),
+                ("{reason=\"not_allowed\"}", get(&self.refused_not_allowed)),
+                ("{reason=\"quota\"}", get(&self.refused_quota)),
+            ],
+        );
+        metric(
+            "ot_invitations_total",
+            "counter",
+            "Invitations : créées, utilisées, refusées, certifiées.",
+            &[
+                ("{result=\"created\"}", get(&self.invitations_created)),
+                ("{result=\"redeemed\"}", get(&self.invitations_redeemed)),
+                ("{result=\"rejected\"}", get(&self.invitations_rejected)),
+                ("{result=\"certified\"}", get(&self.invitations_certified)),
+            ],
+        );
+        let labels: Vec<String> = users
+            .iter()
+            .map(|(role, state, _)| {
+                format!("{{role=\"{}\",state=\"{}\"}}", role.as_str(), state.as_str())
+            })
+            .collect();
+        let values: Vec<(&str, u64)> =
+            labels.iter().zip(users).map(|(l, (_, _, n))| (l.as_str(), *n)).collect();
+        metric("ot_users", "gauge", "Personnes, par rôle et par état.", &values);
         out
     }
 }
