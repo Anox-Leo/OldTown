@@ -5,7 +5,7 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use ot_proto::{DeviceId, Encoding, Envelope, MAX_RECIPIENTS, Payload, Ulid};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
@@ -23,6 +23,7 @@ const DEVICE_INFO: &[u8] = b"ot-device-v1";
 const PAIR_QR_INFO: &[u8] = b"ot-pair-qr-v1";
 const INVITE_INFO: &[u8] = b"ot-invite-v1";
 const MULTI_INFO: &[u8] = b"ot-multi-v1";
+const MULTI_COMMIT: &[u8] = b"ot-multi-commit-v1";
 
 const SCHEME_GROUP: u8 = 0x01;
 const SCHEME_PAIRING: u8 = 0x02;
@@ -36,8 +37,15 @@ pub const WRAP_LEN: usize = 32 + 16;
 
 /// Nonce de `wrap_i` : nul. La clé `k_i` ne sert qu'une fois : elle dérive
 /// d'une clé éphémère neuve à chaque message, et l'identifiant du
-/// destinataire entre dans HKDF (note 0052).
+/// destinataire comme le `msg_id` entrent dans HKDF (notes 0052 et 0056) :
+/// même un éphémère rejoué (aléa défaillant) donne une autre `k_i` pour un
+/// autre message.
 const WRAP_NONCE: [u8; NONCE_LEN] = [0; NONCE_LEN];
+
+/// Engagement de la clé de message `K` dans l'en-tête `0x05` (note 0056) :
+/// tous les destinataires ouvrent avec la même `K`, donc lisent le même
+/// clair (XChaCha20-Poly1305 n'engage pas sa clé).
+pub const COMMIT_LEN: usize = 32;
 
 /// En-tête d'un `payload.data` chiffré : il dit quelle clé ouvre le message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,10 +60,14 @@ pub enum Header {
     /// matériau de HKDF (note 0022) : il faut à la fois `S` et la clé X25519
     /// du destinataire.
     PairQr { ephemeral: [u8; 32] },
-    /// `0x05` (étape 10, note 0052) : une clé de message, scellée pour la
-    /// clé X25519 de chaque appareil destinataire (1 à 32), dans l'ordre de
-    /// `env.to`.
-    Multi { ephemeral: [u8; 32], recipients: Vec<([u8; 16], [u8; WRAP_LEN])> },
+    /// `0x05` (étape 10, notes 0052 et 0056) : une clé de message, scellée
+    /// pour la clé X25519 de chaque appareil destinataire (1 à 32), dans
+    /// l'ordre de `env.to`, et son engagement.
+    Multi {
+        ephemeral: [u8; 32],
+        recipients: Vec<([u8; 16], [u8; WRAP_LEN])>,
+        commitment: [u8; COMMIT_LEN],
+    },
 }
 
 impl Header {
@@ -78,8 +90,8 @@ impl Header {
                 out.push(SCHEME_PAIR_QR);
                 out.extend_from_slice(ephemeral);
             }
-            Self::Multi { ephemeral, recipients } => {
-                out.reserve(1 + recipients.len() * (16 + WRAP_LEN));
+            Self::Multi { ephemeral, recipients, commitment } => {
+                out.reserve(1 + recipients.len() * (16 + WRAP_LEN) + COMMIT_LEN);
                 out.push(SCHEME_MULTI);
                 out.extend_from_slice(ephemeral);
                 // Invariant : 1 à MAX_RECIPIENTS (32) destinataires, vérifié
@@ -89,6 +101,7 @@ impl Header {
                     out.extend_from_slice(ulid);
                     out.extend_from_slice(wrap);
                 }
+                out.extend_from_slice(commitment);
             }
         }
         out
@@ -163,7 +176,12 @@ impl Header {
                     let wrap = e[16..].try_into().map_err(|_| CryptoError::Malformed("clé"))?;
                     recipients.push((ulid, wrap));
                 }
-                (Self::Multi { ephemeral, recipients }, rest)
+                if rest.len() < COMMIT_LEN {
+                    return Err(CryptoError::Malformed("tronqué"));
+                }
+                let (c, rest) = rest.split_at(COMMIT_LEN);
+                let commitment = c.try_into().map_err(|_| CryptoError::Malformed("engagement"))?;
+                (Self::Multi { ephemeral, recipients, commitment }, rest)
             }
             _ => return Err(CryptoError::Malformed("schéma inconnu")),
         };
@@ -315,19 +333,25 @@ fn invite_key(secret: &PairingSecret) -> Zeroizing<[u8; 32]> {
     hkdf(secret.as_bytes(), &[INVITE_INFO])
 }
 
-/// `k_i = HKDF-SHA256(DH(éph, X_i), "ot-multi-v1" ‖ éph ‖ X_i ‖ ulid_i)`.
+/// `k_i = HKDF-SHA256(DH(éph, X_i), "ot-multi-v1" ‖ éph ‖ X_i ‖ ulid_i ‖ msg_id)`.
 fn multi_key(
     secret: &StaticSecret,
     peer: &[u8; 32],
     eph: &[u8; 32],
     recipient: &[u8; 32],
     ulid: &[u8; 16],
+    msg_id: &[u8; 16],
 ) -> Result<Zeroizing<[u8; 32]>> {
     let shared = secret.diffie_hellman(&PublicKey::from(*peer));
     if !shared.was_contributory() {
         return Err(CryptoError::WeakKey);
     }
-    Ok(hkdf(shared.as_bytes(), &[MULTI_INFO, eph, recipient, ulid]))
+    Ok(hkdf(shared.as_bytes(), &[MULTI_INFO, eph, recipient, ulid, msg_id]))
+}
+
+/// `SHA-256("ot-multi-commit-v1" ‖ K)`.
+fn multi_commitment(message_key: &[u8; 32]) -> [u8; COMMIT_LEN] {
+    Sha256::new().chain_update(MULTI_COMMIT).chain_update(message_key).finalize().into()
 }
 
 /// La table de `0x05` doit être exactement `env.to`, dans le même ordre.
@@ -408,13 +432,14 @@ pub fn seal_with(
             let eph = StaticSecret::from(*rand.ephemeral);
             let eph_pub = PublicKey::from(&eph).to_bytes();
             let message_key = Zeroizing::new(*rand.message_key);
+            let msg_id = env.msg_id.to_bytes();
             let mut table = Vec::with_capacity(recipients.len());
             for (device, x) in recipients {
                 let ulid = device.ulid().to_bytes();
                 if table.iter().any(|(u, _)| *u == ulid) {
                     return Err(CryptoError::Malformed("destinataire en double"));
                 }
-                let k = multi_key(&eph, x, &eph_pub, x, &ulid)?;
+                let k = multi_key(&eph, x, &eph_pub, x, &ulid, &msg_id)?;
                 let wrapped = XChaCha20Poly1305::new(&(*k).into())
                     .encrypt(&XNonce::from(WRAP_NONCE), &message_key[..])
                     .map_err(|_| CryptoError::Malformed("clé de message"))?;
@@ -422,7 +447,8 @@ pub fn seal_with(
                     wrapped.try_into().map_err(|_| CryptoError::Malformed("clé de message"))?;
                 table.push((ulid, wrap));
             }
-            let header = Header::Multi { ephemeral: eph_pub, recipients: table };
+            let commitment = multi_commitment(&message_key);
+            let header = Header::Multi { ephemeral: eph_pub, recipients: table, commitment };
             check_multi_recipients(&header, env)?;
             (header, message_key)
         }
@@ -441,7 +467,9 @@ pub fn seal_with(
     };
     let ad = associated_data(&header, env)?;
     let json = body.to_json();
-    let sig = signer.sign(&signed_message(&ad, &json));
+    // Le message signé contient le corps en clair : effacé lui aussi.
+    let signed = Zeroizing::new(signed_message(&ad, &json));
+    let sig = signer.sign(&signed);
 
     let mut plain = Zeroizing::new(Vec::with_capacity(SIG_LEN + json.len()));
     plain.extend_from_slice(&sig.to_bytes());
@@ -509,14 +537,15 @@ pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
             KeyKind::PairQr,
             pair_qr_key(pair.secret(), ephemeral, ephemeral, &pair.public_key(), secret)?,
         ),
-        (Header::Multi { ephemeral, recipients }, OpenKey::Multi { me, key }) => {
+        (Header::Multi { ephemeral, recipients, .. }, OpenKey::Multi { me, key }) => {
             check_multi_recipients(&header, env)?;
             let ulid = me.ulid().to_bytes();
             // Pas dans la table : ce message n'est pas pour moi.
             let (_, wrap) =
                 recipients.iter().find(|(u, _)| *u == ulid).ok_or(CryptoError::Decrypt)?;
             let mine = key.public_key();
-            let k = multi_key(key.secret(), ephemeral, ephemeral, &mine, &ulid)?;
+            let msg_id = env.msg_id.to_bytes();
+            let k = multi_key(key.secret(), ephemeral, ephemeral, &mine, &ulid, &msg_id)?;
             let unwrapped = Zeroizing::new(
                 XChaCha20Poly1305::new(&(*k).into())
                     .decrypt(&XNonce::from(WRAP_NONCE), &wrap[..])
@@ -537,6 +566,13 @@ pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
             .decrypt(&XNonce::from(nonce), AeadPayload { msg: sealed, aad: &ad })
             .map_err(|_| CryptoError::Decrypt)?,
     );
+    // Engagement vérifié après l'AEAD : l'en-tête est dans les données
+    // associées, seul l'expéditeur a pu y mettre une autre `K`.
+    if let Header::Multi { commitment, .. } = &header
+        && multi_commitment(&aead_key) != *commitment
+    {
+        return Err(CryptoError::Decrypt);
+    }
     let (sig, body) = plain.split_at(SIG_LEN);
     let signature: [u8; SIG_LEN] =
         sig.try_into().map_err(|_| CryptoError::Malformed("signature"))?;

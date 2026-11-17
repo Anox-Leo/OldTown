@@ -4,6 +4,7 @@ use ot_proto::{BlobId, DeviceId, SignedBlob, UserId, b64};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use crate::directory::LogHead;
 use crate::file::{FILE_NONCE_LEN, check_layout};
 use crate::{CryptoError, FileKey, GroupKey, Result};
 
@@ -67,8 +68,10 @@ pub enum Body {
         #[serde(with = "b64::array")]
         exchange_key: [u8; 32],
     },
-    /// Admin → invité (même clé) : le certificat de sa personne.
-    InviteWelcome { cert: SignedBlob },
+    /// Admin → invité (même clé) : le certificat de sa personne, et la tête
+    /// du journal de l'admin qui engage ce certificat (note 0056) : l'invité
+    /// refuse un journal de l'admin plus court ou différent.
+    InviteWelcome { cert: SignedBlob, admin_head: LogHead },
     /// Admin → nouvel appareil de service (schéma `0x04`, à la place de
     /// `pair_welcome`) : sa personne, son certificat, et l'ancre de
     /// l'annuaire (pas de clé de groupe).
@@ -77,6 +80,8 @@ pub enum Body {
         cert: SignedBlob,
         #[serde(with = "b64::array")]
         anchor: [u8; 16],
+        /// Tête du journal de l'admin qui engage ce certificat (note 0056).
+        admin_head: LogHead,
     },
 }
 

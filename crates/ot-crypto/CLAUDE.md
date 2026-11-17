@@ -14,6 +14,15 @@ sont dans `ot-core`) et, à l'étape 5, chiffrement des fichiers par morceaux
   à l'ouverture : corps d'invitation sous la clé d'invitation seulement,
   `service_welcome` en `0x04` seulement, `0x05` seulement `text`, `link`,
   `file`, `otp`.
+- `0x05` (note 0056) : `msg_id` dans l'`info` HKDF de chaque `k_i` (le nonce
+  nul de `wrap_i` reste sûr même si l'éphémère se répète), et engagement
+  `SHA-256("ot-multi-commit-v1" ‖ K)` après la table, vérifié après l'AEAD :
+  tous les destinataires lisent le même clair.
+- Annuaire (note 0056) : le journal de l'admin engage l'empreinte
+  (`cert_hash`) du certificat courant de chaque personne (`certs`, trié,
+  sans doublon) ; `invite_welcome` et `service_welcome` portent la tête de
+  ce journal (`LogHead`). Pas de table JSON dans un objet signé : une clé en
+  double y serait lue en silence.
 - Aucune E/S, aucun réseau, aucun async, aucun tokio : la crate doit pouvoir
   se compiler pour Android (UniFFI) et en WebAssembly (extension, note 0017).
 - Primitives RustCrypto uniquement (`chacha20poly1305`, `aead-stream`,

@@ -23,7 +23,10 @@ fn body() -> Body {
 }
 
 fn invite() -> Body {
-    Body::InviteWelcome { cert: ot_proto::SignedBlob { data: b"{}".to_vec(), sig: [1; 64] } }
+    Body::InviteWelcome {
+        cert: ot_proto::SignedBlob { data: b"{}".to_vec(), sig: [1; 64] },
+        admin_head: ot_crypto::directory::LogHead { seq: 2, hash: [3; 32] },
+    }
 }
 
 type SealFn = Box<dyn Fn(&Envelope, &SigningKey) -> Payload>;

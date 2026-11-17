@@ -13,7 +13,7 @@
 //! | `0x02` appairage | `02 ‖ id du jeton (8 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(S, "ot-pair-v1")` |
 //! | `0x03` appareil | `03 ‖ X25519 éphémère (32 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(DH, "ot-device-v1" ‖ éph ‖ dest)` |
 //! | `0x04` QR inversé | `04 ‖ X25519 éphémère (32 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(DH ‖ S, "ot-pair-qr-v1" ‖ éph ‖ dest)` |
-//! | `0x05` personnes | `05 ‖ X25519 éphémère (32 o) ‖ n (u8) ‖ n × (ULID (16 o) ‖ clé scellée (48 o)) ‖ nonce ‖ chiffré` | clé de message `K`, scellée pour chaque destinataire sous `HKDF-SHA256(DH, "ot-multi-v1" ‖ éph ‖ dest ‖ ULID)` |
+//! | `0x05` personnes | `05 ‖ X25519 éphémère (32 o) ‖ n (u8) ‖ n × (ULID (16 o) ‖ clé scellée (48 o)) ‖ engagement (32 o) ‖ nonce ‖ chiffré` | clé de message `K`, scellée pour chaque destinataire sous `HKDF-SHA256(DH, "ot-multi-v1" ‖ éph ‖ dest ‖ ULID ‖ msg_id)` ; engagement `SHA-256("ot-multi-commit-v1" ‖ K)` |
 //!
 //! L'invitation d'une personne (étape 10) réutilise l'en-tête `0x02`, sous
 //! `HKDF-SHA256(S, "ot-invite-v1")`. L'annuaire signé (certificats, journal
@@ -45,8 +45,8 @@ pub use keys::{ExchangeKeyPair, GroupKey, PairingSecret, fingerprint};
 pub use offer::{OFFER_PREFIX, PairingOffer};
 pub use ot_proto::{MAX_NAME_CHARS, valid_device_name};
 pub use seal::{
-    Header, NONCE_LEN, OpenKey, Opened, Randomness, SealKey, WRAP_LEN, associated_data, open, seal,
-    seal_with,
+    COMMIT_LEN, Header, NONCE_LEN, OpenKey, Opened, Randomness, SealKey, WRAP_LEN, associated_data,
+    open, seal, seal_with,
 };
 
 /// Erreurs de la crate. Aucune ne contient de clé ni de contenu.

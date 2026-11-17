@@ -193,3 +193,58 @@ fn fresh_ephemeral_and_message_key_each_time() {
     assert_ne!(a.data[1..33], b.data[1..33], "clé éphémère neuve");
     assert_ne!(a.data[50..98], b.data[50..98], "clé scellée différente");
 }
+
+#[test]
+fn a_replayed_ephemeral_does_not_reuse_wrapping_keys() {
+    // Aléa défaillant : même éphémère pour deux messages à A, avec deux clés
+    // de message. `msg_id` dans HKDF : les deux `k_A` diffèrent, et un autre
+    // destinataire du premier message ne déduit pas la clé du second.
+    let to = dests(2);
+    let rand = |k: u8| ot_crypto::Randomness {
+        nonce: [k; 24],
+        ephemeral: zeroize::Zeroizing::new([3; 32]),
+        message_key: zeroize::Zeroizing::new([k; 32]),
+    };
+    let sealed_with = |k: u8| {
+        let mut env = envelope(&to);
+        env.payload = ot_crypto::seal_with(
+            &env,
+            SealKey::Multi { recipients: &table(&to) },
+            &signer(),
+            &body(),
+            rand(k),
+        )
+        .unwrap();
+        env
+    };
+    let (one, two) = (sealed_with(0x11), sealed_with(0x77));
+    let wrap = |env: &Envelope| match Header::parse(&env.payload).unwrap() {
+        Header::Multi { recipients, .. } => recipients[0].1,
+        _ => panic!("0x05 attendu"),
+    };
+    let guess: Vec<u8> = (0..32).map(|i| 0x11 ^ wrap(&one)[i] ^ wrap(&two)[i]).collect();
+    assert_ne!(guess, vec![0x77; 32]);
+    assert_eq!(open_as(&two, &to[0]).unwrap(), body());
+}
+
+#[test]
+fn the_message_key_commitment_is_bound_to_the_header() {
+    let to = dests(2);
+    let env = sealed(&to);
+    let Header::Multi { commitment, .. } = Header::parse(&env.payload).unwrap() else {
+        panic!("0x05 attendu")
+    };
+    // L'engagement suit la table, avant le nonce.
+    let at = 34 + 2 * 64;
+    assert_eq!(env.payload.data[at..at + 32], commitment);
+    // Altéré par le relais : l'AEAD échoue pour tous.
+    let mut bad = env.clone();
+    bad.payload.data[at] ^= 1;
+    for d in &to {
+        assert_eq!(open_as(&bad, d), Err(CryptoError::Decrypt));
+    }
+    // Tronqué juste après la table : refusé à la lecture.
+    let mut short = env.clone();
+    short.payload.data.truncate(at + 16);
+    assert!(matches!(Header::parse(&short.payload), Err(CryptoError::Malformed(_))));
+}

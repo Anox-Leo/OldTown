@@ -6,7 +6,9 @@
 //! Pour régénérer (changement de format voulu seulement) :
 //! `OT_REGENERATE_VECTORS=1 cargo test -p ot-crypto --test vectors`.
 
-use ot_crypto::directory::{GENESIS_PREV, Genesis, RosterEntry, UserCert, anchor, entry_hash};
+use ot_crypto::directory::{
+    CertRef, GENESIS_PREV, Genesis, RosterEntry, UserCert, anchor, cert_hash, entry_hash, log_head,
+};
 use ot_crypto::{
     Body, EpochKey, ExchangeKeyPair, FILE_CHUNK_SIZE, FileCipher, FileKey, GroupKey, InviteCode,
     Member, OpenKey, Otp, PairingCode, PairingOffer, PairingSecret, Randomness, Roster, SealKey,
@@ -197,7 +199,7 @@ fn vectors() -> Vec<Vector> {
             key: json!({"scheme": "invite", "token": b64::encode(&bytes::<10>(20)),
                         "secret": b64::encode(&bytes::<16>(30))}),
             to: &[B],
-            body: Body::InviteWelcome { cert: member_cert() },
+            body: Body::InviteWelcome { cert: member_cert(), admin_head: admin_head() },
         },
         Vector {
             name: "service_welcome",
@@ -209,6 +211,7 @@ fn vectors() -> Vec<Vector> {
                 user: NOTIFIER.parse().unwrap(),
                 cert: service_cert(),
                 anchor: anchor(&admin_cert()),
+                admin_head: admin_head(),
             },
         },
     ]
@@ -274,6 +277,42 @@ fn service_cert() -> SignedBlob {
     )
     .sign(&SigningKey::from_bytes(&bytes(1)))
     .unwrap()
+}
+
+/// Membre d'un roster : appareil, nom, graine de sa clé de signature (sa
+/// clé X25519 a la graine + 100).
+fn member(id: &str, name: &str, seed: u8) -> Member {
+    Member {
+        device_id: dev(id),
+        name: name.into(),
+        sign_key: SigningKey::from_bytes(&bytes(seed)).verifying_key().to_bytes(),
+        exchange_key: ExchangeKeyPair::from_bytes(bytes(seed + 100)).public_key(),
+        added_epoch: 1,
+    }
+}
+
+/// Journal d'Alice (note 0056) : l'entrée 1 (son roster), puis l'entrée 2,
+/// même roster en version 2, qui engage les certificats de Bob et du service.
+fn admin_log() -> Vec<SignedBlob> {
+    let alice = SigningKey::from_bytes(&bytes(1));
+    let user: UserId = ALICE.parse().unwrap();
+    let roster = |version| Roster { epoch: 1, version, members: vec![member(A, "alice-phone", 1)] };
+    let e1 =
+        RosterEntry::new(user.clone(), 1, GENESIS_PREV, dev(A), roster(1)).sign(&alice).unwrap();
+    let certs = vec![
+        CertRef { user: BOB.parse().unwrap(), cert: cert_hash(&member_cert()) },
+        CertRef { user: NOTIFIER.parse().unwrap(), cert: cert_hash(&service_cert()) },
+    ];
+    let e2 = RosterEntry::new(user, 2, entry_hash(&e1), dev(A), roster(2))
+        .with_certs(certs)
+        .sign(&alice)
+        .unwrap();
+    vec![e1, e2]
+}
+
+/// Tête du journal d'Alice, portée par `invite_welcome` et `service_welcome`.
+fn admin_head() -> ot_crypto::directory::LogHead {
+    log_head(admin_log().last().unwrap()).unwrap()
 }
 
 const NONCE_START: u8 = 70;
@@ -486,13 +525,6 @@ fn frozen_invite_code() {
 fn frozen_directory_objects() {
     let alice = SigningKey::from_bytes(&bytes(1));
     let bob = SigningKey::from_bytes(&bytes(2));
-    let member = |id: &str, name: &str, seed: u8| Member {
-        device_id: dev(id),
-        name: name.into(),
-        sign_key: SigningKey::from_bytes(&bytes(seed)).verifying_key().to_bytes(),
-        exchange_key: ExchangeKeyPair::from_bytes(bytes(seed + 100)).public_key(),
-        added_epoch: 1,
-    };
     let bob_user: UserId = BOB.parse().unwrap();
     let roster1 = Roster { epoch: 1, version: 1, members: vec![member(B, "bob-phone", 2)] };
     let e1 =
@@ -513,6 +545,10 @@ fn frozen_directory_objects() {
         "service_cert": blob(&service_cert()),
         "bob_log": [blob(&e1), blob(&e2)],
         "bob_log_hashes": [b64::encode(&entry_hash(&e1)), b64::encode(&entry_hash(&e2))],
+        "alice_log": admin_log().iter().map(blob).collect::<Vec<_>>(),
+        "alice_log_hashes": admin_log().iter().map(|e| b64::encode(&entry_hash(e))).collect::<Vec<_>>(),
+        "member_cert_hash": b64::encode(&cert_hash(&member_cert())),
+        "service_cert_hash": b64::encode(&cert_hash(&service_cert())),
     });
     let text = serde_json::to_string_pretty(&doc).unwrap() + "\n";
     let file = path("directory_objects");
@@ -528,6 +564,9 @@ fn frozen_directory_objects() {
     assert_eq!(UserCert::open(&member_cert(), &alice_pub).unwrap().name, "Bob");
     let bob_pub = bob.verifying_key().to_bytes();
     assert_eq!(RosterEntry::open(&e2, &bob_pub).unwrap().prev, entry_hash(&e1));
+    let head = RosterEntry::open(&admin_log()[1], &alice_pub).unwrap();
+    assert_eq!(head.cert_of(&BOB.parse().unwrap()), Some(cert_hash(&member_cert())));
+    assert_eq!(head.cert_of(&ALICE.parse().unwrap()), None, "la racine vaut par l'ancre");
 }
 
 #[test]
