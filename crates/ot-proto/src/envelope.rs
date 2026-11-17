@@ -77,7 +77,9 @@ pub struct Envelope {
     /// ULID généré par l'expéditeur, sert à l'idempotence et au dédoublonnage.
     pub msg_id: Ulid,
     pub from: DeviceId,
-    /// Vide : tous les autres appareils de l'expéditeur.
+    /// Vide : tous les autres appareils de la personne de l'expéditeur
+    /// (étape 10 ; avant, tous les autres appareils du relais). Au plus
+    /// [`crate::MAX_RECIPIENTS`] appareils nommés.
     #[serde(default)]
     pub to: Vec<DeviceId>,
     #[serde(with = "time::serde::rfc3339")]

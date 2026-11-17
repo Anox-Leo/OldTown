@@ -10,11 +10,17 @@ mod blob;
 mod envelope;
 mod frame;
 pub mod http;
+mod user;
 
 pub use blob::{BlobId, InvalidBlobId};
 pub use envelope::{Content, ContentKind, DeviceId, Encoding, Envelope, InvalidDeviceId, Payload};
 pub use frame::{DecodeError, DeviceInfo, ErrorCode, Frame};
 pub use ulid::Ulid;
+pub use user::{
+    AdminDevice, AdminUser, DeviceKind, DirectoryDevice, DirectoryUser, FEATURE_USERS_V1, Feature,
+    InvalidFeature, InvalidUserId, Known, LogEntry, MAX_FEATURES, MAX_SIGNED_BYTES, Role,
+    SignedBlob, UserId, UserState, valid_user_name,
+};
 
 /// Version du protocole portée par le champ `v` de chaque trame.
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -39,8 +45,15 @@ pub const PAIR_DOMAIN: &[u8] = b"ot-pair-v1";
 /// enregistré par son parrain (`pair_register`, QR inversé).
 pub const PAIR_REGISTER_DOMAIN: &[u8] = b"ot-pair-reg-v1";
 
-/// Taille du jeton d'appairage.
+/// Taille du jeton d'appairage (et du jeton d'invitation, étape 10).
 pub const PAIR_TOKEN_LEN: usize = 10;
+
+/// Préfixe de domaine du message signé par `invite_redeem` (étape 10).
+pub const INVITE_DOMAIN: &[u8] = b"ot-invite-v1";
+
+/// Nombre maximal de destinataires nommés d'un envoi (`to`), taille de la
+/// table du schéma `0x05`.
+pub const MAX_RECIPIENTS: usize = 32;
 
 /// Taille maximale d'un nom d'appareil, en caractères.
 pub const MAX_NAME_CHARS: usize = 64;
@@ -82,4 +95,11 @@ pub fn pair_redeem_message(nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> Ve
 /// possesseur a demandé l'enregistrement, sous ce nom et cet identifiant.
 pub fn pair_register_message(device_id: &DeviceId, public_key: &[u8; 32], name: &str) -> Vec<u8> {
     [PAIR_REGISTER_DOMAIN, device_id.as_str().as_bytes(), public_key, name.as_bytes()].concat()
+}
+
+/// Message signé par le premier appareil d'une personne invitée dans
+/// `invite_redeem` : `"ot-invite-v1" ‖ nonce ‖ sha256(jeton)`, comme
+/// [`pair_redeem_message`] sous un autre domaine.
+pub fn invite_redeem_message(nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> Vec<u8> {
+    [INVITE_DOMAIN, nonce, token_hash].concat()
 }

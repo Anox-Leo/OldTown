@@ -91,7 +91,8 @@ pub struct CreateBlob {
     pub size: u64,
     pub chunk_size: u32,
     pub chunks: u32,
-    /// Vide : tous les autres appareils actifs au moment de la création.
+    /// Vide : les autres appareils actifs de ma personne au moment de la
+    /// création (étape 10). Mêmes règles de réseau que `env.to`.
     #[serde(default)]
     pub to: Vec<DeviceId>,
 }
@@ -139,13 +140,15 @@ pub enum HttpErrorCode {
     Unauthorized,
     /// Ni propriétaire ni destinataire, selon l'opération.
     Forbidden,
+    /// Destinataire hors réseau (étape 10) : le fichier n'est pas créé.
+    NotAllowed,
     /// Blob inconnu, expiré ou supprimé.
     NotFound,
     /// Retrait demandé avant que tous les morceaux soient déposés.
     Incomplete,
     /// Fichier plus gros que la limite du relais.
     TooLarge,
-    /// Quota disque du relais atteint.
+    /// Quota disque du relais, ou de la personne (étape 10), atteint.
     QuotaExceeded,
     /// Relais saturé (trop de requêtes dans la fenêtre) ; réessayer plus tard.
     Busy,
@@ -161,7 +164,7 @@ impl HttpErrorCode {
         match self {
             Self::BadRequest => 400,
             Self::Unauthorized => 401,
-            Self::Forbidden => 403,
+            Self::Forbidden | Self::NotAllowed => 403,
             Self::NotFound => 404,
             Self::Incomplete => 409,
             Self::TooLarge => 413,

@@ -2,13 +2,17 @@
 
 Types du protocole partagés par le relais et les clients : trames WebSocket
 (`Frame`), enveloppe (`Envelope`, `Payload`), identifiants (`DeviceId`,
-`BlobId` pour les fichiers de l'étape 5), codes d'erreur, constantes
+`BlobId` pour les fichiers de l'étape 5, `UserId` et les types de
+l'annuaire de l'étape 10 dans `user.rs`), codes d'erreur, constantes
 (version, tailles maximales, préfixe d'authentification).
 
 - Aucune logique réseau, aucune E/S, aucune crypto de contenu : seulement des
   types, leur sérialisation, les messages signés (`auth_message`,
-  `pair_redeem_message`, `pair_register_message`) et les règles que le
-  relais impose (`valid_device_name`).
+  `pair_redeem_message`, `pair_register_message`, `invite_redeem_message`)
+  et les règles que le relais impose (`valid_device_name`,
+  `valid_user_name`, `MAX_RECIPIENTS`). Les objets signés de l'annuaire
+  (`SignedBlob`) n'y sont que des octets : leur format est dans `ot-crypto`.
+- Goldens de l'étape 10 dans `tests/golden_users.rs` (noms neutres).
 - **Le format est figé par `tests/golden/`.** Un test golden qui casse signale
   un changement de format : s'il est voulu, mettre à jour le fichier JSON,
   écrire une note dans `docs/decisions/` et prévenir que relais et clients
