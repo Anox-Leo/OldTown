@@ -66,15 +66,21 @@ pub struct Config {
     pub users: UserLimits,
 }
 
-/// Limites d'un membre (étape 10, `OT_USER_*`).
+/// Limites d'un membre (étape 10, `OT_USER_*`). Sauf les appareils, elles
+/// valent aussi pour une personne de service ; l'admin n'a que les limites
+/// globales.
 #[derive(Debug, Clone)]
 pub struct UserLimits {
     /// Appareils actifs par membre.
     pub max_devices: usize,
     /// Taille chiffrée cumulée des fichiers en transit d'un membre.
     pub blob_quota: u64,
-    /// Envois par minute d'un membre.
+    /// Envois (`send` et `roster_publish`) par minute d'un membre.
     pub send_rate: u32,
+    /// Taille cumulée des messages d'un membre en attente de livraison.
+    pub pending_quota: u64,
+    /// Taille cumulée du journal de roster d'un membre.
+    pub log_quota: u64,
     /// Durée de validité d'une invitation (D45).
     pub invite_ttl: Duration,
     /// Invitations utilisables à la fois.
@@ -87,6 +93,8 @@ impl Default for UserLimits {
             max_devices: 8,
             blob_quota: 2 << 30,
             send_rate: 120,
+            pending_quota: 256 << 20,
+            log_quota: 4 << 20,
             invite_ttl: Duration::from_secs(48 * 3600),
             max_open_invitations: 5,
         }
@@ -130,7 +138,7 @@ struct Inner {
     blob_dir: BlobDir,
     nonces: NonceCache,
     limits: Arc<Limits>,
-    /// Débit des envois de chaque membre (étape 10).
+    /// Débit des envois de chaque membre et service (étape 10).
     send_rate: SendRate,
 }
 

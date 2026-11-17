@@ -48,8 +48,9 @@ impl FromStr for UserId {
     type Err = InvalidUserId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.strip_prefix(Self::PREFIX).map(Ulid::from_string) {
-            Some(Ok(_)) => Ok(Self(s.to_owned())),
+        // Forme canonique seulement, comme `DeviceId`.
+        match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
+            Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidUserId(s.to_owned())),
         }
     }
@@ -285,7 +286,8 @@ pub struct DirectoryUser {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log: Vec<LogEntry>,
     /// D'autres entrées suivent : relire avec `known` à jour (une trame ne
-    /// dépasse jamais `MAX_FRAME_BYTES`).
+    /// dépasse jamais `MAX_FRAME_BYTES`). Les autres personnes ne sont pas
+    /// retardées pour autant : elles suivent par `next`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub more: bool,
     /// Entre un service et cette personne : la personne a coupé le service
@@ -370,6 +372,7 @@ mod tests {
         assert_eq!(UserId::from_ulid(id.ulid()), id);
         assert!("dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<UserId>().is_err());
         assert!("usr_pas-un-ulid".parse::<UserId>().is_err());
+        assert!("usr_01j9z4a1b2c3d4e5f6g7h8j9k0".parse::<UserId>().is_err(), "minuscules");
     }
 
     #[test]

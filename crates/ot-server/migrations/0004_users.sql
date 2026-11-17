@@ -28,6 +28,9 @@ DROP INDEX devices_active_name;
 CREATE UNIQUE INDEX devices_active_name ON devices (user_id, name) WHERE revoked_at IS NULL;
 CREATE INDEX devices_user ON devices (user_id);
 
+-- Octets en attente par personne (quota des membres et des services).
+CREATE INDEX messages_sender ON messages (sender_id);
+
 -- Lien « from peut écrire à to ». Un lien entre personnes = deux lignes ;
 -- un service n'a que le sens service → personne (D41).
 CREATE TABLE links (

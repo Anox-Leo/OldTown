@@ -100,13 +100,21 @@ pub enum Frame {
     DirectoryGet {
         #[serde(default, skip_serializing_if = "Known::is_empty")]
         known: Known,
+        /// Page suivante : les personnes après celle-ci (le `next` de la
+        /// trame `directory` précédente) ; absent, depuis le début.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<UserId>,
     },
     /// Serveur → client : ma personne, l'admin (ancre), et les personnes
-    /// liées dans un sens ou dans l'autre, filtrées par le réseau.
+    /// liées dans un sens ou dans l'autre, filtrées par le réseau. Une
+    /// trame ne dépasse jamais `MAX_FRAME_BYTES` : `next` présent, d'autres
+    /// personnes suivent (relire avec `after = next`).
     Directory {
         me: UserId,
         admin: UserId,
         users: Vec<DirectoryUser>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<UserId>,
     },
     /// Serveur → client : l'annuaire a changé, le relire.
     DirectoryChanged,

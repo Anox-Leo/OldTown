@@ -125,12 +125,19 @@ struct ServeArgs {
     /// pas de limite propre).
     #[arg(long, env = "OT_USER_MAX_DEVICES", default_value = "8")]
     user_max_devices: usize,
-    /// Espace des fichiers en transit d'un membre.
+    /// Espace des fichiers en transit d'un membre ou d'un service.
     #[arg(long, env = "OT_USER_BLOB_QUOTA", default_value = "2G", value_parser = parse_size)]
     user_blob_quota: u64,
-    /// Envois par minute d'un membre.
+    /// Envois (et publications de journal) par minute d'un membre ou d'un
+    /// service.
     #[arg(long, env = "OT_USER_SEND_RATE", default_value = "120")]
     user_send_rate: u32,
+    /// Messages d'un membre ou d'un service en attente de livraison.
+    #[arg(long, env = "OT_USER_PENDING_QUOTA", default_value = "256M", value_parser = parse_size)]
+    user_pending_quota: u64,
+    /// Taille du journal de roster d'un membre ou d'un service.
+    #[arg(long, env = "OT_USER_LOG_QUOTA", default_value = "4M", value_parser = parse_size)]
+    user_log_quota: u64,
 }
 
 #[derive(Subcommand)]
@@ -181,6 +188,8 @@ async fn main() -> Result<()> {
                 user_max_devices,
                 user_blob_quota,
                 user_send_rate,
+                user_pending_quota,
+                user_log_quota,
             } = *args;
             init_logs(log_format);
             let tls = tls_cert.zip(tls_key);
@@ -197,6 +206,8 @@ async fn main() -> Result<()> {
                     max_devices: user_max_devices,
                     blob_quota: user_blob_quota,
                     send_rate: user_send_rate,
+                    pending_quota: user_pending_quota,
+                    log_quota: user_log_quota,
                     ..UserLimits::default()
                 },
                 ..Config::default()

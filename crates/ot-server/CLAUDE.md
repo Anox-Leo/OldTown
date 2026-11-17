@@ -9,7 +9,7 @@ fichiers chiffrés déposés par morceaux (API HTTP `/v1/blobs`, étape 5, note
 journal de roster de chaque personne (étape 10, notes 0052 et 0053). Binaire
 `ot-server` (`serve [--admin-listen --trusted-proxy --tls-cert --tls-key
 --blob-dir --max-file-size --blob-quota --blob-ttl --user-max-devices
---user-blob-quota --user-send-rate]`, `device add|list|revoke`, `messages purge
+--user-blob-quota --user-send-rate --user-pending-quota --user-log-quota]`, `device add|list|revoke`, `messages purge
 [--all]`, `user list|rename|revoke`, `link list|remove`, `admin reset`).
 
 - Ne dépend que de `ot-proto`. **Ne lit jamais `payload`**, pas même
@@ -34,8 +34,22 @@ journal de roster de chaque personne (étape 10, notes 0052 et 0053). Binaire
   qu'elle. Certificats et entrées du journal de roster sont des octets
   opaques, rangés et rendus sans vérification (les clients vérifient).
   Toute décision relit la personne en base (une personne en attente devient
-  active pendant sa session). Jamais de jeton d'invitation ni de son hash
-  dans les logs (`tests/logs.rs`).
+  active pendant sa session) ; un appareil révoqué n'envoie plus rien, même
+  sa session encore ouverte. Une invitation utilisée relie ses deux
+  appareils jusqu'à ce que l'invité publie son journal, au plus 48 h après
+  l'usage. Jamais de jeton d'invitation ni de son hash dans les logs
+  (`tests/logs.rs`).
+- Limites propres d'un membre (`UserLimits`, note 0056) : appareils, et,
+  comme pour un service, fichiers, débit (`send` et `roster_publish` dans le
+  même seau), octets en attente de livraison et taille du journal. L'admin
+  n'a que les limites globales.
+- Annuaire (`users::directory`) : pages par personne sous
+  `DIRECTORY_FRAME_BUDGET`, tout compris ; `next`/`after` pour la suite,
+  `more` pour la suite d'un journal. Les profils filtrés (appareils non
+  joignables, admin non lié) ne cachent rien de confidentiel : le journal
+  signé de chaque personne servie liste tous ses appareils.
+- Toute personne (hors service) qui a un appareil joignable en garde un par
+  défaut (`store::ensure_default`).
 - SQLite : migrations versionnées dans `migrations/`, jamais modifiées une fois
   livrées (on en ajoute une) ; écritures en `BEGIN IMMEDIATE` (note 0007) ;
   requêtes `sqlx::query` non vérifiées à la compilation (note 0003).

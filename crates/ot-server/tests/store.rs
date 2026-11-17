@@ -12,7 +12,14 @@ async fn setup() -> (Store, DeviceId, DeviceId, DeviceId) {
 }
 
 fn msg<'a>(id: &'a str, from: &'a DeviceId, to: &'a [DeviceId]) -> NewMessage<'a> {
-    NewMessage { msg_id: id, sender: from, to, envelope: b"{}", expires_at: 7 * DAY }
+    NewMessage {
+        msg_id: id,
+        sender: from,
+        to,
+        envelope: b"{}",
+        expires_at: 7 * DAY,
+        pending_quota: u64::MAX,
+    }
 }
 
 #[tokio::test]

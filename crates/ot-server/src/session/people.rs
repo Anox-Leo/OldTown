@@ -72,7 +72,9 @@ impl Active<'_> {
         }
 
         let reply = match frame {
-            Frame::DirectoryGet { known } => self.directory(&peer, &known).await?,
+            Frame::DirectoryGet { known, after } => {
+                self.directory(&peer, &known, after.as_ref()).await?
+            }
             Frame::PairCreate => self.pair_create().await?,
             Frame::PairRegister { device_id, name, public_key, sig } => {
                 self.pair_register(device_id, &name, &public_key, &sig).await
@@ -207,14 +209,20 @@ impl Active<'_> {
         Frame::error(code, message, reference)
     }
 
-    async fn directory(&mut self, peer: &Peer, known: &Known) -> Result<Frame, Close> {
-        let (admin, mut users) = self.inner.store.directory(&peer.user, known).await.map_err(db)?;
+    async fn directory(
+        &mut self,
+        peer: &Peer,
+        known: &Known,
+        after: Option<&UserId>,
+    ) -> Result<Frame, Close> {
+        let page = self.inner.store.directory(&peer.user, known, after).await.map_err(db)?;
+        let mut users = page.users;
         for u in &mut users {
             for d in &mut u.devices {
                 d.online = self.inner.registry.is_online(&d.id);
             }
         }
-        Ok(Frame::Directory { me: peer.user.clone(), admin, users })
+        Ok(Frame::Directory { me: peer.user.clone(), admin: page.admin, users, next: page.next })
     }
 
     async fn roster_publish(
@@ -223,7 +231,15 @@ impl Active<'_> {
         seq: u64,
         entry: &SignedBlob,
     ) -> Result<Frame, Close> {
-        match self.inner.store.publish_entry(&self.device, &user, seq, entry).await {
+        // Même frein que les envois : chaque publication réveille l'annuaire
+        // de tous les appareils concernés.
+        if peer_role_limited(self.role) && !self.inner.send_rate.take(&self.user) {
+            Metrics::inc(&self.inner.metrics.refused_quota);
+            let msg = "trop de publications : réessayer dans une minute";
+            return Ok(Frame::error(ErrorCode::QuotaExceeded, msg, Some(seq.to_string())));
+        }
+        let quota = self.inner.config.users.log_quota;
+        match self.inner.store.publish_entry(&self.device, &user, seq, entry, quota).await {
             Ok(()) => {
                 tracing::info!(device = %self.device, user = %user, seq, "journal de roster publié");
                 self.notify(&user).await?;
@@ -450,6 +466,11 @@ impl Active<'_> {
         }
         Ok(Frame::Users { users })
     }
+}
+
+/// Membre ou service : soumis aux limites propres des personnes.
+fn peer_role_limited(role: Role) -> bool {
+    role != Role::Admin
 }
 
 fn invalid_user_name() -> String {

@@ -45,7 +45,10 @@ fn check(name: &str, frame: Frame) {
 fn golden_directory_frames() {
     check(
         "directory_get",
-        Frame::DirectoryGet { known: BTreeMap::from([(usr(ALICE), 20), (usr(BOB), 3)]) },
+        Frame::DirectoryGet {
+            known: BTreeMap::from([(usr(ALICE), 20), (usr(BOB), 3)]),
+            after: Some(usr(ALICE)),
+        },
     );
     check(
         "directory",
@@ -71,6 +74,7 @@ fn golden_directory_frames() {
                     online: true,
                 }],
             }],
+            next: Some(usr(BOB)),
         },
     );
     check("directory_changed", Frame::DirectoryChanged);
@@ -200,7 +204,7 @@ fn optional_fields_may_be_absent() {
     // `known` absent : tout le journal.
     assert_eq!(
         Frame::from_json(r#"{"v":1,"t":"directory_get"}"#).unwrap(),
-        Frame::DirectoryGet { known: BTreeMap::new() }
+        Frame::DirectoryGet { known: BTreeMap::new(), after: None }
     );
     // `device_update` ne porte que ce qui change.
     let only_kind =

@@ -13,12 +13,23 @@ use sqlx::Row;
 
 use crate::store::{
     DEVICE_COLUMNS, Device, NewProfile, Result, Store, StoreError, admin_id, device_from_row,
-    insert_device, parse_device, parse_role, parse_state, parse_user, revoke_in,
+    ensure_default, insert_device, parse_device, parse_role, parse_state, parse_user, revoke_in,
 };
 
-/// Taille brute des entrées de journal rendues par une trame `directory` :
-/// en base64 et avec le reste de la trame, elle tient sous `MAX_FRAME_BYTES`.
-const DIRECTORY_LOG_BUDGET: usize = 64 * 1024;
+/// Taille JSON des personnes d'une trame `directory` (certificats, profils
+/// et journaux compris) : avec `me`, `admin`, `next` et la marge de `online`
+/// (rempli plus tard, `true` est plus court que `false`), la trame tient
+/// sous `MAX_FRAME_BYTES`.
+pub const DIRECTORY_FRAME_BUDGET: usize = ot_proto::MAX_FRAME_BYTES - 4 * 1024;
+
+/// Une page de l'annuaire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryPage {
+    pub admin: UserId,
+    pub users: Vec<DirectoryUser>,
+    /// D'autres personnes suivent : relire avec `after = next`.
+    pub next: Option<UserId>,
+}
 
 /// Nom de la personne `admin` créée à la migration (`ot-server user rename`).
 pub const OWNER_NAME: &str = "owner";
@@ -91,13 +102,20 @@ pub struct Link {
 
 impl Store {
     /// Reprise de l'existant (étape 10) : sans admin, en crée un, `owner`,
-    /// et lui rattache tout appareil sans personne. Idempotent.
+    /// lui rattache tout appareil sans personne et fait de son plus ancien
+    /// appareil joignable son appareil par défaut. Idempotent.
     pub(crate) async fn adopt_devices(&self, now: i64) -> Result<()> {
         // Lecture d'abord : une ouverture ordinaire ne prend pas le verrou
         // d'écriture (`ot-server device list` pendant que le relais écrit).
         let done: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM users WHERE role = 'admin' AND state != 'revoked')
-                AND NOT EXISTS (SELECT 1 FROM devices WHERE user_id IS NULL)",
+                AND NOT EXISTS (SELECT 1 FROM devices WHERE user_id IS NULL)
+                AND NOT EXISTS (
+                    SELECT 1 FROM users u WHERE u.role = 'admin' AND u.state != 'revoked'
+                      AND EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id
+                                    AND d.revoked_at IS NULL AND d.reachable = 1)
+                      AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.user_id = u.id
+                                        AND d.revoked_at IS NULL AND d.is_default = 1))",
         )
         .fetch_one(&self.pool)
         .await?;
@@ -126,6 +144,7 @@ impl Store {
             .bind(admin.as_str())
             .execute(&mut *tx)
             .await?;
+        ensure_default(&mut tx, &admin).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -155,11 +174,13 @@ impl Store {
         .collect()
     }
 
-    /// Personne non révoquée désignée par son nom ou son identifiant.
+    /// Personne non révoquée désignée par son nom ou son identifiant
+    /// (l'identifiant exact d'abord).
     pub async fn find_user(&self, name_or_id: &str) -> Result<User> {
         let row = sqlx::query(
             "SELECT id, name, role, state, cert, created_at, revoked_at FROM users
-             WHERE (id = ?1 OR name = ?1) AND state != 'revoked'",
+             WHERE (id = ?1 OR name = ?1) AND state != 'revoked'
+             ORDER BY id = ?1 DESC LIMIT 1",
         )
         .bind(name_or_id)
         .fetch_optional(&self.pool)
@@ -224,11 +245,21 @@ impl Store {
     /// (leurs appareils joignables seulement). L'admin non lié n'y figure que
     /// par son certificat et son journal, sans appareils. `online` reste à
     /// `false` : la session le remplit.
+    ///
+    /// Une page tient sous [`DIRECTORY_FRAME_BUDGET`], tout compris
+    /// (certificats, profils, journaux). Elle part de la personne qui suit
+    /// `after` (du début si `after` est absent ou inconnu) et rend, en
+    /// dernier, la personne à passer en `after` pour la page suivante. Le
+    /// journal d'une personne est coupé (`more`) quand la page est pleine,
+    /// mais la première personne d'une page a toujours au moins une entrée :
+    /// chaque page avance, et un long journal invérifiable ne retarde pas les
+    /// autres personnes, qui suivent par `next`.
     pub async fn directory(
         &self,
         me: &UserId,
         known: &Known,
-    ) -> Result<(UserId, Vec<DirectoryUser>)> {
+        after: Option<&UserId>,
+    ) -> Result<DirectoryPage> {
         let mut conn = self.pool.acquire().await?;
         let admin = admin_id(&mut conn).await?;
         let rows = sqlx::query(
@@ -251,10 +282,17 @@ impl Store {
         .fetch_all(&mut *conn)
         .await?;
 
-        let mut budget = DIRECTORY_LOG_BUDGET;
-        let mut used_any = false;
-        let mut users = Vec::with_capacity(rows.len());
-        for row in rows {
+        // Reprise après `after` ; une personne disparue entre deux pages fait
+        // repartir du début (chaque page avance quand même).
+        let skip = after
+            .and_then(|a| rows.iter().position(|r| r.get::<&str, _>("id") == a.as_str()))
+            .map_or(0, |i| i + 1);
+        let total = rows.len();
+
+        let mut used = 0usize;
+        let mut users: Vec<DirectoryUser> = Vec::new();
+        let mut next = None;
+        for (i, row) in rows.into_iter().enumerate().skip(skip) {
             let linked: bool = row.get("linked");
             let muted: bool = row.get("muted");
             let user = user_from_row(row)?;
@@ -282,41 +320,58 @@ impl Store {
             } else {
                 Vec::new()
             };
-
-            let after = known.get(&user.id).copied().unwrap_or(0);
-            let entries: Vec<(i64, Vec<u8>)> = sqlx::query_as(
-                "SELECT seq, entry FROM roster_log WHERE user_id = ? AND seq > ? ORDER BY seq",
-            )
-            .bind(user.id.as_str())
-            .bind(i64::try_from(after).unwrap_or(i64::MAX))
-            .fetch_all(&mut *conn)
-            .await?;
-            let mut log = Vec::new();
-            let mut more = false;
-            for (seq, entry) in entries {
-                // Une entrée au moins par trame, pour que le client avance.
-                if used_any && entry.len() > budget {
-                    more = true;
-                    break;
-                }
-                budget = budget.saturating_sub(entry.len());
-                used_any = true;
-                log.push(LogEntry { seq: seq as u64, entry: decode_signed(&entry)? });
-            }
-
-            users.push(DirectoryUser {
+            let mut entry = DirectoryUser {
                 id: user.id,
                 name: user.name,
                 role: user.role,
                 state: user.state,
                 cert: user.cert,
-                log,
-                more,
+                log: Vec::new(),
+                more: false,
                 muted: muted && !mine,
                 devices,
-            });
+            };
+
+            // Sans journal, la personne doit tenir ; sinon elle ouvre la page
+            // suivante. La première d'une page passe toujours (invariant :
+            // certificat ≤ 16 Kio et profils d'appareils bien en deçà du
+            // budget, sauf personne à plus d'une centaine d'appareils).
+            let first = users.is_empty();
+            let base = json_len(&entry) + 1;
+            if !first && used + base > DIRECTORY_FRAME_BUDGET {
+                next = users.last().map(|u: &DirectoryUser| u.id.clone());
+                break;
+            }
+            used += base;
+
+            let after_seq = known.get(&entry.id).copied().unwrap_or(0);
+            let entries: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+                "SELECT seq, entry FROM roster_log WHERE user_id = ? AND seq > ? ORDER BY seq",
+            )
+            .bind(entry.id.as_str())
+            .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
+            .fetch_all(&mut *conn)
+            .await?;
+            for (seq, raw) in entries {
+                let log = LogEntry { seq: seq as u64, entry: decode_signed(&raw)? };
+                let len = json_len(&log) + 1;
+                // Une entrée au moins pour la première personne de la page.
+                if used + len > DIRECTORY_FRAME_BUDGET && !(first && entry.log.is_empty()) {
+                    entry.more = true;
+                    break;
+                }
+                used += len;
+                entry.log.push(log);
+            }
+            let full = entry.more;
+            users.push(entry);
+            if full && i + 1 < total {
+                // Page pleine : les personnes suivantes viennent par `next`.
+                next = users.last().map(|u| u.id.clone());
+                break;
+            }
         }
-        Ok((admin, users))
+        Ok(DirectoryPage { admin, users, next })
     }
 
     /// Toutes les personnes non révoquées vues par l'admin, avec tous leurs
@@ -567,13 +622,16 @@ impl Store {
 
     /// Ajoute une entrée au journal de roster de `user`, publiée par
     /// `publisher` (appareil de cette personne, ou de l'admin pour un
-    /// service). `seq` doit suivre la dernière entrée.
+    /// service). `seq` doit suivre la dernière entrée. Le journal d'un membre
+    /// ou d'un service ne dépasse pas `log_quota` octets (celui de l'admin,
+    /// qui porte les empreintes des certificats, n'a pas de limite propre).
     pub async fn publish_entry(
         &self,
         publisher: &DeviceId,
         user: &UserId,
         seq: u64,
         entry: &SignedBlob,
+        log_quota: u64,
     ) -> Result<()> {
         check_signed(entry)?;
         let mut tx = self.begin_write().await?;
@@ -597,6 +655,18 @@ impl Store {
         let next = last_seq_in(&mut tx, user).await? + 1;
         if seq != next {
             return Err(StoreError::Conflict(next));
+        }
+        if target.role != Role::Admin {
+            let used: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(LENGTH(entry)), 0) FROM roster_log WHERE user_id = ?",
+            )
+            .bind(user.as_str())
+            .fetch_one(&mut *tx)
+            .await?;
+            let size = encode_signed(entry).len() as u64;
+            if (used as u64).saturating_add(size) > log_quota {
+                return Err(StoreError::UserQuota("journal de roster"));
+            }
         }
         insert_entry(&mut tx, user, seq, entry).await?;
         tx.commit().await?;
@@ -632,11 +702,15 @@ impl Store {
         };
         let mut reachable = changes.reachable.unwrap_or(device.reachable);
         let mut is_default = changes.default.unwrap_or(device.is_default);
-        if kind == Some(DeviceKind::Cli) || owner.role == Role::Service {
+        // Une CLI ou un appareil de service n'est jamais joignable ni par
+        // défaut : il cède sa place sans refus (un autre appareil joignable
+        // devient par défaut, `ensure_default`).
+        let forced = kind == Some(DeviceKind::Cli) || owner.role == Role::Service;
+        if forced {
             reachable = false;
             is_default = false;
         }
-        if device.is_default && !is_default {
+        if device.is_default && !is_default && !forced {
             let others: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM devices
                  WHERE user_id = ? AND revoked_at IS NULL AND is_default = 1 AND id != ?",
@@ -668,6 +742,7 @@ impl Store {
         .bind(target.as_str())
         .execute(&mut *tx)
         .await?;
+        ensure_default(&mut tx, &device.user_id).await?;
         tx.commit().await?;
         Ok(device.user_id)
     }
@@ -690,6 +765,7 @@ impl Store {
             return Err(StoreError::Forbidden("appareil d'une autre personne"));
         }
         revoke_in(&mut tx, target, now).await?;
+        ensure_default(&mut tx, &device.user_id).await?;
         tx.commit().await?;
         Ok(device.user_id)
     }
@@ -917,6 +993,12 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User> {
         created_at: row.get("created_at"),
         revoked_at: row.get("revoked_at"),
     })
+}
+
+/// Taille JSON d'une valeur du protocole.
+fn json_len<T: serde::Serialize>(value: &T) -> usize {
+    // Invariant : les types du protocole sont toujours sérialisables.
+    serde_json::to_vec(value).expect("type du protocole sérialisable").len()
 }
 
 fn encode_signed(blob: &SignedBlob) -> Vec<u8> {

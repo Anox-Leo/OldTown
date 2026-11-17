@@ -110,6 +110,10 @@ pub struct NewMessage<'a> {
     pub to: &'a [DeviceId],
     pub envelope: &'a [u8],
     pub expires_at: i64,
+    /// Octets en attente de livraison permis à la personne de l'expéditeur,
+    /// celui-ci compris (étape 10 : membre ou service ; l'admin n'a pas de
+    /// limite propre). `u64::MAX` : sans limite.
+    pub pending_quota: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,11 +348,16 @@ impl Store {
 
     /// Révoque un appareil actif désigné par son nom ou son identifiant, et
     /// supprime ses livraisons en attente. Un nom porté par plusieurs
-    /// appareils actifs (de personnes différentes) est refusé.
+    /// appareils actifs (de personnes différentes) est refusé ; un
+    /// identifiant exact passe avant un nom.
     pub async fn revoke_device(&self, name_or_id: &str, now: i64) -> Result<Device> {
         let mut tx = self.begin_write().await?;
+        // L'identifiant exact d'abord : un nom qui imite l'identifiant d'un
+        // autre appareil (choisi par un membre) ne bloque pas sa révocation.
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM devices WHERE (id = ?1 OR name = ?1) AND revoked_at IS NULL",
+            "SELECT id FROM devices WHERE revoked_at IS NULL
+               AND (id = ?1 OR (name = ?1 AND NOT EXISTS (
+                        SELECT 1 FROM devices WHERE id = ?1 AND revoked_at IS NULL)))",
         )
         .bind(name_or_id)
         .fetch_all(&mut *tx)
@@ -359,6 +368,8 @@ impl Store {
             _ => return Err(StoreError::Ambiguous(name_or_id.to_owned())),
         };
         revoke_in(&mut tx, &id, now).await?;
+        let (user, _) = device_user(&mut tx, &id).await?;
+        ensure_default(&mut tx, &user).await?;
         tx.commit().await?;
         Ok(self.device(&id).await?.expect("l'appareil vient d'être lu"))
     }
@@ -462,6 +473,8 @@ impl Store {
         }
 
         let recipients = route(&mut tx, msg.sender, msg.to).await?;
+        check_pending_quota(&mut tx, msg.sender, msg.envelope.len(), msg.pending_quota, now)
+            .await?;
 
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO messages (msg_id, sender_id, created_at, expires_at, size, envelope)
@@ -588,9 +601,16 @@ impl Store {
             .execute(&mut *tx)
             .await?
             .rows_affected();
-        let invitations = sqlx::query("DELETE FROM invitations WHERE expires_at <= ?")
-            .bind(now)
-            .execute(&mut *tx)
+        // Une invitation utilisée vit encore `INVITE_EXCHANGE_MS` après son
+        // usage : elle relie l'invité à l'admin le temps de l'échange, même
+        // si le jeton aurait expiré entre-temps.
+        let invitations = sqlx::query(
+            "DELETE FROM invitations
+             WHERE (used_at IS NULL AND expires_at <= ?1) OR (used_at IS NOT NULL AND used_at <= ?2)",
+        )
+        .bind(now)
+        .bind(now.saturating_sub(INVITE_EXCHANGE_MS))
+        .execute(&mut *tx)
             .await?
             .rows_affected();
         tx.commit().await?;
@@ -601,7 +621,8 @@ impl Store {
 
     /// Crée un blob et ses destinataires, si les quotas le permettent : la
     /// somme des tailles des blobs vivants, celui-ci compris, ne doit pas
-    /// dépasser `quota`, ni, pour ceux d'un membre, `user_quota`. Mêmes règles
+    /// dépasser `quota`, ni, pour ceux d'un membre ou d'un service,
+    /// `user_quota`. Mêmes règles
     /// de réseau qu'un envoi. Renvoie les destinataires résolus.
     pub async fn create_blob(
         &self,
@@ -624,7 +645,7 @@ impl Store {
             return Err(StoreError::QuotaExceeded);
         }
         let (user, role) = device_user(&mut tx, blob.owner).await?;
-        if role == Role::Member {
+        if role != Role::Admin {
             let mine: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(SUM(b.size), 0) FROM blobs b JOIN devices d ON d.id = b.owner_id
                  WHERE d.user_id = ? AND b.expires_at > ?",
@@ -855,6 +876,12 @@ pub(crate) async fn insert_device(
     profile: NewProfile,
     now: i64,
 ) -> Result<Device> {
+    // Le premier appareil joignable d'une personne sans appareil par défaut
+    // le devient (appareil ajouté à l'admin après la migration, par exemple).
+    let mut profile = profile;
+    if profile.reachable && !profile.is_default {
+        profile.is_default = needs_default(conn, user).await?;
+    }
     let res = sqlx::query(
         "INSERT INTO devices (id, name, public_key, created_at, user_id, reachable, is_default)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -979,6 +1006,75 @@ pub(crate) async fn check_device_quota(
     Ok(())
 }
 
+/// Durée de l'échange d'invitation après l'usage du jeton : l'invitation
+/// utilisée relie l'invité à l'admin jusqu'à ce que l'invité publie son
+/// journal, au plus 48 h (purge).
+pub const INVITE_EXCHANGE_MS: i64 = 48 * 3600 * 1000;
+
+/// Refuse un message qui porterait les octets en attente de la personne de
+/// l'expéditeur (membre ou service) au-delà de `quota`.
+async fn check_pending_quota(
+    conn: &mut sqlx::SqliteConnection,
+    sender: &DeviceId,
+    size: usize,
+    quota: u64,
+    now: i64,
+) -> Result<()> {
+    if quota == u64::MAX {
+        return Ok(());
+    }
+    let (user, role) = device_user(conn, sender).await?;
+    if role == Role::Admin {
+        return Ok(());
+    }
+    let used: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(m.size), 0) FROM messages m JOIN devices d ON d.id = m.sender_id
+         WHERE d.user_id = ? AND m.expires_at > ?
+           AND EXISTS (SELECT 1 FROM deliveries l WHERE l.seq = m.seq AND l.acked_at IS NULL)",
+    )
+    .bind(user.as_str())
+    .bind(now)
+    .fetch_one(&mut *conn)
+    .await?;
+    if (used as u64).saturating_add(size as u64) > quota {
+        return Err(StoreError::UserQuota("messages en attente"));
+    }
+    Ok(())
+}
+
+/// Vrai si `user` (ni service ni révoqué) n'a aucun appareil actif par
+/// défaut.
+async fn needs_default(conn: &mut sqlx::SqliteConnection, user: &UserId) -> Result<bool> {
+    let needs: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM users u WHERE u.id = ?1 AND u.role != 'service'
+                          AND u.state != 'revoked')
+            AND NOT EXISTS (SELECT 1 FROM devices
+                            WHERE user_id = ?1 AND revoked_at IS NULL AND is_default = 1)",
+    )
+    .bind(user.as_str())
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(needs)
+}
+
+/// Une personne (hors service) qui a des appareils joignables en garde au
+/// moins un par défaut : le plus ancien le devient si aucun ne l'est (après
+/// la migration, ou la révocation du dernier appareil par défaut).
+pub(crate) async fn ensure_default(conn: &mut sqlx::SqliteConnection, user: &UserId) -> Result<()> {
+    if !needs_default(conn, user).await? {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE devices SET is_default = 1 WHERE id = (
+             SELECT id FROM devices WHERE user_id = ? AND revoked_at IS NULL AND reachable = 1
+             ORDER BY created_at, rowid LIMIT 1)",
+    )
+    .bind(user.as_str())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 pub(crate) fn parse_role(s: &str) -> Result<Role> {
     s.parse().map_err(|()| sqlx::Error::Decode(format!("rôle inconnu : {s:?}").into()).into())
 }
@@ -1000,9 +1096,11 @@ pub(crate) async fn route(
     if to.len() > ot_proto::MAX_RECIPIENTS {
         return Err(StoreError::Invalid("plus de 32 destinataires"));
     }
+    // Un expéditeur révoqué (par la CLI, sa session encore ouverte) n'envoie
+    // plus rien : `UnknownDevice`, et la session se ferme.
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT u.id, u.role, u.state FROM devices d JOIN users u ON u.id = d.user_id
-         WHERE d.id = ?",
+         WHERE d.id = ? AND d.revoked_at IS NULL",
     )
     .bind(sender.as_str())
     .fetch_optional(&mut *conn)

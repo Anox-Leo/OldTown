@@ -367,7 +367,11 @@ impl Active<'_> {
                 }
                 None
             }
-            Frame::ListDevices => Some(devices(self.inner, &self.user).await?),
+            Frame::ListDevices => {
+                // Un appareil révoqué (par la CLI) ne liste plus rien.
+                self.alive().await?;
+                Some(devices(self.inner, &self.user).await?)
+            }
             Frame::Ping => Some(Frame::Pong),
             Frame::Error { code, .. } => {
                 tracing::debug!(device = %self.device, ?code, "erreur signalée par le client");
@@ -378,6 +382,14 @@ impl Active<'_> {
         match reply {
             Some(frame) => send(&mut self.socket, &frame).await,
             None => Ok(()),
+        }
+    }
+
+    /// Ferme la session si son appareil a été révoqué entre-temps.
+    async fn alive(&mut self) -> Result<(), Close> {
+        match self.inner.store.peer(&self.device).await.map_err(db)? {
+            Some(_) => Ok(()),
+            None => Err(Close("appareil révoqué")),
         }
     }
 
@@ -485,7 +497,7 @@ impl Active<'_> {
             );
         }
 
-        if self.role == Role::Member && !self.inner.send_rate.take(&self.user) {
+        if self.role != Role::Admin && !self.inner.send_rate.take(&self.user) {
             Metrics::inc(&self.inner.metrics.refused_quota);
             return reject(
                 ErrorCode::QuotaExceeded,
@@ -501,6 +513,7 @@ impl Active<'_> {
             to: &env.to,
             envelope: &bytes,
             expires_at: now.saturating_add(ttl),
+            pending_quota: self.inner.config.users.pending_quota,
         };
         let inserted = match self.inner.store.insert_message(new, now).await {
             Ok(i) => i,
@@ -519,6 +532,12 @@ impl Active<'_> {
                 return reject(ErrorCode::Forbidden, why.into());
             }
             Err(StoreError::Invalid(why)) => return reject(ErrorCode::BadFrame, why.into()),
+            Err(StoreError::UserQuota(what)) => {
+                Metrics::inc(&self.inner.metrics.refused_quota);
+                return reject(ErrorCode::QuotaExceeded, format!("quota atteint : {what}"));
+            }
+            // L'expéditeur a été révoqué (par la CLI) pendant sa session.
+            Err(StoreError::UnknownDevice(_)) => return Err(Close("appareil révoqué")),
             Err(e) => {
                 tracing::error!(error = %e, "stockage du message");
                 return reject(ErrorCode::Internal, "erreur interne".into());

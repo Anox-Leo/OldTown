@@ -21,6 +21,8 @@ l'annuaire de l'étape 10 dans `user.rs`), codes d'erreur, constantes
   `type_name`, fichier golden, test aller-retour.
 - `deny_unknown_fields` partout : un champ inconnu est une erreur, pas un
   silence.
+- Identifiants (`dev_`, `usr_`, `blob_`) en forme canonique seulement :
+  ULID en majuscules, sans dépassement de 128 bits (un texte par ULID).
 - Le contenu applicatif (`Content`) et le format chiffré de `payload.data`
   n'appartiennent pas au relais ; à partir de l'étape 2, le format chiffré
   est défini et figé dans `ot-crypto`.
