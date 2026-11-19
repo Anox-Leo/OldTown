@@ -442,6 +442,14 @@ fn print_event(
         Event::GroupChanged { epoch } => eprintln!("groupe mis à jour (époque {epoch})"),
         Event::PairingCompleted { name, .. } => eprintln!("« {name} » a rejoint le groupe"),
         Event::KeyringError { message } => eprintln!("⚠ {message}"),
+        Event::DirectoryChanged => {}
+        Event::DirectoryRejected { user, reason } => {
+            eprintln!("⚠ annuaire : {user} refusé : {reason}")
+        }
+        Event::DirectoryFork => {
+            eprintln!("⚠ le relais publie pour cet appareil un autre groupe que le sien")
+        }
+        Event::KeysChanged { user } => eprintln!("⚠ {user} a de nouvelles clés"),
         Event::Message(m) => {
             print_message(m, name_of(group, &m.from), json, offset)?;
             return Ok(true);

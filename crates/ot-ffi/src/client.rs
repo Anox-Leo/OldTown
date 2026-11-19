@@ -404,6 +404,11 @@ impl Forwarder {
                 Event::PairingCompleted { device_id: device_id.to_string(), name }
             }
             E::KeyringError { message } => Event::StorageError { message },
+            // Annuaire (étape 10) : pas encore exposé à l'appli (PR Android).
+            E::DirectoryChanged
+            | E::DirectoryRejected { .. }
+            | E::DirectoryFork
+            | E::KeysChanged { .. } => return out,
             E::Message(m) => {
                 let received = Received {
                     msg_id: m.msg_id.to_string(),

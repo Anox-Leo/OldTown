@@ -191,6 +191,12 @@ impl EventOut {
             Event::Connected { .. } | Event::Disconnected { .. } | Event::AuthFailed { .. } => {
                 return None;
             }
+            // Annuaire (étape 10) : lu par le client réseau, pas encore par
+            // l'extension (PR extension).
+            Event::DirectoryChanged
+            | Event::DirectoryRejected { .. }
+            | Event::DirectoryFork
+            | Event::KeysChanged { .. } => return None,
         })
     }
 }

@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use ot_crypto::{Otp, PairingCode, PairingOffer};
 use ot_proto::{
-    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, Ulid,
-    WS_PATH,
+    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, SignedBlob,
+    Ulid, UserId, WS_PATH,
 };
 use time::OffsetDateTime;
 use tokio::net::TcpStream;
@@ -16,6 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use crate::directory::{DirectoryRead, Person, ReadStep};
 use crate::files::{FileInfo, FileMeta, PendingUpload, new_file_meta};
 use crate::keyring::Keyring;
 use crate::secure::{Effect, GroupInfo, Secure};
@@ -154,6 +155,12 @@ enum Command {
     /// Accès à l'état des fichiers (offres, dépôts en cours) : toutes les
     /// écritures passent par la tâche du client, une à la fois.
     WithSecure(Box<dyn FnOnce(&mut Secure) + Send>),
+    /// Personnes vérifiées de l'annuaire.
+    Directory(oneshot::Sender<Vec<Person>>),
+    /// Relire l'annuaire maintenant.
+    RefreshDirectory,
+    /// Admin : publier le certificat racine (`admin_init`).
+    AdminInit(Reply<UserId>),
     Reconnect,
     Shutdown(oneshot::Sender<()>),
 }
@@ -466,6 +473,31 @@ impl Client {
         let _ = self.cmd.send(Command::Reconnect);
     }
 
+    /// Personnes vérifiées de l'annuaire (étape 10), moi compris, telles
+    /// qu'au dernier tour complet de lecture. Vide sans ancre (installation
+    /// à une personne) ou avant la première lecture.
+    pub async fn directory(&self) -> Result<Vec<Person>, ClientError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd.send(Command::Directory(tx)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)
+    }
+
+    /// Relit l'annuaire maintenant ; sinon il est relu à chaque connexion et
+    /// à chaque `directory_changed` du relais. `Event::DirectoryChanged`
+    /// signale un changement.
+    pub fn refresh_directory(&self) {
+        let _ = self.cmd.send(Command::RefreshDirectory);
+    }
+
+    /// Appareil de l'admin : publie le certificat racine, auto-signé par cet
+    /// appareil, et l'entrée 1 du journal de l'admin, son roster courant
+    /// (note 0052) ; son empreinte devient l'ancre de l'annuaire. S'il est
+    /// déjà publié par un appareil de mon groupe, l'adopte. Renvoie
+    /// l'identifiant de la personne admin.
+    pub async fn admin_init(&self) -> Result<UserId, ClientError> {
+        self.request(Command::AdminInit).await
+    }
+
     /// État du groupe ; `None` sans groupe.
     pub async fn group(&self) -> Result<Option<GroupInfo>, ClientError> {
         let (tx, rx) = oneshot::channel();
@@ -536,8 +568,14 @@ struct Worker {
     outbox: Vec<Outgoing>,
     /// Demandes `list_devices` en attente de réponse, dans l'ordre.
     device_requests: VecDeque<Reply<Vec<DeviceInfo>>>,
-    /// Demandes `pair_create` en attente de réponse, dans l'ordre.
-    pair_requests: VecDeque<Reply<PairingInvitation>>,
+    /// Demandes dont le refus revient sans référence (`pair_create`,
+    /// `directory_get`, `admin_init`), dans l'ordre d'envoi : le relais
+    /// répond dans le même ordre.
+    unref: VecDeque<Pending>,
+    /// Lecture de l'annuaire en cours.
+    read: Option<Reading>,
+    /// `directory_changed` reçu pendant une lecture : en refaire une après.
+    read_again: bool,
     /// Enregistrements par QR inversé en attente de réponse.
     registrations: Vec<Registration>,
 }
@@ -560,7 +598,9 @@ impl Worker {
             startup,
             outbox: Vec::new(),
             device_requests: VecDeque::new(),
-            pair_requests: VecDeque::new(),
+            unref: VecDeque::new(),
+            read: None,
+            read_again: false,
             registrations: Vec::new(),
         }
     }
@@ -600,7 +640,7 @@ impl Worker {
                     let _ = tx.send(Err(ClientError::NoGroup));
                     return Next::Frames(Vec::new());
                 }
-                self.pair_requests.push_back(tx);
+                self.unref.push_back(Pending::Pair(tx));
                 Next::Frames(vec![Frame::PairCreate])
             }
             Command::PairJoin { code, sponsor, name, reply } => {
@@ -669,6 +709,33 @@ impl Worker {
             Command::WithSecure(f) => {
                 f(&mut self.secure);
                 Next::Frames(Vec::new())
+            }
+            Command::Directory(tx) => {
+                let _ = tx.send(self.secure.people());
+                Next::Frames(Vec::new())
+            }
+            Command::RefreshDirectory => Next::Frames(self.start_read()),
+            Command::AdminInit(reply) => {
+                let busy = matches!(self.read, Some(Reading::AdminInit(_)))
+                    || self.unref.iter().any(|p| matches!(p, Pending::AdminInit { .. }));
+                let refused = if self.secure.info().is_none() {
+                    Some(ClientError::NoGroup)
+                } else if self.secure.has_anchor() {
+                    Some(ClientError::Invalid("certificat de l'admin déjà publié".into()))
+                } else if busy {
+                    Some(ClientError::Invalid("admin_init déjà en cours".into()))
+                } else {
+                    None
+                };
+                if let Some(e) = refused {
+                    let _ = reply.send(Err(e));
+                    return Next::Frames(Vec::new());
+                }
+                // Une page de l'annuaire d'abord : qui suis-je, qui est
+                // l'admin, son certificat manque-t-il ?
+                self.read = Some(Reading::AdminInit(reply));
+                self.unref.push_back(Pending::Directory);
+                Next::Frames(vec![Frame::DirectoryGet { known: Default::default(), after: None }])
             }
             Command::Reconnect => Next::Reconnect,
         }
@@ -769,8 +836,19 @@ impl Worker {
         for tx in self.device_requests.drain(..) {
             let _ = tx.send(Err(ClientError::Closed));
         }
-        for tx in self.pair_requests.drain(..) {
-            let _ = tx.send(Err(ClientError::Closed));
+        for pending in self.unref.drain(..) {
+            match pending {
+                Pending::Pair(tx) => {
+                    let _ = tx.send(Err(ClientError::Closed));
+                }
+                Pending::AdminInit { reply, .. } => {
+                    let _ = reply.send(Err(ClientError::Closed));
+                }
+                Pending::Directory => {}
+            }
+        }
+        if let Some(Reading::AdminInit(reply)) = self.read.take() {
+            let _ = reply.send(Err(ClientError::Closed));
         }
         for r in self.registrations.drain(..) {
             let _ = r.reply.send(Err(ClientError::Closed));
@@ -832,8 +910,22 @@ impl Worker {
         let mut resume: Vec<Frame> =
             self.outbox.iter().map(|o| Frame::Send { env: o.env.clone() }).collect();
         resume.extend(self.device_requests.iter().map(|_| Frame::ListDevices));
-        resume.extend(self.pair_requests.iter().map(|_| Frame::PairCreate));
+        // Les demandes sans référence repartent dans leur ordre ; les pages
+        // de l'annuaire sont redemandées par une lecture neuve.
+        self.unref.retain(|p| !matches!(p, Pending::Directory));
+        resume.extend(self.unref.iter().map(Pending::frame));
         resume.extend(self.registrations.iter().map(Registration::frame));
+        match &self.read {
+            Some(Reading::AdminInit(_)) => {
+                self.unref.push_back(Pending::Directory);
+                resume.push(Frame::DirectoryGet { known: Default::default(), after: None });
+            }
+            _ => {
+                self.read = None;
+                self.read_again = false;
+                resume.extend(self.start_read());
+            }
+        }
         for frame in &resume {
             if let Err(end) = send_frame(ws, frame).await {
                 return end;
@@ -901,7 +993,9 @@ impl Worker {
                 }
             }
             Frame::PairCreated { token, expires_at } => {
-                if let Some(tx) = self.pair_requests.pop_front() {
+                if let Some(Pending::Pair(tx)) =
+                    self.take_pending(|p| matches!(p, Pending::Pair(_)))
+                {
                     let res = self.secure.sponsor(token, expires_at).map(|code| {
                         PairingInvitation { code: code.encode().to_string(), expires_at }
                     });
@@ -930,6 +1024,31 @@ impl Worker {
                     }
                     Err(e) => {
                         let _ = reply.send(Err(e));
+                    }
+                }
+            }
+            Frame::Directory { me, admin, users, next } => {
+                let _ = self.take_pending(|p| matches!(p, Pending::Directory));
+                for frame in self.on_directory(me, admin, users, next).await {
+                    send_frame(ws, &frame).await?;
+                }
+            }
+            Frame::DirectoryChanged => {
+                for frame in self.start_read() {
+                    send_frame(ws, &frame).await?;
+                }
+            }
+            Frame::AdminInitialized { user } => {
+                if let Some(Pending::AdminInit { cert, reply, .. }) =
+                    self.take_pending(|p| matches!(p, Pending::AdminInit { .. }))
+                {
+                    tracing::info!(user = %user, "certificat de l'admin publié");
+                    let effects = self.secure.adopt_admin_root(&cert);
+                    let mut frames = self.effects(effects).await;
+                    let _ = reply.send(Ok(user));
+                    frames.extend(self.start_read());
+                    for frame in &frames {
+                        send_frame(ws, frame).await?;
                     }
                 }
             }
@@ -964,10 +1083,20 @@ impl Worker {
                     Some(Outgoing { env, reply: None }) => {
                         tracing::warn!(?code, message, msg_id = %env.msg_id, "message système refusé");
                     }
-                    // Sans référence : seule `pair_create` peut échouer ainsi.
-                    None => match self.pair_requests.pop_front() {
-                        Some(tx) => {
+                    // Sans référence : la plus ancienne demande sans réponse.
+                    None => match self.unref.pop_front() {
+                        Some(Pending::Pair(tx)) => {
                             let _ = tx.send(Err(err));
+                        }
+                        Some(Pending::AdminInit { reply, .. }) => {
+                            let _ = reply.send(Err(err));
+                        }
+                        Some(Pending::Directory) => {
+                            tracing::warn!(?code, message, "lecture de l'annuaire refusée");
+                            if let Some(Reading::AdminInit(reply)) = self.read.take() {
+                                let _ = reply.send(Err(err));
+                            }
+                            self.read_again = false;
                         }
                         None => tracing::warn!(?code, message, "erreur du serveur"),
                     },
@@ -976,6 +1105,149 @@ impl Worker {
             other => tracing::debug!(t = other.type_name(), "trame inattendue ignorée"),
         }
         Ok(())
+    }
+}
+
+/// Demande dont le refus revient sans référence.
+enum Pending {
+    Pair(Reply<PairingInvitation>),
+    /// Une page de l'annuaire (`directory_get`).
+    Directory,
+    /// `admin_init` envoyé ; l'ancre n'est rangée qu'à la réponse.
+    AdminInit {
+        cert: SignedBlob,
+        entry: SignedBlob,
+        reply: Reply<UserId>,
+    },
+}
+
+impl Pending {
+    /// Trame à renvoyer à la reconnexion (`directory_get` : jamais appelé,
+    /// une lecture neuve la remplace).
+    fn frame(&self) -> Frame {
+        match self {
+            Self::Pair(_) => Frame::PairCreate,
+            Self::AdminInit { cert, entry, .. } => {
+                Frame::AdminInit { cert: cert.clone(), entry: entry.clone() }
+            }
+            Self::Directory => Frame::DirectoryGet { known: Default::default(), after: None },
+        }
+    }
+}
+
+/// Lecture de l'annuaire en cours.
+enum Reading {
+    /// Lecture vérifiée, page par page, tour par tour.
+    Verify(DirectoryRead),
+    /// `admin_init` : une page pour savoir qui est l'admin.
+    AdminInit(Reply<UserId>),
+}
+
+impl Worker {
+    /// Retire la première demande en attente qui répond à `pred`.
+    fn take_pending(&mut self, pred: impl Fn(&Pending) -> bool) -> Option<Pending> {
+        let i = self.unref.iter().position(pred)?;
+        self.unref.remove(i)
+    }
+
+    /// Commence une lecture vérifiée de l'annuaire, s'il y a une ancre ;
+    /// pendant une lecture, en prévoit une autre après.
+    fn start_read(&mut self) -> Vec<Frame> {
+        if !self.secure.has_anchor() {
+            return Vec::new();
+        }
+        if self.read.is_some() {
+            self.read_again = true;
+            return Vec::new();
+        }
+        let (read, frame) = DirectoryRead::start(self.secure.directory_known());
+        self.read = Some(Reading::Verify(read));
+        self.unref.push_back(Pending::Directory);
+        vec![frame]
+    }
+
+    /// Range une page de l'annuaire ; renvoie les trames à envoyer.
+    async fn on_directory(
+        &mut self,
+        me: UserId,
+        admin: UserId,
+        users: Vec<ot_proto::DirectoryUser>,
+        next: Option<UserId>,
+    ) -> Vec<Frame> {
+        match self.read.take() {
+            None => {
+                tracing::debug!("page de l'annuaire inattendue");
+                Vec::new()
+            }
+            Some(Reading::AdminInit(reply)) => {
+                let Some(raw) = users.into_iter().find(|u| u.id == admin) else {
+                    let why = "l'admin manque dans l'annuaire".into();
+                    let _ = reply.send(Err(ClientError::Invalid(why)));
+                    return Vec::new();
+                };
+                if me != admin {
+                    let why = "cet appareil n'est pas à l'admin".into();
+                    let _ = reply.send(Err(ClientError::Invalid(why)));
+                    return Vec::new();
+                }
+                if let Some(cert) = &raw.cert {
+                    // Publié par un autre appareil de l'admin : l'adopter.
+                    let mut frames = Vec::new();
+                    match self.secure.adopt_existing_root(&admin, cert) {
+                        Ok(effects) => {
+                            frames = self.effects(effects).await;
+                            let _ = reply.send(Ok(admin));
+                            frames.extend(self.start_read());
+                        }
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                        }
+                    }
+                    return frames;
+                }
+                match self.secure.admin_root(&admin, &raw.name, OffsetDateTime::now_utc()) {
+                    Ok((cert, entry)) => {
+                        let frame = Frame::AdminInit { cert: cert.clone(), entry: entry.clone() };
+                        self.unref.push_back(Pending::AdminInit { cert, entry, reply });
+                        vec![frame]
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        Vec::new()
+                    }
+                }
+            }
+            Some(Reading::Verify(mut read)) => match read.page(me, admin, users, next) {
+                Err(why) => {
+                    tracing::warn!(why, "lecture de l'annuaire abandonnée");
+                    self.after_read()
+                }
+                Ok(ReadStep::Request(frame)) => {
+                    self.read = Some(Reading::Verify(read));
+                    self.unref.push_back(Pending::Directory);
+                    vec![*frame]
+                }
+                Ok(ReadStep::Round { me, admin, users }) => {
+                    let (effects, again) = self.secure.apply_directory(&me, &admin, &users);
+                    let mut frames = self.effects(effects).await;
+                    match again.then(|| read.next_round(self.secure.directory_known())).flatten() {
+                        Some(frame) => {
+                            self.read = Some(Reading::Verify(read));
+                            self.unref.push_back(Pending::Directory);
+                            frames.push(frame);
+                        }
+                        None => frames.extend(self.after_read()),
+                    }
+                    frames
+                }
+            },
+        }
+    }
+
+    /// Fin d'une lecture : une autre si l'annuaire a changé entre-temps.
+    fn after_read(&mut self) -> Vec<Frame> {
+        self.read = None;
+        if std::mem::take(&mut self.read_again) { self.start_read() } else { Vec::new() }
     }
 }
 

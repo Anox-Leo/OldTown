@@ -13,6 +13,7 @@
 #[cfg(feature = "net")]
 mod client;
 mod dedup;
+pub mod directory;
 pub mod files;
 #[cfg(feature = "net")]
 mod http;
@@ -32,6 +33,7 @@ mod uri;
 #[cfg(feature = "net")]
 pub use client::{Backoff, Client, ClientConfig, Events, IDLE_TIMEOUT};
 pub use dedup::Dedup;
+pub use directory::{DeviceProfile, Person};
 pub use files::{FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile};
 pub use identity::Identity;
 pub use keyring::{
