@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Construit l'extension et copie `dist/extension` dans le dossier chargé par
-# le navigateur (mode développeur), puis il reste à *Actualiser* l'extension
-# dans `brave://extensions`.
-#
-#   scripts/deploy.sh <dossier>        ou   OT_EXT_DIR=<dossier> scripts/deploy.sh
-#   npm run deploy -- <dossier>
-#
-# Le contenu du dossier est remplacé : par sécurité, il doit être vide, ou
-# contenir déjà une extension OldTown (un `manifest.json` « OldTown »).
 set -euo pipefail
 
 app="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,7 +8,6 @@ if [[ -z "$dest" ]]; then
   exit 2
 fi
 
-# La CLI Angular demande Node 24.15 au moins.
 node_version="$(node --version | sed 's/^v//')"
 IFS=. read -r major minor _ <<<"$node_version"
 if (( major < 24 || (major == 24 && minor < 15) )); then
@@ -25,8 +15,6 @@ if (( major < 24 || (major == 24 && minor < 15) )); then
   exit 1
 fi
 
-# Une destination dans le dépôt est une erreur (ex. `npm run deploy --
-# OT_EXT_DIR`, où le nom de la variable est pris pour un dossier) : refusée.
 dest_abs="$(cd "$(dirname "$dest")" 2>/dev/null && pwd)/$(basename "$dest")" || dest_abs="$dest"
 repo="$(cd "$app/../.." && pwd)"
 if [[ "$dest_abs" == "$repo" || "$dest_abs" == "$repo"/* ]]; then

@@ -5,12 +5,6 @@ import { AvatarComponent } from './avatar';
 import { avatarColor, initials, railPeople, unread } from './devices';
 import { IconComponent } from './icon';
 
-/**
- * Barre latérale de la popup (I2, étape 10) : moi en haut, séparateur, puis
- * les personnes liées, de la plus récemment active à la moins ; initiales sur
- * leur couleur, pastille de non-lus, point vert si un de leurs appareils est
- * en ligne. `＋` (inviter) pour l'admin seulement.
- */
 @Component({
   selector: 'app-rail',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -146,7 +140,6 @@ export class RailComponent {
   readonly me = input<string>();
   readonly opened = input<Readonly<Record<string, string>>>({});
   readonly admin = input(false);
-  /** Personne choisie ; `undefined` : moi (mes appareils). */
   readonly selected = input<string>();
   readonly choose = output<string | undefined>();
   readonly invite = output();

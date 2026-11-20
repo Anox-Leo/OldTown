@@ -10,24 +10,16 @@ import {
   type StateView,
 } from '../shared/api';
 
-/**
- * Accès au service worker, seul propriétaire de la connexion (note 0009) :
- * requêtes par message, et état poussé sur un port tant que la page est
- * ouverte (le service worker ne notifie pas pendant ce temps).
- */
 @Injectable({ providedIn: 'root' })
 export class BackgroundService {
   readonly state = signal<StateView | undefined>(undefined);
   readonly items = signal<Item[]>([]);
   readonly error = signal<string | undefined>(undefined);
-  /** Conversation à ouvrir, demandée par le service worker (note 0032). */
   readonly openChat = signal<string | undefined>(undefined);
-  /** Admin : dernière personne invitée qui vient de rejoindre (étape 10). */
   readonly joined = signal<Extract<Push, { type: 'person-joined' }> | undefined>(undefined);
 
   private port?: chrome.runtime.Port;
 
-  /** Ouvre le port ; `popup` : la page est la popup (pas de notification). */
   connect(): void {
     if (this.port) return;
     const port = chrome.runtime.connect({ name: POPUP_PORT });
@@ -42,7 +34,6 @@ export class BackgroundService {
         );
     });
     port.onDisconnect.addListener(() => {
-      // Le service worker a redémarré : on se reconnecte.
       this.port = undefined;
       setTimeout(() => this.connect(), 200);
     });
@@ -56,7 +47,6 @@ export class BackgroundService {
     return reply.value;
   }
 
-  /** Comme `request`, l'erreur en plus dans `error` ; `undefined` en cas d'échec. */
   async run<T>(req: Request): Promise<T | undefined> {
     this.error.set(undefined);
     try {

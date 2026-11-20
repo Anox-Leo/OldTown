@@ -1,12 +1,6 @@
-// Trames du protocole (crates/ot-proto). Les trames reçues sont validées par
-// `ot-proto` compilé en WebAssembly (decodeFrame) ; les trames simples sont
-// écrites ici, celles qui portent une signature par le WebAssembly. Le format
-// est figé par crates/ot-proto/tests/golden/, rejoué par les tests.
-
 export const PROTOCOL_VERSION = 1;
 export const WS_PATH = '/v1/ws';
 
-/** Enveloppe telle que la voit le relais : `payload` reste opaque. */
 export interface Envelope {
   msg_id: string;
   from: string;
@@ -34,7 +28,6 @@ export type ErrorCode =
   | 'pairing_invalid'
   | 'name_taken'
   | 'internal'
-  // Étape 10.
   | 'forbidden'
   | 'not_allowed'
   | 'quota_exceeded'
@@ -42,28 +35,22 @@ export type ErrorCode =
   | 'conflict'
   | 'unknown';
 
-/** Objet signé (certificat, entrée de journal), opaque ici. */
 export interface SignedBlob {
   data: string;
   sig: string;
 }
 
 export type Role = 'admin' | 'member' | 'service';
-/** Nature d'un appareil (étape 10) ; `cli` : jamais joignable ni par défaut. */
 export type DeviceKindName = 'phone' | 'laptop' | 'desktop' | 'browser' | 'cli' | 'unknown';
 
-/** Une personne vue par l'admin (`users`), tous ses appareils actifs. */
 export interface AdminUser {
   id: string;
   name: string;
   role: Role;
   state: 'pending' | 'active' | 'revoked';
-  /** Millisecondes Unix. */
   created_at: number;
   devices: AdminDevice[];
-  /** Personnes vers qui elle peut écrire. */
   links: string[];
-  /** Services qu'elle a coupés. */
   muted?: string[];
 }
 
@@ -75,11 +62,9 @@ export interface AdminDevice {
   default: boolean;
   features: string[];
   online: boolean;
-  /** Dernière fin de session, en millisecondes Unix. */
   last_seen_at?: number;
 }
 
-/** Personne d'une page de l'annuaire, telle que le relais la sert (non vérifiée). */
 export interface DirectoryUser {
   id: string;
   name: string;
@@ -88,14 +73,12 @@ export interface DirectoryUser {
   cert?: SignedBlob;
 }
 
-/** Réglages d'un appareil (`device_update`) ; absent : inchangé. */
 export interface DeviceSettings {
   kind?: DeviceKindName;
   reachable?: boolean;
   default?: boolean;
 }
 
-/** Trame reçue du relais. */
 export type ServerFrame =
   | { t: 'challenge'; nonce: string }
   | { t: 'welcome'; device_id: string; pending: number }
@@ -107,7 +90,6 @@ export type ServerFrame =
   | { t: 'pair_registered'; device_id: string }
   | { t: 'pong' }
   | { t: 'error'; code: ErrorCode; message: string; ref?: string }
-  // Étape 10 : annuaire, journal, administration.
   | { t: 'directory'; me: string; admin: string; users: DirectoryUser[]; next?: string }
   | { t: 'directory_changed' }
   | { t: 'roster_published'; user: string; seq: number }
@@ -122,7 +104,6 @@ export type ServerFrame =
   | { t: 'link_updated'; from: string; to: string; allowed: boolean }
   | { t: 'users'; users: AdminUser[] }
   | { t: 'invite_redeemed'; user: string; device: string; inviter: string }
-  // Trames de client renvoyées par erreur : décodées, puis ignorées.
   | {
       t:
         | 'auth'
@@ -151,13 +132,11 @@ export type ServerFrame =
         | 'invite_redeem';
     };
 
-/** Trame de demande, écrite ici ou par le WebAssembly (`t` en tête de champs). */
 export interface ClientFrame {
   t: string;
   [field: string]: unknown;
 }
 
-/** Décode et valide une trame avec `ot-proto` (WebAssembly). */
 export function decode(text: string, decodeFrame: (text: string) => string): ServerFrame {
   return JSON.parse(decodeFrame(text)) as ServerFrame;
 }
@@ -170,13 +149,10 @@ export const encode = {
   ping: (): string => frame('ping'),
   ack: (seq: number): string => frame('ack', { seq }),
   listDevices: (): string => frame('list_devices'),
-  /** `env` : enveloppe JSON produite par le cœur, transmise telle quelle. */
   send: (env: string): string => `{"v":${PROTOCOL_VERSION},"t":"send","env":${env}}`,
-  /** Trame d'une demande (`call`), dans l'ordre des champs de `ot-proto`. */
   request: (f: ClientFrame): string => JSON.stringify({ v: PROTOCOL_VERSION, ...f }),
 };
 
-/** Demandes de l'étape 10 écrites ici (les signées viennent du WebAssembly). */
 export const request = {
   usersGet: (): ClientFrame => ({ t: 'users_get' }),
   userInvite: (name: string, links: string[]): ClientFrame => ({
@@ -196,7 +172,6 @@ export const request = {
     allowed,
   }),
   deviceUpdate: (device: string, s: DeviceSettings): ClientFrame => {
-    // Champs absents : inchangés (`skip_serializing_if`).
     const f: ClientFrame = { t: 'device_update', device };
     if (s.kind !== undefined) f['kind'] = s.kind;
     if (s.reachable !== undefined) f['reachable'] = s.reachable;
@@ -211,10 +186,6 @@ export const request = {
   }),
 };
 
-/**
- * Référence d'un refus de cette demande par le relais (comme
- * `call_reference` de `client.rs`) ; `undefined` : refus sans référence.
- */
 export function callReference(f: ClientFrame): string | undefined {
   switch (f.t) {
     case 'user_reinvite':
@@ -236,7 +207,6 @@ export function callReference(f: ClientFrame): string | undefined {
   }
 }
 
-/** `reply` répond-elle à la demande `f` ? (comme `answered_by` de `client.rs`). */
 export function answers(f: ClientFrame, reply: ServerFrame): boolean {
   const r = reply as unknown as Record<string, unknown>;
   switch (f.t) {
@@ -271,7 +241,6 @@ export function answers(f: ClientFrame, reply: ServerFrame): boolean {
   }
 }
 
-/** Trames qui ne répondent qu'à une demande (`call`). */
 export const REPLIES = new Set<ServerFrame['t']>([
   'directory',
   'roster_published',
@@ -287,7 +256,6 @@ export const REPLIES = new Set<ServerFrame['t']>([
   'users',
 ]);
 
-/** URL de l'endpoint WebSocket à partir de l'URL du relais (comme ot-core). */
 export function wsUrl(serverUrl: string): string {
   let base = serverUrl.trim().replace(/\/+$/, '');
   if (base.startsWith('http://')) base = `ws://${base.slice('http://'.length)}`;
@@ -296,10 +264,6 @@ export function wsUrl(serverUrl: string): string {
   return `${base}${WS_PATH}`;
 }
 
-/**
- * URL du relais acceptée : `wss://` (ou `ws://` pour les essais), avec un
- * hôte. Même règle que l'appli Android.
- */
 export function checkServerUrl(url: string): string {
   const trimmed = url.trim().replace(/\/+$/, '');
   const rest = trimmed.startsWith('wss://')

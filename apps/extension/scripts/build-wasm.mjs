@@ -1,5 +1,3 @@
-// Construit `ot-wasm` (crates/ot-wasm) et ses liaisons JavaScript dans
-// src/wasm/ (généré, jamais versionné ; note 0023).
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';

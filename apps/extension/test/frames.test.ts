@@ -1,4 +1,3 @@
-// Compatibilité du format : les golden de ot-proto, rejoués côté TypeScript.
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -23,7 +22,6 @@ beforeAll(loadWasm);
 describe('golden de ot-proto', () => {
   it('toutes les trames sont acceptées et relues à l’identique', () => {
     const dir = path.join(ROOT, 'crates/ot-proto/tests/golden');
-    // Les `http_*` sont des corps de l'API des fichiers, pas des trames.
     const names = readdirSync(dir)
       .map((f) => f.replace(/\.json$/, ''))
       .filter((n) => !n.startsWith('http_'));
@@ -67,7 +65,6 @@ describe('golden de ot-proto', () => {
     expect(encode.request(request.serviceMute(mute['service'] as string, true))).toBe(
       golden('service_mute'),
     );
-    // `features` n'est déclaré que par le WebAssembly (`featuresFrame`).
     const update = g('device_update');
     delete update['features'];
     expect(
@@ -80,7 +77,6 @@ describe('golden de ot-proto', () => {
       ),
     ).toBe(JSON.stringify(update));
     expect(decodeFrame(JSON.stringify(update))).toBe(JSON.stringify(update));
-    // Champs absents : inchangés.
     expect(request.deviceUpdate('dev_x', { default: true })).toEqual({
       t: 'device_update',
       device: 'dev_x',
@@ -106,7 +102,6 @@ describe('golden de ot-proto', () => {
     expect(answers(request.userInvite('Bob', []), invited)).toBe(true);
     expect(answers(request.userReinvite(invited.user), invited)).toBe(true);
     expect(answers(request.userReinvite('usr_autre'), invited)).toBe(false);
-    // Refus sans référence : `user_invite`, `link_set`, `users_get`, `directory_get`.
     expect(callReference(request.userInvite('Bob', []))).toBeUndefined();
     expect(callReference(request.linkSet('a', 'b', true))).toBeUndefined();
     expect(callReference(request.userRevoke('usr_b'))).toBe('usr_b');

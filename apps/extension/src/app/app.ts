@@ -7,10 +7,6 @@ import { PairingComponent } from './pairing';
 import { SettingsComponent } from './settings';
 import { SetupComponent } from './setup';
 
-/**
- * Racine : la même appli sert la popup (`index.html`), les réglages
- * (`options.html`) et l'administration (`admin.html`, étape 10).
- */
 @Component({
   selector: 'app-root',
   changeDetection: ChangeDetectionStrategy.OnPush,

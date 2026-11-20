@@ -1,6 +1,3 @@
-// L'extension (moteur du service worker, WebAssembly compris) contre un vrai
-// `ot-server`, avec la CLI `ot` comme parrain : QR inversé, code collé,
-// messages dans les deux sens, redémarrage, file hors ligne, maintien.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -54,13 +51,11 @@ describe('extension contre ot-server', () => {
     expect(state.pending.text).toMatch(/^oldtown:\/\/sponsor\?o=/);
     expect(state.pending.qr.modules.length).toBe(state.pending.qr.size ** 2);
 
-    // Le téléphone scanne le QR (ici : la CLI le parraine).
     await phone.run('pair', 'sponsor', state.pending.text);
     await eventually('groupe adopté', () => engine.state().phase === 'ready' || undefined);
     const group = engine.state().group;
     expect(group?.members.map((m) => m.name).sort()).toEqual(['chrome', 'telephone']);
     expect(engine.state().pending).toBeUndefined();
-    // L'effacement du secret est rangé juste après (avant l'acquittement).
     await eventually('offre effacée', () =>
       chrome.kv.items.has('secret:pending_offer.json') ? undefined : true,
     );
@@ -70,7 +65,6 @@ describe('extension contre ot-server', () => {
     const listen = phone.listen();
     try {
       await eventually('connexion', () => engine.state().connection === 'online' || undefined);
-      // Laisser `ot listen` ouvrir sa session avant d'envoyer.
       await new Promise((r) => setTimeout(r, 500));
       await engine.send('https://exemple.org/page', '');
       const got = await eventually('reçu par le téléphone', () => listen.messages[0]);
@@ -79,8 +73,6 @@ describe('extension contre ot-server', () => {
         body: 'https://exemple.org/page',
         from_name: 'chrome',
       });
-      // Conversation (note 0030) : l'envoi est rangé dans l'historique, à
-      // tous, et n'est plus « en cours » une fois accepté par le relais.
       const sent = await eventually('envoi accepté', async () =>
         (await engine.history()).find((i) => i.outgoing && i.pending === false),
       );
@@ -100,13 +92,11 @@ describe('extension contre ot-server', () => {
       fromName: 'telephone',
     });
     expect((await engine.history())[0]?.body).toBe('bonjour depuis le téléphone');
-    // Reçu de la CLI, adressé à tous : canal « Tous ».
     expect(item.to).toEqual([]);
     expect(channelOf(item, engine.state().device?.id)).toBe('');
   });
 
   it('reçoit un code relayé par ot otp-bridge (note 0045)', async () => {
-    // Faux otp-relay : une ligne `otp` à chaque connexion.
     const socket = path.join(relay.dir, 'otp-relay.sock');
     const expires = new Date(Date.now() + 10 * 60_000);
     const line = JSON.stringify({
@@ -141,7 +131,6 @@ describe('extension contre ot-server', () => {
           expiresAt: Math.floor(expires.getTime() / 1000) * 1000,
         },
       });
-      // Adressé à l'extension seule : conversation avec le pont.
       expect(channelOf(item, engine.state().device?.id)).toBe(item.from);
     } finally {
       bridge.kill();
@@ -197,7 +186,6 @@ describe('extension contre ot-server', () => {
     engine.onChange((p) => {
       if (p.type === 'state' && p.state.connection !== 'online') drops.push(p.state.connection);
     });
-    // Délai d'inactivité de 2 s : sans `pong`, la session tomberait.
     await new Promise((r) => setTimeout(r, 4_000));
     expect(drops).toEqual([]);
   });
@@ -249,7 +237,6 @@ describe('extension contre ot-server', () => {
     const broken = await open(other);
     await broken.setupOffer(relay.url, 'cassé');
     broken.close();
-    // Profil restauré sans sa clé de stockage (IndexedDB vidée).
     other.idb = new IDBFactory();
     const reopened = await open(other);
     expect(reopened.state().phase).toBe('unconfigured');

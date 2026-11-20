@@ -1,8 +1,3 @@
-// Personnes, annuaire et administration (étape 10), sans API Chrome. Refait
-// les déroulés de `ot-core` (client.rs, people.rs, services.rs) au-dessus de
-// `ot-wasm` : la vérification, les signatures et les clés restent dans le
-// WebAssembly ; ici, l'ordre des trames, les reprises et les relectures.
-
 import { type Core, type QrCode, inviteUri, qrCode } from '../wasm/ot_wasm.js';
 import type { DeviceView, GroupView, InvitationView, PersonView, QrView } from '../shared/api';
 import { type ClientEvent, RelayError, type RelayClient } from './client';
@@ -15,13 +10,9 @@ import {
   request,
 } from './frames';
 
-/** Annuaire relu avant un envoi s'il date de plus de 60 s (comme `fresh_directory`). */
 export const FRESH_MS = 60_000;
-/** `directory_changed` : au plus une relecture toutes les 2 s. */
 export const CHANGED_DEBOUNCE_MS = 2_000;
-/** Essais d'une publication en conflit (comme `PUBLISH_ATTEMPTS`). */
 const PUBLISH_ATTEMPTS = 4;
-/** Un déroulé de fond en échec n'est repris qu'après ce délai (comme `FLOW_RETRY`). */
 const FLOW_RETRY_MS = 60_000;
 
 export function qrView(text: string): QrView {
@@ -33,13 +24,11 @@ export function qrView(text: string): QrView {
   }
 }
 
-/** Sortie du cœur : événements à traiter, enveloppes à envoyer. */
 export interface CoreOutput {
   events: ClientEvent[];
   sends: unknown[];
 }
 
-/** Tête de journal rendue par `nextEntry` (`{"seq", "hash"}`). */
 type LogHead = Record<string, unknown>;
 
 export type PublishWhat =
@@ -54,18 +43,14 @@ interface PublishOut {
 
 type DirectoryPage = Extract<ServerFrame, { t: 'directory' }>;
 
-/** Ce que les déroulés demandent au moteur. */
 export interface PeopleHost {
   core(): Core | undefined;
   client(): RelayClient | undefined;
   device(): DeviceView | undefined;
   group(): GroupView | undefined;
   persistVault(): Promise<void>;
-  /** Effets d'une sortie du cœur : événements traités, enveloppes mises en file. */
   apply(out: CoreOutput): Promise<void>;
-  /** Met une enveloppe en file et attend son acceptation par le relais. */
   sendAndWait(env: string): Promise<void>;
-  /** Rotation sans ces membres de mon groupe (`group_key` envoyées). */
   rotate(exclude: string[]): Promise<number>;
   changed(): void;
   log(message: string, error?: unknown): void;
@@ -76,23 +61,18 @@ export class People {
   private again = false;
   private readAt = 0;
   private changedTimer?: ReturnType<typeof setTimeout>;
-  /** Déroulés de fond en cours, et ceux en échec récent. */
   private readonly flows = new Set<string>();
   private readonly failed = new Map<string, number>();
-  /** Une seule publication de journal à la fois (comme `publish_lock`). */
   private lock: Promise<unknown> = Promise.resolve();
   private missingRoot?: { name: string };
 
   constructor(private readonly host: PeopleHost) {}
-
-  // --- Vue ---
 
   people(): PersonView[] {
     const json = this.host.core()?.people();
     return json ? (JSON.parse(json) as PersonView[]) : [];
   }
 
-  /** Ma personne : celle dont le roster vérifié porte cet appareil. */
   me(): PersonView | undefined {
     const id = this.host.device()?.id;
     return id ? this.people().find((p) => p.devices.some((d) => d.device_id === id)) : undefined;
@@ -106,15 +86,10 @@ export class People {
     return this.missingRoot;
   }
 
-  // --- Événements de la connexion ---
-
-  /** Connecté : demande d'invité, puis l'annuaire (ou sa racine, s'il n'y en a pas). */
   onConnected(): void {
     this.sendInviteRequest();
     const core = this.host.core();
     if (!core || !this.host.group()) {
-      // Invité : l'annuaire seulement après la bienvenue (le relais refuse
-      // une personne en attente).
       if (core?.awaitsDirectory()) {
         void this.read().catch((e: unknown) => this.host.log('lecture de l’annuaire', e));
       }
@@ -125,7 +100,6 @@ export class People {
       .catch((e: unknown) => this.host.log('annuaire', e));
   }
 
-  /** `directory_changed` du relais : une relecture, au plus toutes les 2 s. */
   onRelayChanged(): void {
     if (this.changedTimer) return;
     this.changedTimer = setTimeout(() => {
@@ -134,7 +108,6 @@ export class People {
     }, CHANGED_DEBOUNCE_MS);
   }
 
-  /** Après un message traité : invitation à certifier, bienvenue d'invité… */
   afterDeliver(): void {
     const core = this.host.core();
     if (core?.awaitsDirectory()) {
@@ -143,11 +116,6 @@ export class People {
     this.drive();
   }
 
-  /**
-   * Mon groupe a changé (rotation, nouveau membre, groupe adopté) : mon
-   * journal le suit. Sans annuaire, la racine est peut-être déjà publiée par
-   * un autre appareil de mon groupe (appareil tout juste appairé).
-   */
   onGroupChanged(): void {
     if (this.people().length === 0 && this.host.client()?.online) {
       void this.adoptRoot(false)
@@ -175,12 +143,6 @@ export class People {
     }
   }
 
-  // --- Lecture de l'annuaire ---
-
-  /**
-   * Lecture complète et vérifiée de l'annuaire. Pendant une lecture, en
-   * prévoit une autre juste après (le même `Promise` couvre les deux).
-   */
   read(): Promise<void> {
     if (this.reading) {
       this.again = true;
@@ -204,7 +166,6 @@ export class People {
     return run;
   }
 
-  /** Relit l'annuaire s'il date de plus de 60 s (avant un envoi ou une publication). */
   async fresh(): Promise<void> {
     if (Date.now() - this.readAt > FRESH_MS) await this.read();
   }
@@ -230,7 +191,6 @@ export class People {
     const device = this.host.device();
     const features = device ? core.featuresFrame(device.id) : undefined;
     if (features) {
-      // Le relais ne prévient pas la session qui change son profil : relire.
       try {
         await client.call(features);
         this.again = true;
@@ -240,8 +200,6 @@ export class People {
     }
     this.host.changed();
   }
-
-  // --- Déroulés de fond (comme `drive` de client.rs) ---
 
   private drive(): void {
     const core = this.host.core();
@@ -286,10 +244,6 @@ export class People {
     return { core, client };
   }
 
-  /**
-   * Prochaine entrée de mon journal, publiée ; relecture et nouvel essai sur
-   * `conflict` (4 au plus). Rend la tête qui engage le changement.
-   */
   publish(what: PublishWhat): Promise<LogHead | undefined> {
     return this.locked(async () => {
       for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
@@ -307,7 +261,6 @@ export class People {
         const fx = JSON.parse(core.entryPublished()) as CoreOutput;
         await this.host.persistVault();
         await this.host.apply(fx);
-        // Le relais ne prévient pas la session qui publie.
         void this.read().catch((e: unknown) => this.host.log('relecture de l’annuaire', e));
         return out.head;
       }
@@ -315,7 +268,6 @@ export class People {
     });
   }
 
-  /** Admin : republie le journal d'un service signé par un appareil retiré (D47). */
   private republish(service: string): Promise<void> {
     return this.locked(async () => {
       for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt++) {
@@ -342,11 +294,6 @@ export class People {
     });
   }
 
-  /**
-   * Admin : certifie l'invité dont la demande est arrivée (§ 4.5) :
-   * certificat, `user_certify`, entrée de mon journal qui l'engage,
-   * bienvenue. Chaque étape est rangée : une coupure reprend où elle était.
-   */
   private async certifyInvite(user: string): Promise<void> {
     const { core, client } = this.ready();
     const { cert, certified } = JSON.parse(core.inviteCert(user)) as {
@@ -367,21 +314,12 @@ export class People {
     await this.host.apply(out);
   }
 
-  // --- Racine de l'annuaire (`admin_init`) ---
-
-  /**
-   * Appareil de l'admin sans annuaire : adopte le certificat racine déjà
-   * publié par un appareil de mon groupe. Sinon, avec `create`, le signe et
-   * le publie ; sans, note qu'il manque (« Publier l'annuaire » : son nom
-   * est signé une fois pour toutes, il se règle d'abord sur le relais).
-   */
   async adoptRoot(create: boolean): Promise<void> {
     const { core, client } = this.ready();
     let start: string;
     try {
       start = core.adminInitStart();
     } catch {
-      // Ancre déjà là, ou pas de groupe.
       this.missingRoot = undefined;
       if (create) throw new Error("l'annuaire est déjà publié");
       return;
@@ -416,22 +354,18 @@ export class People {
     await this.read();
   }
 
-  // --- Administration (§ 4.6) ---
-
   async users(): Promise<AdminUser[]> {
     const reply = await this.ready().client.call(request.usersGet());
     if (reply.t !== 'users') throw new Error(`réponse ${reply.t} inattendue`);
     return reply.users;
   }
 
-  /** Admin : invite une personne liée dans les deux sens à `links`. */
   async invite(name: string, links: string[]): Promise<InvitationView> {
     const reply = await this.ready().client.call(request.userInvite(name.trim(), links));
     if (reply.t !== 'user_invited') throw new Error(`réponse ${reply.t} inattendue`);
     return this.invitation(reply, name.trim());
   }
 
-  /** Admin : nouvelle invitation pour une personne qui a perdu ses appareils. */
   async reinvite(user: string): Promise<InvitationView> {
     const known = (await this.users()).find((u) => u.id === user);
     if (!known) throw new Error('personne inconnue du relais');
@@ -459,7 +393,6 @@ export class People {
     await this.read();
   }
 
-  /** Renomme une personne : son certificat est re-signé et engagé (sauf l'admin). */
   async renameUser(user: string, name: string): Promise<void> {
     await this.ready().client.call(request.userRename(user, name.trim()));
     await this.fresh();
@@ -474,7 +407,6 @@ export class People {
     return JSON.parse(this.ready().core.recertify(user, name)) as SignedBlob;
   }
 
-  /** `user_certify` d'un certificat re-signé, puis son engagement. */
   private async certify(user: string, cert: SignedBlob): Promise<void> {
     await this.ready().client.call(request.userCertify(user, cert));
     await this.publish({ kind: 'certify', user, cert });
@@ -490,13 +422,6 @@ export class People {
     await this.read();
   }
 
-  /**
-   * Retire un appareil (§ 4.6). De mon groupe : nouvelle clé sans lui,
-   * roster publié, puis révocation par le relais ; s'il avait signé des
-   * certificats (appareil de l'admin), ils sont re-signés ici. D'une autre
-   * personne (admin) : révocation seule. Les services qu'il avait publiés
-   * sont republiés en fond (D47).
-   */
   async removeDevice(device: string): Promise<void> {
     const { client } = this.ready();
     const mine = this.host.group()?.members.some((m) => m.device_id === device) ?? false;

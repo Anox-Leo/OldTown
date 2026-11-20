@@ -10,10 +10,7 @@ class FakeBackground {
   readonly items = signal<Item[]>([]);
   readonly error = signal<string | undefined>(undefined);
   readonly openChat = signal<string | undefined>(undefined);
-  connect(): void {
-    // Pas de service worker sous jsdom.
-  }
-  /** Réponse du relais à `devices` (présence). */
+  readonly connect = (): void => undefined;
   devices: RelayDevice[] = [];
   run(): Promise<undefined> {
     return Promise.resolve(undefined);
@@ -23,7 +20,6 @@ class FakeBackground {
   }
 }
 
-/** Ouvre la conversation dont la ligne porte ce nom (accueil, note 0031). */
 function openChat(fixture: { detectChanges(): void; nativeElement: HTMLElement }, name: string) {
   const row = [...fixture.nativeElement.querySelectorAll<HTMLButtonElement>('.chats button')].find(
     (b) => b.querySelector('.name')?.textContent?.trim() === name,
@@ -113,13 +109,11 @@ describe('App (popup)', () => {
         ],
       },
     });
-    // Accueil (note 0031) : le logotype, les réglages, une conversation par appareil.
     expect(el.querySelector('h1 app-logo [aria-label="OldTown"]')).toBeTruthy();
     expect(el.querySelector('[aria-label="Réglages"]')).toBeTruthy();
     expect(el.textContent).not.toContain('Connecté');
     expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
     expect(el.querySelector('.chats app-avatar')).toBeTruthy();
-    // « Tous mes appareils » prend le signe, un appareil le pictogramme de son type.
     const avatars = el.querySelectorAll('.chats app-avatar');
     expect(avatars[0]?.querySelector('app-mark')).toBeTruthy();
     expect(avatars[1]?.querySelector('app-mark')).toBeNull();
@@ -155,7 +149,6 @@ describe('App (popup)', () => {
     const at = (n: number) => new Date(Date.UTC(2026, 9, 15, 10, n)).toISOString();
     bg.state.set(state(''));
     bg.items.set([
-      // Du plus récent au plus ancien, comme l'historique.
       {
         msgId: 'c',
         from: 'dev_tel',
@@ -190,7 +183,6 @@ describe('App (popup)', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    // Accueil : le dernier message de chaque conversation.
     expect(el.querySelector('.chats li:nth-child(1) .last')?.textContent).toContain(
       'Vous : salut à tous',
     );
@@ -203,14 +195,11 @@ describe('App (popup)', () => {
         li.classList.contains('out') ? 'moi' : 'reçu',
         li.querySelector('.text')?.textContent?.trim(),
       ]);
-    // « Tous » : dans l'ordre, sans le message privé ; l'envoi en cours est signalé.
     expect(bubbles()).toEqual([
       ['reçu', 'bonjour'],
       ['moi', 'salut à tous'],
     ]);
     expect(el.textContent).toContain('envoi…');
-    // Retour à l'accueil, puis le canal du téléphone : seulement le message
-    // qui m'était adressé, sans filtres en haut.
     el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
     fixture.detectChanges();
     expect(el.querySelector('.messages')).toBeNull();
@@ -275,8 +264,6 @@ describe('App (popup)', () => {
       body: id,
       to: ['dev_me'],
     });
-    // Bravo : le plus récent ; Charlie : plus de messages, mais plus anciens ;
-    // Alpha : aucun (le message à tous va dans « Tous »).
     bg.items.set([
       sent('1', 'dev_c', 1),
       received('2', 'dev_c', 2),
@@ -324,23 +311,17 @@ describe('App (popup)', () => {
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
     openChat(fixture, 'Tous mes appareils');
-    // Envoi en cours : une bulle à droite, avec sa progression.
     expect(el.querySelector('.messages li.msg.out')?.textContent).toContain('video.mp4');
     expect(el.textContent).toContain('25 %');
     expect(el.textContent).toContain('1,5 Mo');
-    // Icône de téléchargement à droite de chaque fichier, copié ou non
-    // (note 0029) ; plus de boutons texte sous les éléments.
     const downloads = [...el.querySelectorAll('.messages a.side[aria-label="Télécharger"]')];
     expect(downloads.length).toBe(2);
-    // Une navigation, servie par le service worker : jamais un lien `download`,
-    // que le navigateur irait chercher sans lui (essai du 15 octobre).
     for (const a of downloads) {
       expect(a.getAttribute('target')).toBe('_blank');
       expect(a.hasAttribute('download')).toBe(false);
     }
     expect(downloads[0]?.getAttribute('href')).toBe('f/blob_photo.jpg/photo.jpg?dl=1');
     expect(el.querySelector('[aria-label="Envoyer un fichier"]')).toBeTruthy();
-    // Sans accès au relais, le bandeau propose de l'autoriser.
     expect(el.textContent).toContain("autoriser l'accès au relais");
   });
 
@@ -436,11 +417,9 @@ describe('App (popup)', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Téléphone');
     expect(bg.openChat()).toBeUndefined();
-    // La flèche ramène à l'accueil, et y reste.
     el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
     fixture.detectChanges();
     expect(el.querySelector('.chats')).toBeTruthy();
-    // Appareil sorti du groupe : « Tous ».
     bg.openChat.set('dev_parti');
     fixture.detectChanges();
     expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Tous mes appareils');
@@ -511,7 +490,6 @@ describe('App (popup)', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    // I1 : mes appareils d'abord ; le message de Bob n'y est pas.
     expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
     const rail = [...el.querySelectorAll<HTMLButtonElement>('app-rail button')];
     expect(rail.map((b) => b.getAttribute('aria-label'))).toEqual([
@@ -519,7 +497,6 @@ describe('App (popup)', () => {
       'Bob, 1 non lu',
       'Inviter une personne',
     ]);
-    // I2 : Bob (ses appareils par défaut), puis ses appareils joignables.
     rail[1]?.click();
     fixture.detectChanges();
     expect(el.querySelector('h1')?.textContent?.trim()).toBe('Bob');

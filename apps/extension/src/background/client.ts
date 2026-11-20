@@ -1,10 +1,3 @@
-// Client du protocole (T4, note 0023) : connexion au relais, authentification,
-// file d'envoi persistée, acquittements, dédoublonnage persisté, reconnexion,
-// maintien de la connexion. Même logique que `ot-core` (client.rs) ; le
-// chiffrement, le roster et l'appairage restent dans le WebAssembly (`Core`).
-//
-// Un seul client par appareil, tenu par le service worker (note 0009).
-
 import {
   type ClientFrame,
   type DeviceInfo,
@@ -18,7 +11,6 @@ import {
   wsUrl,
 } from './frames';
 
-/** Refus d'une demande par le relais (`error`), avec son code. */
 export class RelayError extends Error {
   constructor(
     readonly code: ErrorCode,
@@ -29,16 +21,12 @@ export class RelayError extends Error {
   }
 }
 
-/** Personne et service de l'expéditeur, destinataire d'un envoi (étape 10). */
 interface Origin {
-  /** Autre personne que la mienne. */
   from_user?: string;
   from_service?: boolean;
-  /** Envoi (ou copie, D43) à cette personne. */
   to_user?: string;
 }
 
-/** Événement du cœur (WebAssembly), voir crates/ot-wasm/src/core.rs. */
 export type CoreEvent =
   | ({
       type: 'message';
@@ -48,14 +36,12 @@ export type CoreEvent =
       created_at: string;
       kind: 'text' | 'link';
       body: string;
-      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
       to?: string[];
     } & Origin)
   | { type: 'rejected'; msg_id: string; from: string; reason: string }
   | { type: 'group_changed'; epoch: number }
   | { type: 'pairing_completed'; device_id: string; name: string }
   | { type: 'keyring_error'; message: string }
-  /** Fichier annoncé (étape 5) ; sa clé reste dans le WebAssembly. */
   | ({
       type: 'file';
       seq: number;
@@ -66,10 +52,8 @@ export type CoreEvent =
       name: string;
       mime: string;
       size: number;
-      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
       to?: string[];
     } & Origin)
-  /** Code à usage unique (note 0045), relayé par un pont. */
   | ({
       type: 'otp';
       seq: number;
@@ -81,14 +65,10 @@ export type CoreEvent =
       sender_name: string;
       sender_domain: string;
       sender_verified: boolean;
-      /** Fin de validité, en secondes Unix. */
       expires_at: number;
-      /** Destinataires de l'enveloppe ; vide : tous les appareils. */
       to?: string[];
-      /** Règle O2 : copié ou rempli d'office seulement si vrai. */
       auto_fill: boolean;
     } & Origin)
-  // Étape 10 : annuaire et invitation.
   | { type: 'directory_changed' }
   | { type: 'directory_rejected'; user: string; reason: string }
   | { type: 'directory_fork' }
@@ -104,26 +84,21 @@ export type ClientEvent =
   | { type: 'auth_failed'; message: string }
   | { type: 'accepted'; msg_id: string; seq: number }
   | { type: 'send_failed'; msg_id: string; code: ErrorCode; message: string }
-  /** Le relais signale un changement de l'annuaire : le relire. */
   | { type: 'relay_directory_changed' };
 
-/** Sortie du cœur : événements, puis enveloppes à envoyer (JSON). */
 interface CoreOutput {
   events: CoreEvent[];
   sends: unknown[];
 }
 
-/** Ce que le client demande au cœur WebAssembly. */
 export interface CoreApi {
   process(seq: number, envelope: string): string;
 }
 
-/** Signature de la réponse au défi, par le coffre WebAssembly. */
 export interface AuthApi {
   authFrame(nonce: string, deviceId: string): string;
 }
 
-/** État persistant du client : rien de secret (enveloppes déjà chiffrées). */
 export interface ClientStorage {
   loadOutbox(): Promise<string[]>;
   saveOutbox(envelopes: string[]): Promise<void>;
@@ -132,11 +107,8 @@ export interface ClientStorage {
 }
 
 export interface Timing {
-  /** Intervalle des `ping` (20 s : Chrome arrête le service worker après 30 s). */
   pingEvery: number;
-  /** Silence du relais au-delà duquel la connexion est morte. */
   idleTimeout: number;
-  /** Délai maximal de la poignée de main et de l'authentification. */
   handshakeTimeout: number;
   backoffInitial: number;
   backoffMax: number;
@@ -147,12 +119,9 @@ export const DEFAULT_TIMING: Timing = {
   idleTimeout: 75_000,
   handshakeTimeout: 10_000,
   backoffInitial: 500,
-  // Plafond sous les 30 s de vie d'un service worker inactif ; une alarme le
-  // réveille de toute façon s'il a été arrêté pendant l'attente.
   backoffMax: 25_000,
 };
 
-/** Nombre de `msg_id` gardés pour écarter les doublons (comme ot-core). */
 export const SEEN_CAPACITY = 1000;
 
 export interface ClientDeps {
@@ -161,20 +130,10 @@ export interface ClientDeps {
   auth: AuthApi;
   core: CoreApi;
   decodeFrame(text: string): string;
-  /** Chiffre et range les changements du coffre ; appelé avant chaque `ack`. */
   persistVault(): Promise<void>;
   storage: ClientStorage;
-  /** Traite un événement ; un message n'est acquitté qu'une fois traité. */
   onEvent(event: ClientEvent): void | Promise<void>;
-  /**
-   * Après chaque message livré et acquitté (étape 10) : les déroulés que son
-   * traitement a rendus possibles (invitation à certifier, annuaire à relire).
-   */
   afterDeliver?(): void;
-  /**
-   * Délai avant de réessayer après un refus d'authentification ; `null` :
-   * abandonner. Par défaut, le plafond du backoff.
-   */
   authRetryDelay?(): number | null;
   webSocket?(url: string): WebSocket;
   timing?: Partial<Timing>;
@@ -188,13 +147,11 @@ interface PendingRequest<T> {
   reject(error: Error): void;
 }
 
-/** Demande de l'étape 10 envoyée, en attente de sa réponse ou de son refus. */
 interface PendingCall extends PendingRequest<ServerFrame> {
   frame: ClientFrame;
   reference?: string;
 }
 
-/** Délai exponentiel plafonné, avec gigue (entre la moitié et la totalité). */
 export function backoffDelay(attempt: number, initial: number, max: number): number {
   const base = Math.min(initial * 2 ** Math.min(attempt, 16), max);
   return base / 2 + Math.random() * (base / 2);
@@ -210,10 +167,8 @@ export class RelayClient {
   private seen: string[] = [];
   private seenSet = new Set<string>();
   private deviceRequests: PendingRequest<DeviceInfo[]>[] = [];
-  /** Dans l'ordre d'envoi : un refus sans référence va à la plus ancienne. */
   private calls: PendingCall[] = [];
   private loaded?: Promise<void>;
-  /** Traitement en série des trames reçues et des commandes. */
   private chain: Promise<void> = Promise.resolve();
   private timers: {
     retry?: ReturnType<typeof setTimeout>;
@@ -230,19 +185,16 @@ export class RelayClient {
     return this.status === 'online';
   }
 
-  /** Envois pas encore acceptés par le relais. */
   get pendingSends(): number {
     return this.outbox.length;
   }
 
-  /** Se connecte, puis se reconnecte seul jusqu'à `stop`. */
   start(): Promise<void> {
     if (this.status !== 'stopped') return this.load();
     this.status = 'waiting';
     return this.load().then(() => this.connect());
   }
 
-  /** Ferme la connexion ; les demandes en attente échouent. */
   stop(): void {
     this.status = 'stopped';
     this.clearTimers();
@@ -253,7 +205,6 @@ export class RelayClient {
     ws?.close(1000);
   }
 
-  /** Reconnexion immédiate (réveil du service worker, réseau revenu). */
   reconnectNow(): void {
     if (this.status === 'stopped' || this.status === 'online' || this.status === 'connecting') {
       return;
@@ -263,11 +214,6 @@ export class RelayClient {
     this.connect();
   }
 
-  /**
-   * Met une enveloppe chiffrée (JSON) en file : elle est rangée, puis envoyée
-   * maintenant ou à la prochaine connexion. L'acceptation arrive par
-   * l'événement `accepted`.
-   */
   async queue(env: string): Promise<string> {
     await this.load();
     const msgId = (JSON.parse(env) as { msg_id: string }).msg_id;
@@ -279,7 +225,6 @@ export class RelayClient {
     });
   }
 
-  /** Appareils connus du relais (connexion requise). */
   listDevices(): Promise<DeviceInfo[]> {
     if (!this.online) return Promise.reject(new Error('hors ligne'));
     return new Promise((resolve, reject) => {
@@ -288,11 +233,6 @@ export class RelayClient {
     });
   }
 
-  /**
-   * Demande de l'étape 10 (annuaire, journal, administration) : sa réponse,
-   * ou `RelayError` si le relais la refuse. Hors ligne, ou si la connexion
-   * tombe avant la réponse : échec (rien n'est mis en file).
-   */
   call(frame: ClientFrame | string): Promise<ServerFrame> {
     const f = typeof frame === 'string' ? (JSON.parse(frame) as ClientFrame) : frame;
     if (!this.online) return Promise.reject(new Error('hors ligne'));
@@ -335,8 +275,6 @@ export class RelayClient {
     try {
       await this.deps.onEvent(event);
     } catch (e) {
-      // Un échec de l'appli (stockage de l'historique…) ne doit pas bloquer
-      // la session : il est signalé, et le message reste vu.
       this.log(`événement ${event.type} non traité`, e);
     }
   }
@@ -370,10 +308,6 @@ export class RelayClient {
       if (this.ws !== ws) return;
       const reason = ev.reason ? `fermée par le serveur : ${ev.reason}` : 'connexion fermée';
       this.lost(this.authFailed ? 'authentification refusée' : reason);
-    };
-    ws.onerror = () => {
-      // Suivi d'un `close` : rien à faire ici. Le message d'erreur du
-      // navigateur ne dit rien d'utile (et ne doit rien dire).
     };
   }
 
@@ -459,7 +393,6 @@ export class RelayClient {
         this.touch();
         this.timers.ping = setInterval(() => this.sendRaw(encode.ping()), this.timing.pingEvery);
         await this.emit({ type: 'connected', pending: frame.pending });
-        // Reprise : ce qui n'a pas été accepté repart, dans l'ordre.
         for (const out of this.outbox) this.sendRaw(encode.send(out.env));
         return;
       }
@@ -505,8 +438,6 @@ export class RelayClient {
           return;
         }
         const i = frame.ref ? this.outbox.findIndex((o) => o.msgId === frame.ref) : -1;
-        // Une demande : par sa référence, ou sans référence la plus ancienne
-        // de celles qui n'en ont pas (`forbidden`, `quota_exceeded`…).
         const call =
           i >= 0
             ? undefined
@@ -545,8 +476,6 @@ export class RelayClient {
   private async onDeliver(ws: WebSocket, seq: number, env: unknown): Promise<void> {
     const msgId = (env as { msg_id: string }).msg_id;
     if (!this.seenSet.has(msgId)) {
-      // Déchiffré et remis, mis de côté ou rejeté : dans tous les cas
-      // acquitté ensuite, une fois l'état rangé (livraison au moins une fois).
       const out = JSON.parse(this.deps.core.process(seq, JSON.stringify(env))) as CoreOutput;
       await this.deps.persistVault();
       for (const sent of out.sends) {
@@ -554,8 +483,6 @@ export class RelayClient {
         this.outbox.push({ msgId: (sent as { msg_id: string }).msg_id, env: text });
       }
       if (out.sends.length > 0) await this.saveOutbox();
-      // Les destinataires sont en clair dans l'enveloppe (le relais en a
-      // besoin) : ils disent dans quel canal ranger l'élément.
       const to = (env as { to?: string[] }).to ?? [];
       for (const event of out.events) {
         await this.emit(

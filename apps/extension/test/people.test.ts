@@ -1,7 +1,3 @@
-// Étape 10 : l'extension parmi plusieurs personnes, contre un vrai `ot-server`
-// et la CLI `ot` pour les autres. L'extension en appareil de l'admin (racine
-// adoptée, invitation, envois, administration, retrait d'un appareil), puis
-// en invitée. Noms neutres.
 import { IDBFactory } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -21,7 +17,6 @@ function open(): Promise<Engine> {
   });
 }
 
-/** Rejoint le groupe de `phone` par QR inversé. */
 async function pairWith(phone: Cli, engine: Engine, relay: Relay, name: string): Promise<void> {
   const state = await engine.setupOffer(relay.url, name);
   if (state.pending?.kind !== 'offer') throw new Error('offre attendue');
@@ -29,7 +24,6 @@ async function pairWith(phone: Cli, engine: Engine, relay: Relay, name: string):
   await eventually('groupe adopté', () => engine.state().phase === 'ready' || undefined);
 }
 
-/** Premier message reçu par `ot listen --json` de `cli` qui vérifie `pred`. */
 async function received(
   cli: Cli,
   pred: (m: Record<string, unknown>) => boolean,
@@ -69,7 +63,6 @@ describe('extension, appareil de l’admin', () => {
 
   it('adopte la racine publiée par le téléphone et lit l’annuaire', async () => {
     await pairWith(phone, engine, relay, 'alice-chrome');
-    // Lu, puis relu après la déclaration de `users-v1` par l'extension.
     const state = await eventually('annuaire lu', () => {
       const s = engine.state();
       const mine = s.people[0]?.devices.find((d) => d.device_id === s.device?.id);
@@ -117,7 +110,6 @@ describe('extension, appareil de l’admin', () => {
     expect(sent.toUser).toBe(bobUser);
     expect(channelOf(sent, engine.state().device?.id)).toBe(userChannel(bobUser));
 
-    // L'extension n'est pas un appareil par défaut d'Alice : Bob la vise.
     await bob.run('send', '--to-user', 'Alice', '--device', 'alice-chrome', 'merci');
     const reply = await eventually('réponse de Bob', async () =>
       (await engine.history()).find((i) => i.body === 'merci'),
@@ -125,7 +117,6 @@ describe('extension, appareil de l’admin', () => {
     expect(reply.fromUser).toBe(bobUser);
     expect(reply.fromName).toBe('bob-cli');
     expect(inChannel(reply, userChannel(bobUser), engine.state().device?.id)).toBe(true);
-    // Le téléphone d'Alice a sa copie de l'envoi (D43).
     const copy = await received(phone, (m) => m['body'] === 'bonjour Bob');
     expect(copy['from_name']).toBe('alice-chrome');
   }, 90_000);
@@ -162,7 +153,6 @@ describe('extension, appareil de l’admin', () => {
       return alice && !alice.devices.some((d) => d.device_id === phoneId) ? true : undefined;
     });
     expect(engine.state().alerts.filter((a) => a.kind !== 'keys_changed')).toEqual([]);
-    // Bob relit l'annuaire : le certificat signé par l'extension tient.
     const seen = await bob.run('users');
     expect(seen.stdout).toContain('Alice (admin)');
     expect(seen.stdout).toContain('alice-chrome');

@@ -1,20 +1,9 @@
-// Transferts de fichiers (étape 5, notes 0026 et 0027) : dépôt et retrait par
-// morceaux chiffrés, en parallèle, avec reprise. Même logique que
-// `ot-core` (transfer.rs) ; clés, chiffrement et signatures restent dans le
-// WebAssembly (`Core`, `Vault`), le TypeScript ne fait que le transport.
-//
-// Sans API Chrome : la source est fournie par l'appelant (OPFS dans
-// l'extension, mémoire dans les tests). À la réception, le moteur retire les
-// morceaux un par un (`chunk`) pour servir le fichier en flux (note 0029).
-
 import { httpBase } from '../shared/origins';
 import { Hasher, fileGeometry } from '../wasm/ot_wasm.js';
 
-/** Morceaux en clair de 1 Mio, comme les clients Rust. */
 export const CHUNK_SIZE = 1 << 20;
 const BLOBS_PATH = '/v1/blobs';
 
-/** Fichier à envoyer, lu par morceaux. */
 export interface ByteSource {
   readonly size: number;
   read(offset: number, length: number): Promise<Uint8Array>;
@@ -31,7 +20,6 @@ export interface Geometry {
 interface Upload extends Geometry {
   blob_id: string;
   expires_at: string;
-  /** Cible du dépôt : une reprise n'a lieu que vers la même. */
   to: string[];
   to_user?: string;
 }
@@ -42,7 +30,6 @@ function sameTarget(up: Upload, to: string[], toUser: string | undefined): boole
   return up.to_user === toUser && a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
-/** Ce que le transfert demande au cœur WebAssembly (`Core`). */
 export interface TransferCore {
   upload(sourceId: string, size: number): string | undefined;
   startUpload(
@@ -67,9 +54,7 @@ export interface TransferTiming {
   chunkSize: number;
   retryInitial: number;
   retryMax: number;
-  /** Sans aucun progrès pendant ce délai, le transfert échoue. */
   stallTimeout: number;
-  /** Durée maximale d'une requête. */
   requestTimeout: number;
 }
 
@@ -85,10 +70,8 @@ const DEFAULT_TIMING: TransferTiming = {
 export interface TransferDeps {
   serverUrl: string;
   deviceId: string;
-  /** Signature des requêtes (`Vault.signHttp`) : en-têtes en JSON. */
   sign(method: string, path: string, body: Uint8Array, nowMs: number): string;
   core: TransferCore;
-  /** Range le coffre (clé d'un nouveau dépôt, offre oubliée). */
   persistVault(): Promise<void>;
   fetch?: typeof fetch;
   timing?: Partial<TransferTiming>;
@@ -96,12 +79,10 @@ export interface TransferDeps {
 
 export type Progress = (done: number, total: number) => void;
 
-/** Corps de `POST /v1/blobs` (format figé par le golden `http_create_blob`). */
 export function createBlobBody(g: Geometry, to: string[]): Record<string, unknown> {
   return { size: g.sealed_size, chunk_size: g.sealed_chunk_size, chunks: g.chunks, to };
 }
 
-/** Le fichier n'est plus sur le relais (expiré, annulé). */
 export class ExpiredError extends Error {
   constructor() {
     super('fichier expiré : il n’est plus sur le relais');
@@ -115,7 +96,6 @@ function delay(attempt: number, t: TransferTiming): number {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Dernier progrès d'un transfert, partagé par ses tâches. */
 class Stall {
   private last = Date.now();
   touch(): void {
@@ -126,7 +106,6 @@ class Stall {
   }
 }
 
-/** Progression en octets de clair, appelée au plus tous les 250 ms (et à la fin). */
 class Reporter {
   private lastAt = 0;
   constructor(
@@ -156,10 +135,6 @@ export class Transfers {
     this.base = httpBase(deps.serverUrl);
   }
 
-  /**
-   * Requête signée. Les erreurs passagères (réseau, 5xx) sont réessayées
-   * tant que le transfert a progressé depuis moins de `stallTimeout`.
-   */
   private async call(
     method: string,
     path: string,
@@ -187,12 +162,7 @@ export class Transfers {
           return bytes;
         }
         if (res.status === 404) throw new ExpiredError();
-        let message = `erreur HTTP ${res.status}`;
-        try {
-          message = (JSON.parse(new TextDecoder().decode(bytes)) as { message: string }).message;
-        } catch {
-          // Corps non JSON : le code HTTP suffit.
-        }
+        const message = relayMessage(bytes) ?? `erreur HTTP ${res.status}`;
         if (res.status < 500) throw new Error(`refusé par le relais : ${message}`);
         failure = message;
       } catch (e) {
@@ -214,13 +184,6 @@ export class Transfers {
     return JSON.parse(new TextDecoder().decode(res)) as T;
   }
 
-  /**
-   * Dépose le fichier (en reprenant un dépôt interrompu de la même source,
-   * vers la même cible) et renvoie l'annonce chiffrée à envoyer, avec
-   * l'identifiant du fichier. Vers une autre personne (`toUser`), `to` est la
-   * résolution de `recipients`. Appeler `uploadSent` une fois l'annonce
-   * acceptée par le relais.
-   */
   async upload(
     file: { sourceId: string; name: string; mime: string; to: string[]; toUser?: string },
     source: ByteSource,
@@ -231,7 +194,6 @@ export class Transfers {
     const existing = core.upload(file.sourceId, source.size);
     let missing: number[] | undefined;
     const previous = existing ? (JSON.parse(existing) as Upload) : undefined;
-    // Vers une autre cible : un nouveau dépôt (l'ancien expire seul).
     if (previous && sameTarget(previous, file.to, file.toUser)) {
       up = previous;
       try {
@@ -294,13 +256,11 @@ export class Transfers {
     return { env: core.sealFile(file.sourceId), blobId: geo.blob_id };
   }
 
-  /** L'annonce est acceptée : oublier le dépôt. */
   async uploadSent(sourceId: string): Promise<void> {
     this.deps.core.forgetUpload(sourceId);
     await this.deps.persistVault();
   }
 
-  /** Abandonne un dépôt : libère la place sur le relais. */
   async cancelUpload(sourceId: string, size: number): Promise<void> {
     const existing = this.deps.core.upload(sourceId, size);
     if (existing) {
@@ -314,27 +274,20 @@ export class Transfers {
     await this.uploadSent(sourceId);
   }
 
-  /**
-   * Retire le morceau chiffré `index` d'un fichier annoncé (nouvel essai des
-   * erreurs passagères). `ExpiredError` s'il n'est plus sur le relais.
-   */
   async chunk(blobId: string, index: number): Promise<Uint8Array> {
     const path = `${BLOBS_PATH}/${blobId}/chunks/${index}`;
     return this.call('GET', path, new Uint8Array(), new Stall());
   }
 
-  /** Tout est retiré et vérifié : le relais peut effacer le fichier. */
   async done(blobId: string): Promise<void> {
     try {
       await this.call('POST', `${BLOBS_PATH}/${blobId}/done`, new Uint8Array(), new Stall());
     } catch (e) {
-      // Déjà effacé : rien à faire ; sinon il expirera de lui-même.
       if (!(e instanceof ExpiredError)) throw e;
     }
   }
 }
 
-/** SHA-256 d'une source, lue dans l'ordre. */
 async function hashSource(source: ByteSource, chunkSize: number): Promise<Uint8Array> {
   const hasher = new Hasher();
   try {
@@ -351,9 +304,16 @@ async function hashSource(source: ByteSource, chunkSize: number): Promise<Uint8A
   }
 }
 
-/** Attend toutes les tâches ; la première erreur l'emporte. */
 async function allOrFirstError(tasks: Promise<void>[]): Promise<void> {
   const results = await Promise.allSettled(tasks);
   const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failed) throw failed.reason;
+}
+
+function relayMessage(bytes: Uint8Array): string | undefined {
+  try {
+    return (JSON.parse(new TextDecoder().decode(bytes)) as { message?: string }).message;
+  } catch {
+    return undefined;
+  }
 }

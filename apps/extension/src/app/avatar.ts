@@ -4,11 +4,6 @@ import { MarkComponent } from './brand';
 import type { DeviceKind } from './devices';
 import { IconComponent } from './icon';
 
-/**
- * Avatar rond d'un appareil : pictogramme de son type sur sa couleur (note
- * 0031) ; « Tous mes appareils » : le signe sur la tuile de l'icône ; une
- * personne (étape 10) : ses initiales sur sa couleur.
- */
 @Component({
   selector: 'app-avatar',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -48,10 +43,8 @@ export class AvatarComponent {
   readonly kind = input.required<DeviceKind>();
   readonly color = input.required<string>();
   readonly size = input(44);
-  /** Initiales d'une personne (`kind` = `person`). */
   readonly initials = input('');
   protected readonly textSize = computed(() => Math.round(this.size() * 0.38));
-  /** Pictogramme d'un appareil (`group` et `person` n'en ont pas). */
   protected readonly iconName = computed(() => {
     const k = this.kind();
     return k === 'group' || k === 'person' ? 'laptop' : k;

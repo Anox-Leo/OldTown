@@ -1,5 +1,3 @@
-// Tests du service worker (client du protocole, stockage, WebAssembly), sous
-// Node. Les tests de l'interface Angular passent par `ng test`.
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({

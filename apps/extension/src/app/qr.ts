@@ -2,7 +2,6 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 
 import type { QrView } from '../shared/api';
 
-/** QR code dessiné en SVG (modules calculés par le WebAssembly). */
 @Component({
   selector: 'app-qr',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -41,7 +40,6 @@ export class QrComponent {
     return `-4 -4 ${s + 8} ${s + 8}`;
   });
 
-  /** Un rectangle d'un module par case noire, en un seul chemin. */
   protected readonly path = computed(() => {
     const { size, modules } = this.qr();
     let d = '';

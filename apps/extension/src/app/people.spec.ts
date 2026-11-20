@@ -1,5 +1,3 @@
-// Règles des conversations de l'étape 10 (§ 7 de la doc d'implémentation) :
-// mêmes cas à recopier dans `ConversationsTest.kt` (PR 6). Noms neutres.
 import {
   type Item,
   type MemberView,

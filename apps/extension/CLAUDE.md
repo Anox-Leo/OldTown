@@ -135,6 +135,14 @@ l'interface.
   `OT_BIN_DIR`), puis `ng test`
   (interface). `npm run lint` = ESLint, Prettier et `tsc` du service worker
   et des tests.
+- **Pas de commentaires** (note 0066) : le pourquoi va dans une note de
+  `docs/decisions/`, le quoi dans les noms et les tests, un raccourci dans
+  une issue. La règle `local/no-comments` (`eslint-rules/no-comments.js`)
+  ne laisse passer que les directives (`@ts-check`, `eslint-disable`,
+  `@vitest-environment`…). Cliquet : `eslint-suppressions.json` liste ce
+  qui reste ; un commentaire nouveau fait échouer `npm run lint`, et un
+  commentaire retiré se reporte avec `npm run lint:prune`. Pour trier ce
+  qui reste : `/delete-comment`.
 - UI en français. **Identité visuelle** (note 0059) : couleurs, arrondis,
   tailles et polices viennent de `src/tokens.css` et `src/shared/tokens.ts`
   (avatars, badge), **générés** depuis `design/tokens.json` par

@@ -3,9 +3,9 @@ const eslint = require('@eslint/js');
 const { defineConfig } = require('eslint/config');
 const tseslint = require('typescript-eslint');
 const angular = require('angular-eslint');
+const noComments = require('./eslint-rules/no-comments.js');
 
 module.exports = defineConfig([
-  // Liaisons générées par wasm-bindgen et sorties de build.
   { ignores: ['src/wasm/**', 'dist/**'] },
   {
     files: ['**/*.ts'],
@@ -34,6 +34,12 @@ module.exports = defineConfig([
         },
       ],
     },
+  },
+  {
+    files: ['**/*.{js,cjs,mjs,ts,mts}'],
+    languageOptions: { parser: tseslint.parser },
+    plugins: { local: { rules: { 'no-comments': noComments } } },
+    rules: { 'local/no-comments': 'error' },
   },
   {
     files: ['**/*.html'],

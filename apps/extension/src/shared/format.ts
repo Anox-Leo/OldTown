@@ -1,6 +1,3 @@
-// Mises en forme partagées par la popup, les pages et le service worker.
-
-/** Taille lisible : `1,5 Mo`. */
 export function humanSize(bytes: number): string {
   const units = ['o', 'Ko', 'Mo', 'Go'];
   let v = bytes;

@@ -17,7 +17,6 @@ import { GroupComponent } from './group';
 import { PeopleSettingsComponent } from './people-settings';
 import { connectionStatus } from './status';
 
-/** Page de réglages : appareil, relais, état, raccourci, oubli. */
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -202,7 +201,6 @@ export class SettingsComponent {
   protected readonly status = computed(() => connectionStatus(this.state()));
   protected readonly devices = signal<RelayDevice[]>([]);
   protected readonly confirmForget = signal(false);
-  /** Accès aux pages HTTPS accordé (remplissage des codes, note 0045). */
   protected readonly otpAccess = signal(false);
   protected serverUrl = '';
   protected readonly themes: readonly { value: Theme; label: string }[] = [
@@ -211,13 +209,8 @@ export class SettingsComponent {
     { value: 'light', label: 'Parchemin (clair)' },
   ];
   protected readonly theme = signal<Theme>(readTheme());
-  /**
-   * En-tête : le logotype a sa ligne de base à `LOGO_BASELINE` de sa hauteur ;
-   * aligné par le bas sur celle du titre, il descend du reste.
-   */
   protected readonly logoSize = 32;
   protected readonly logoShift = Math.round((1 - LOGO_BASELINE) * this.logoSize * 10) / 10;
-  /** DM Sans : capitales à 0,7 em, comme celles du nom. */
   protected readonly titleSize = Math.round((LOGO_CAP_HEIGHT * this.logoSize) / 0.7);
 
   constructor() {
@@ -232,7 +225,6 @@ export class SettingsComponent {
     this.otpAccess.set(await chrome.permissions.contains({ origins: OTP_ORIGINS }));
   }
 
-  /** Demandée sur le clic, depuis cette page (note 0027). */
   protected async grantOtp(): Promise<void> {
     this.otpAccess.set(await chrome.permissions.request({ origins: OTP_ORIGINS }));
   }

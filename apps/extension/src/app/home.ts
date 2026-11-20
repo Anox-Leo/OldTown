@@ -24,17 +24,8 @@ import { IconComponent } from './icon';
 import { RailComponent } from './rail';
 import { connectionStatus, shortTime } from './status';
 
-/** Présence relue auprès du relais tant que la popup est ouverte. */
 const PRESENCE_EVERY_MS = 15_000;
 
-/**
- * Accueil de la popup (note 0031) : la liste des conversations, « Tous »
- * puis une ligne par appareil, avec le dernier message. Un clic ouvre la
- * conversation, qui devient aussi le destinataire des raccourcis et menus.
- * Étape 10 : la barre latérale des personnes à gauche (I2) ; mes appareils
- * restent la vue d'ouverture (I1). Une personne choisie : elle (ses
- * appareils par défaut), puis chacun de ses appareils joignables.
- */
 @Component({
   selector: 'app-home',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -252,13 +243,11 @@ export class HomeComponent {
   protected readonly state = computed(() => this.bg.state() as StateView);
   protected readonly status = computed(() => connectionStatus(this.state()));
   private readonly online = computed(() => this.state().connection === 'online');
-  /** Personne choisie dans la barre latérale ; `undefined` : mes appareils (I1). */
   protected readonly personId = signal<string | undefined>(undefined);
   protected readonly person = computed(() => {
     const id = this.personId();
     return id ? this.state().people.find((p) => p.user === id) : undefined;
   });
-  /** Barre latérale : dès qu'il y a une autre personne, ou pour l'admin (inviter). */
   protected readonly showRail = computed(() => {
     const s = this.state();
     return !!s.me && (s.admin || s.people.some((p) => p.user !== s.me));
@@ -270,19 +259,14 @@ export class HomeComponent {
     const mine = s.people.find((x) => x.user === s.me)?.devices ?? [];
     return conversations(s.group?.members ?? [], this.bg.items(), s.device?.id, mine);
   });
-  /** Conversation ouverte ; `undefined` : la liste. */
   protected readonly open = signal<{ channel: string } | undefined>(undefined);
-  /** Appareils en ligne d'après le relais ; `undefined` tant qu'on ne sait pas. */
   protected readonly presence = signal<ReadonlyMap<string, boolean> | undefined>(undefined);
 
   constructor() {
-    // Popup ouverte pour un élément reçu (note 0032) : sa conversation
-    // directement, « Tous » si l'appareil n'est plus dans le groupe.
     effect(() => {
       const channel = this.bg.openChat();
       if (channel === undefined) return;
       untracked(() => {
-        // D'une autre personne : sa liste d'abord, puis la conversation.
         this.personId.set(parseChannel(channel).user);
         const list = this.list();
         const c = list.find((x) => x.id === channel) ?? list[0];
@@ -290,7 +274,6 @@ export class HomeComponent {
         this.bg.openChat.set(undefined);
       });
     });
-    // Présence : à la connexion, puis régulièrement ; inconnue hors ligne.
     effect((onCleanup) => {
       if (!this.online()) {
         this.presence.set(undefined);
@@ -307,12 +290,10 @@ export class HomeComponent {
       const devices = await this.bg.request<RelayDevice[]>({ type: 'devices' });
       this.presence.set(new Map(devices.map((d) => [d.id, d.online])));
     } catch {
-      // Relais injoignable entre deux : l'état de la connexion le dira.
       this.presence.set(undefined);
     }
   }
 
-  /** Ouvre la conversation ; son canal devient le destinataire des raccourcis et des menus. */
   protected select(c: Conversation): void {
     this.open.set({ channel: c.id });
     void this.bg.run({ type: 'set-recipient', to: c.id });
@@ -327,7 +308,6 @@ export class HomeComponent {
     return initials(name);
   }
 
-  /** En ligne : d'après le relais pour mes appareils, l'annuaire pour une autre personne. */
   protected isOnline(c: Conversation): boolean {
     return c.online ?? this.presence()?.get(c.id) ?? false;
   }

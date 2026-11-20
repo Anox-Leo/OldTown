@@ -16,34 +16,20 @@ import { LogoComponent } from './brand';
 import { QrComponent } from './qr';
 import { shortTime } from './status';
 
-/** Lien entre deux personnes, pour une case de la grille (D41). */
 export type Link = 'both' | 'none' | 'one-way';
 
-/**
- * Case de la grille du réseau : les liens sont symétriques entre personnes
- * (D41), une case par paire ; un lien à sens unique (posé par la CLI) est
- * signalé, et un clic le rend symétrique.
- */
 export function linkBetween(users: readonly AdminUser[], a: string, b: string): Link {
   const ab = users.find((u) => u.id === a)?.links.includes(b) ?? false;
   const ba = users.find((u) => u.id === b)?.links.includes(a) ?? false;
   return ab && ba ? 'both' : ab || ba ? 'one-way' : 'none';
 }
 
-/** Paires de la moitié supérieure de la grille : chaque paire une seule fois. */
 export function gridPairs<T>(rows: readonly T[]): [T, T][] {
   const pairs: [T, T][] = [];
   rows.forEach((a, i) => rows.slice(i + 1).forEach((b) => pairs.push([a, b])));
   return pairs;
 }
 
-/**
- * Page d'administration (T12, `admin.html`), réservée à l'admin : personnes
- * (appareils, dernière activité, renommer, réinviter, révoquer), inviter
- * (QR, code, lien à copier, attente de la personne), réseau en grille
- * personnes × personnes (une case par paire, D41), services (vers qui ils
- * écrivent, à sens unique).
- */
 @Component({
   selector: 'app-admin',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -314,7 +300,6 @@ export class AdminComponent {
   protected name = '';
   protected newName = '';
 
-  /** Personnes actives ou en attente (ni services ni révoquées), l'admin en tête. */
   protected readonly persons = computed(() =>
     this.users()
       .filter((u) => u.role !== 'service' && u.state !== 'revoked')
@@ -325,7 +310,6 @@ export class AdminComponent {
     this.users().filter((u) => u.role === 'service' && u.state !== 'revoked'),
   );
   protected readonly pairs = computed(() => gridPairs(this.people()));
-  /** La personne invitée vient de rejoindre. */
   protected readonly joined = computed(() => {
     const j = this.bg.joined();
     return j && j.user === this.invitation()?.user ? j : undefined;
@@ -335,7 +319,6 @@ export class AdminComponent {
 
   constructor() {
     void this.load();
-    // L'admin est lié à la personne qu'il invite, par défaut.
     effect(() => {
       const me = this.bg.state()?.me;
       if (me && !untracked(() => this.linksTouched)) this.links.set(new Set([me]));
@@ -429,7 +412,6 @@ export class AdminComponent {
     this.revoking.set(undefined);
   }
 
-  /** Une case de la grille : les deux sens à la fois (D41). */
   protected async setPair(a: string, b: string, allowed: boolean): Promise<void> {
     await this.act({ type: 'link-set', from: a, to: b, allowed });
     await this.act({ type: 'link-set', from: b, to: a, allowed });

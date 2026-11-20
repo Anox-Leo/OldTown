@@ -1,4 +1,3 @@
-/* Interface : popup et réglages (Angular). */
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {

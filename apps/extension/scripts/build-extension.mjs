@@ -1,7 +1,3 @@
-// Assemble l'extension non empaquetée dans dist/extension, après `ng build`
-// (popup et réglages) : service worker, document offscreen et page d'envoi
-// (esbuild),
-// WebAssembly, manifeste.
 import { build } from 'esbuild';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -29,14 +25,11 @@ await build({
 mkdirSync(path.join(dist, 'wasm'), { recursive: true });
 copyFileSync(path.join(app, 'src/wasm/ot_wasm_bg.wasm'), path.join(dist, 'wasm/ot_wasm_bg.wasm'));
 copyFileSync(path.join(app, 'src/offscreen/offscreen.html'), path.join(dist, 'offscreen.html'));
-// Page d'envoi et de permissions (étape 5), sur les jetons de design.
 for (const page of ['send.html', 'page.css']) {
   copyFileSync(path.join(app, 'src/pages', page), path.join(dist, page));
 }
 copyFileSync(path.join(app, 'src/tokens.css'), path.join(dist, 'tokens.css'));
 copyFileSync(path.join(app, 'manifest.json'), path.join(dist, 'manifest.json'));
-// Les réglages et l'administration sont la même appli Angular, ouverte sous
-// un autre nom.
 copyFileSync(path.join(dist, 'index.html'), path.join(dist, 'options.html'));
 copyFileSync(path.join(dist, 'index.html'), path.join(dist, 'admin.html'));
 console.log(`extension prête : ${path.relative(process.cwd(), dist)}`);

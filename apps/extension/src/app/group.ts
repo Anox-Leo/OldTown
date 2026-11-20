@@ -3,7 +3,6 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import type { MemberView, StateView } from '../shared/api';
 import { BackgroundService } from './background.service';
 
-/** Section « Groupe » des réglages : membres et rotation de la clé. */
 @Component({
   selector: 'app-group',
   changeDetection: ChangeDetectionStrategy.OnPush,

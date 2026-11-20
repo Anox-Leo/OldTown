@@ -31,14 +31,6 @@ import { ALL_NAME, avatarColor, deviceKind, initials } from './devices';
 import { IconComponent } from './icon';
 import { connectionStatus, shortTime } from './status';
 
-/**
- * Conversation d'un canal (notes 0030 et 0031) : « Tous » ou un appareil du
- * groupe ; étape 10 : une autre personne (`user:<id>`, ses appareils par
- * défaut) ou un de ses appareils, avec le nom de l'appareil sous chaque
- * bulle reçue. Les messages envoyés d'ici sont à droite, les reçus à
- * gauche ; la zone d'envoi, en bas, envoie dans ce canal. La flèche revient
- * à la liste.
- */
 @Component({
   selector: 'app-chat',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -442,9 +434,7 @@ export class ChatComponent {
   protected readonly bg = inject(BackgroundService);
   protected readonly state = computed(() => this.bg.state() as StateView);
   protected readonly status = computed(() => connectionStatus(this.state()));
-  /** Canal ouvert : `''` pour « Tous », sinon l'identifiant d'un appareil. */
   readonly channel = input.required<string>();
-  /** Appareils en ligne d'après le relais ; `undefined` : inconnu (hors ligne ici). */
   readonly presence = input<ReadonlyMap<string, boolean>>();
   readonly back = output();
 
@@ -455,7 +445,6 @@ export class ChatComponent {
   protected readonly member = computed(() =>
     this.others().find((m) => m.device_id === this.channel()),
   );
-  /** Autre personne du canal (étape 10), et l'appareil visé s'il y en a un. */
   protected readonly person = computed(() => {
     const user = this.target().user;
     return user ? this.state().people.find((p) => p.user === user) : undefined;
@@ -488,7 +477,6 @@ export class ChatComponent {
     return avatarColor(t.user ? (t.device ?? t.user) : this.channel());
   });
   protected readonly avatarInitials = computed(() => initials(this.person()?.name ?? ''));
-  /** Sous le nom : « en ligne » ou « hors ligne » ; pour « Tous », combien sont en ligne. */
   protected readonly subtitle = computed(() => {
     const p = this.person();
     if (p) {
@@ -506,7 +494,6 @@ export class ChatComponent {
     const n = this.others().filter((o) => presence.get(o.device_id)).length;
     return { online: n > 0, text: n ? `${n} en ligne` : 'aucun appareil en ligne' };
   });
-  /** Messages du canal, du plus ancien au plus récent. */
   protected readonly visible = computed(() => {
     const me = this.state().device?.id;
     return this.bg
@@ -514,7 +501,6 @@ export class ChatComponent {
       .filter((i) => inChannel(i, this.channel(), me))
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   });
-  /** Fichiers en cours d'envoi, en bas de la conversation. */
   protected readonly uploads = computed(() =>
     this.state().transfers.filter((t) => t.direction === 'up'),
   );
@@ -524,22 +510,18 @@ export class ChatComponent {
   protected readonly busy = signal(false);
   protected readonly notice = signal<string | undefined>(undefined);
   protected readonly copied = signal<string | undefined>(undefined);
-  /** Texte déplié dans la conversation. */
   protected readonly expanded = signal<string | undefined>(undefined);
   protected text = '';
 
   private readonly list = viewChild<ElementRef<HTMLElement>>('list');
 
   constructor() {
-    // Conversation d'une personne ouverte, ou un élément y arrive : lu.
     effect(() => {
       const channel = this.channel();
       const n = this.visible().length;
       if (!this.target().user || n < 0) return;
       untracked(() => void this.bg.request({ type: 'mark-read', channel }).catch(() => undefined));
     });
-    // Le dernier message en vue, à l'ouverture, au changement de canal et à
-    // chaque nouveau message.
     afterRenderEffect(() => {
       this.visible();
       this.uploads();
@@ -560,31 +542,20 @@ export class ChatComponent {
     return t.total ? Math.floor((t.done * 100) / t.total) : 100;
   }
 
-  /** Copie en cours d'un fichier reçu, pour la barre fine de la bulle. */
   protected progress(item: Item): TransferView | undefined {
     return this.state().transfers.find((t) => t.id === item.msgId && !t.error);
   }
 
-  /** Lien de téléchargement d'un fichier reçu, servi par le service worker (note 0029). */
   protected downloadPath(f: FileView): string {
     return filePath(f.blobId, f.name, true).slice(1);
   }
 
-  /**
-   * Icône de téléchargement : téléchargement natif du navigateur, toujours
-   * disponible (l'annuler ne change rien à l'élément). C'est une navigation
-   * dans un nouvel onglet, que le service worker sert en `attachment` et que
-   * le navigateur referme : un lien `download` irait chercher l'adresse sans
-   * passer par le service worker, et échouerait. Sans accès au relais et
-   * sans copie, la fenêtre de permission d'abord.
-   */
   protected onDownload(event: Event, f: FileView): void {
     if (this.state().relayAccess || f.cached) return;
     event.preventDefault();
     void this.grantRelay();
   }
 
-  /** Un fichier envoyé d'ici n'a pas de copie à ouvrir ; tout le reste s'ouvre. */
   protected clickable(item: Item): boolean {
     return !(item.file && item.outgoing);
   }
@@ -595,11 +566,6 @@ export class ChatComponent {
     return this.isLink(item) ? 'Ouvrir le lien' : 'Afficher en entier';
   }
 
-  /**
-   * Clic sur une bulle : un fichier reçu que le navigateur sait afficher
-   * s'ouvre dans un onglet, un autre se télécharge ; un lien s'ouvre ; un
-   * texte se déplie.
-   */
   protected async activate(item: Item): Promise<void> {
     const f = item.file;
     if (!f) {
@@ -616,7 +582,6 @@ export class ChatComponent {
       await chrome.tabs.create({ url: chrome.runtime.getURL(filePath(f.blobId, f.name).slice(1)) });
       return;
     }
-    // Navigation (voir `onDownload`), pas un lien `download`.
     const a = document.createElement('a');
     a.href = this.downloadPath(f);
     a.target = '_blank';
@@ -624,11 +589,6 @@ export class ChatComponent {
     a.click();
   }
 
-  /**
-   * Trombone (note 0029) : le sélecteur de fichiers de l'OS, directement ;
-   * le fichier part dans le canal ouvert. Sans accès au relais, la fenêtre
-   * de permission d'abord (une demande depuis la popup peut la fermer).
-   */
   protected async openSendFile(picker: HTMLInputElement): Promise<void> {
     if (!this.state().relayAccess) {
       await this.grantRelay();
@@ -638,11 +598,6 @@ export class ChatComponent {
     picker.click();
   }
 
-  /**
-   * Copie les fichiers choisis dans l'OPFS (le service worker ne reçoit pas
-   * de `File` par message), puis confie l'envoi au service worker sans
-   * l'attendre : il continue si la popup se ferme.
-   */
   protected async sendPicked(picker: HTMLInputElement): Promise<void> {
     const files = [...(picker.files ?? [])];
     if (files.length === 0) return;
@@ -676,7 +631,6 @@ export class ChatComponent {
     }
   }
 
-  /** Fenêtre de permission (un clic y est nécessaire ; la popup se fermerait). */
   protected async grantRelay(): Promise<void> {
     await chrome.windows.create({
       url: 'send.html?grant=relay',
@@ -690,7 +644,6 @@ export class ChatComponent {
     return item.kind === 'link' && /^https?:\/\//i.test(item.body);
   }
 
-  /** Entrée envoie, Maj+Entrée va à la ligne (et rien pendant une composition IME). */
   protected onKey(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
@@ -713,7 +666,6 @@ export class ChatComponent {
     this.bg.error.set(undefined);
     let text: string;
     try {
-      // Lecture seulement à ce clic (permission clipboardRead, note 0023).
       text = await navigator.clipboard.readText();
     } catch {
       this.bg.error.set('Presse-papiers illisible.');
@@ -729,7 +681,6 @@ export class ChatComponent {
     if (sent) this.notice.set(this.offlineNotice());
   }
 
-  /** Hors ligne, un mot pour dire que l'envoi partira au retour de la connexion. */
   private offlineNotice(): string | undefined {
     return this.state().connection === 'online'
       ? undefined
