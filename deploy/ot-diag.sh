@@ -9,12 +9,15 @@
 #   ot-diag.sh preview   affiche le rapport sans l'envoyer
 #
 # Envoi par `ot send` sous l'identité dédiée (OT_HOME), à OT_DIAG_TO (noms de
-# membres séparés par des espaces ; vide : tous les autres membres).
+# membres séparés par des espaces ; vide : tous les autres membres), ou, pour
+# un appareil de service (`ot pair join --qr --service`), à OT_DIAG_TO_USER
+# (personnes séparées par des espaces, un envoi chacune, `ot send --to-user`).
 set -eu
 
 STATE=${OT_DIAG_STATE:-${STATE_DIRECTORY:-/var/lib/ot-diag}}
 SYSFS=${OT_DIAG_SYSFS:-/sys/class/power_supply}
 TO=${OT_DIAG_TO:-}
+TO_USER=${OT_DIAG_TO_USER:-}
 HOURS=${OT_DIAG_WINDOW_HOURS:-12}
 DEBOUNCE=${OT_DIAG_DEBOUNCE:-30}
 MIN_INTERVAL=${OT_DIAG_MIN_INTERVAL:-600}
@@ -128,6 +131,18 @@ build_report() {
 
 send() {
     message=$1
+    if [ -n "$TO_USER" ]; then
+        if [ -n "$TO" ]; then
+            echo "OT_DIAG_TO (appareils de mon groupe) et OT_DIAG_TO_USER (personnes) ne se combinent pas" >&2
+            return 2
+        fi
+        # Une personne injoignable n'empêche pas l'envoi aux suivantes.
+        status=0
+        for person in $TO_USER; do
+            printf '%s\n' "$message" | ot send --to-user "$person" || status=$?
+        done
+        return "$status"
+    fi
     set --
     for name in $TO; do set -- "$@" --to "$name"; done
     printf '%s\n' "$message" | ot send "$@"
