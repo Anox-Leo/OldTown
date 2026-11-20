@@ -27,6 +27,8 @@ mod people;
 pub mod roster;
 mod secure;
 #[cfg(feature = "net")]
+mod services;
+#[cfg(feature = "net")]
 mod tls;
 #[cfg(feature = "net")]
 mod transfer;
@@ -60,6 +62,8 @@ pub use secure::{
     DIRECTORY_MAX_AGE, Effect, GroupError, GroupInfo, MemberInfo, NextEntry, OwnEntry, Publish,
     Secure, ensure_exchange_key, group_info, init_group,
 };
+#[cfg(feature = "net")]
+pub use services::ServiceAdded;
 #[cfg(feature = "net")]
 pub use tls::TlsRoots;
 #[cfg(feature = "net")]

@@ -270,6 +270,16 @@ pub struct PersonInvite {
     pub expires_at_ms: i64,
 }
 
+/// Appareil de service ajouté par l'admin (`add_service_device`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServiceAdded {
+    pub user_id: String,
+    pub device_id: String,
+    pub device_name: String,
+    /// Le service vient d'être créé (premier appareil).
+    pub created: bool,
+}
+
 /// Appareil d'une personne, vu par l'admin (`users`).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AdminDeviceItem {

@@ -33,6 +33,10 @@ use crate::keyring::{
 use crate::roster::{self, RosterError};
 use crate::types::{ClientError, Event, Origin, Received, ReceivedOtp};
 
+mod service;
+#[cfg(feature = "net")]
+pub(crate) use service::service_member;
+
 /// État du groupe, vu de cet appareil (pour l'affichage).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupInfo {
@@ -231,6 +235,8 @@ pub struct Secure {
     invites: Vec<InviteRecord>,
     /// Invitation rachetée par cet appareil (invité), rangée dans le keyring.
     pending_invite: Option<PendingInvite>,
+    /// Appareil de service : bienvenue reçue, à confirmer par l'annuaire.
+    service_join: Option<service::ServiceJoin>,
 }
 
 /// Ce qu'une entrée de mon journal doit changer (§ 4.2, note 0056).
@@ -323,6 +329,7 @@ impl Secure {
             people_at: None,
             invites: Vec::new(),
             pending_invite: None,
+            service_join: None,
         };
         secure.invites = secure.keyring.load_invites().unwrap_or_else(|e| {
             events.push(Event::KeyringError { message: e.0 });
@@ -746,7 +753,7 @@ impl Secure {
 
     /// Bienvenue reçue : à confirmer par une lecture de l'annuaire.
     pub fn awaits_directory(&self) -> bool {
-        self.pending_invite.as_ref().is_some_and(|p| p.welcome.is_some())
+        self.pending_invite.as_ref().is_some_and(|p| p.welcome.is_some()) || self.awaits_service()
     }
 
     /// Bienvenue de l'admin : ouverte sous `S`, signée par l'appareil qui a
@@ -1059,6 +1066,7 @@ impl Secure {
             // Des expéditeurs `0x05` inconnus le sont peut-être plus.
             self.retry_quarantine(now, &mut fx);
             self.finish_invite(&mut fx);
+            self.finish_service(&mut fx);
         }
         let fork = self.roster.as_ref().is_some_and(|r| self.directory.is_fork(me, r));
         if fork && !self.fork {
@@ -1539,7 +1547,12 @@ impl Secure {
                     return Err("appairage par QR inconnu ou terminé".into());
                 };
                 let opened = open(env, OpenKey::PairQr(&self.exchange, secret))?;
-                self.adopt_welcome(env, opened, now, fx)
+                match opened.body()? {
+                    body @ Body::ServiceWelcome { .. } => {
+                        self.on_service_welcome(env, opened, body)
+                    }
+                    _ => self.adopt_welcome(env, opened, now, fx),
+                }
             }
             // Étape 10 : d'une autre personne (annuaire vérifié), ou d'un de
             // mes appareils (copie d'un envoi, D43). Expéditeur inconnu :

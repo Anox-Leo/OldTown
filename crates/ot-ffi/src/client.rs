@@ -15,7 +15,7 @@ use crate::local::{Local, PendingJoin};
 use crate::types::millis;
 use crate::{
     AdminUserItem, DeviceState, Event, Group, Invitation, OtError, PersonInvite, PersonItem,
-    RUNTIME, Received, RelayDevice, SecretStore, Sponsored, on_runtime,
+    RUNTIME, Received, RelayDevice, SecretStore, ServiceAdded, Sponsored, on_runtime,
 };
 
 /// Client du relais : se connecte et se reconnecte seul tant qu'il existe.
@@ -230,6 +230,28 @@ impl OtClient {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.mute_service(&parse_user(&service)?, muted).await?) })
             .await
+    }
+
+    /// Admin : ajoute l'appareil de service dont `qr` est le QR inversé
+    /// (`ot pair join --qr --service`) au service `service` (nom ou
+    /// identifiant), créé à son premier appareil. Relancé avec le même QR
+    /// après une coupure, reprend où il s'était arrêté.
+    pub async fn add_service_device(
+        &self,
+        service: String,
+        qr: String,
+    ) -> Result<ServiceAdded, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let added = client.add_service_device(&service, &qr).await?;
+            Ok(ServiceAdded {
+                user_id: added.user.to_string(),
+                device_id: added.device_id.to_string(),
+                device_name: added.device_name,
+                created: added.created,
+            })
+        })
+        .await
     }
 
     /// Personnes de l'annuaire vérifié, moi compris (vide sans annuaire).
