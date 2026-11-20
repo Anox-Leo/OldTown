@@ -3,14 +3,12 @@ import type { StateView } from '../shared/api';
 export interface Status {
   text: string;
   tone: 'ok' | 'warning' | 'danger' | 'muted';
-  /** Piste de correction, quand il y en a une. */
   help?: string;
 }
 
 const TAILSCALE_HELP =
   "Relais injoignable. Vérifier que Tailscale est connecté sur cet ordinateur, et que l'URL du relais est la bonne (nom complet en .ts.net).";
 
-/** État de la connexion, pour l'en-tête et les réglages. */
 export function connectionStatus(state: StateView): Status {
   if (state.phase === 'unconfigured') return { text: 'Pas encore appairé', tone: 'muted' };
   const waitingSponsor = state.phase === 'pairing';
@@ -34,7 +32,6 @@ export function connectionStatus(state: StateView): Status {
   }
 }
 
-/** Nom proposé pour l'appareil, d'après le système et le navigateur (Brave, Chrome). */
 export function suggestedName(platform: string, browser = 'Chrome'): string {
   const p = platform.toLowerCase();
   if (p.includes('mac')) return `${browser} Mac`;
@@ -44,7 +41,6 @@ export function suggestedName(platform: string, browser = 'Chrome'): string {
   return browser;
 }
 
-/** Heure ou date courte d'un élément reçu. */
 export function shortTime(iso: string, now = new Date()): string {
   const d = new Date(iso);
   const sameDay = d.toDateString() === now.toDateString();

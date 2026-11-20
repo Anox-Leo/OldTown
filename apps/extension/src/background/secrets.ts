@@ -1,22 +1,13 @@
-// Secrets au repos (T5, note 0023) : chaque valeur est chiffrée en
-// AES-256-GCM par une clé WebCrypto non exportable gardée dans IndexedDB,
-// puis rangée dans chrome.storage.local sous `secret:<nom>`. Le nom est en
-// donnée associée : une valeur déplacée sous un autre nom ne se déchiffre
-// pas. Même principe que le Keystore Android (étape 3).
-
 import { fromBase64, toBase64 } from './bytes';
 
-/** Sous-ensemble de chrome.storage.local utilisé ici. */
 export interface KeyValue {
   get(keys: string | string[] | null): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
   remove(keys: string | string[]): Promise<void>;
 }
 
-/** Fournit la clé de chiffrement des secrets. */
 export interface KeySource {
   key(): Promise<CryptoKey>;
-  /** Détruit la clé : les secrets déjà rangés deviennent illisibles. */
   forget(): Promise<void>;
 }
 
@@ -34,7 +25,6 @@ export class SecretStore {
     private readonly keys: KeySource,
   ) {}
 
-  /** Toutes les valeurs rangées, déchiffrées. */
   async loadAll(): Promise<Map<string, Uint8Array>> {
     const items = await this.kv.get(null);
     const out = new Map<string, Uint8Array>();
@@ -73,7 +63,6 @@ export class SecretStore {
     await this.kv.remove(PREFIX + name);
   }
 
-  /** Efface tous les secrets et la clé qui les chiffrait. */
   async clear(): Promise<void> {
     const items = await this.kv.get(null);
     await this.kv.remove(Object.keys(items).filter((k) => k.startsWith(PREFIX)));
@@ -93,7 +82,6 @@ export class SecretStore {
         ),
       );
     } catch {
-      // Clé détruite ou valeur altérée : le message ne dit rien du contenu.
       throw new Error(`secret ${name} illisible (clé de stockage perdue ou valeur altérée)`);
     }
   }
@@ -110,11 +98,6 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
-/**
- * Clé AES-GCM non exportable dans IndexedDB : le navigateur la garde sous
- * une forme que le JavaScript ne peut pas relire (structured clone d'une
- * CryptoKey non exportable).
- */
 export class IndexedDbKeySource implements KeySource {
   private cached?: Promise<CryptoKey>;
 
@@ -156,8 +139,6 @@ export class IndexedDbKeySource implements KeySource {
         'encrypt',
         'decrypt',
       ]);
-      // `add` échoue si une autre instance vient de créer la sienne : on
-      // relit alors celle-là, pour ne jamais en avoir deux.
       try {
         await request(db.transaction(DB_STORE, 'readwrite').objectStore(DB_STORE).add(key, KEY_ID));
         return key;

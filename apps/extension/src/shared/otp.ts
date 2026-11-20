@@ -1,15 +1,5 @@
-// Codes à usage unique (note 0045) : à quelle page un code peut aller d'office,
-// et la fonction injectée dans la page pour le placer dans son champ.
-
 import { getDomain } from 'tldts';
 
-/**
- * Le site de l'onglet est-il celui qui a envoyé le code ? Vrai si les deux
- * noms ont le même domaine enregistrable, d'après la liste des suffixes
- * publics, suffixes privés compris (`mail.accounts.riotgames.com` ↔
- * `authenticate.riotgames.com`, mais jamais `a.github.io` ↔ `b.github.io`).
- * Ni adresse IP, ni nom sans domaine (`localhost`).
- */
 export function sameSite(pageHost: string, senderDomain: string): boolean {
   const site = (h: string) =>
     getDomain(h.trim().toLowerCase().replace(/\.$/, ''), { allowPrivateDomains: true });
@@ -17,34 +7,16 @@ export function sameSite(pageHost: string, senderDomain: string): boolean {
   return page !== null && page === site(senderDomain);
 }
 
-/**
- * Règle O2 (étape 10) : un code n'est copié ou rempli d'office que s'il vient
- * d'un de mes appareils ou d'un service (`auto_fill` du cœur). Absent : un
- * élément d'avant l'étape 10, donc de mon groupe.
- */
 export function autoFillAllowed(item: { autoFill?: boolean }): boolean {
   return item.autoFill !== false;
 }
 
-/** Code encore valable (`expiresAt` en millisecondes Unix). */
 export function isLive(expiresAt: number, now = Date.now()): boolean {
   return expiresAt > now;
 }
 
-/** Résultat de la fonction injectée. */
 export type FillResult = 'filled' | 'no-field';
 
-/**
- * Place `code` dans le champ du code de la page. Injectée telle quelle par
- * `chrome.scripting.executeScript` : aucune référence hors de son corps.
- *
- * Ordre : champ `autocomplete="one-time-code"` ; une rangée de cases d'un
- * caractère, autant que de caractères du code ; un champ dont le nom, l'id,
- * le texte indicatif ou le libellé parle de code (pas d'un code postal ou
- * promotionnel). `focused` (raccourci) :
- * le champ qui a le focus passe avant les indices. Jamais un champ de mot de
- * passe, sauf marqué `one-time-code`.
- */
 export function fillOtp(code: string, focused: boolean): FillResult {
   const visible = (el: HTMLElement) => el.getClientRects().length > 0 || el.offsetParent !== null;
   const typable = (el: HTMLInputElement) =>
@@ -54,7 +26,6 @@ export function fillOtp(code: string, focused: boolean): FillResult {
   const usable = inputs.filter((el) => el.type !== 'password' || isOtp(el));
 
   const setValue = (el: HTMLInputElement, value: string) => {
-    // Le setter natif : les pages React ou Vue ne voient pas une simple affectation.
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     el.focus();
     if (setter) setter.call(el, value);
@@ -73,7 +44,6 @@ export function fillOtp(code: string, focused: boolean): FillResult {
     return 'filled';
   }
 
-  // Cases d'un caractère : toutes dans le même formulaire (ou le document).
   const boxes = usable.filter((el) => el.maxLength === 1);
   const scope = activeInput?.form ?? boxes[0]?.form ?? null;
   const row = boxes.filter((el) => el.form === scope);

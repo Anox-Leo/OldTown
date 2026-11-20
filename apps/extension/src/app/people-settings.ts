@@ -15,12 +15,6 @@ const KINDS: readonly { value: Kind; label: string }[] = [
   { value: 'cli', label: 'Ligne de commande' },
 ];
 
-/**
- * Sections des réglages de l'étape 10 : annuaire à publier (admin), alertes
- * de l'annuaire, mes appareils (A2 : par défaut, joignable, catégorie,
- * retirer ; A4 : « Ligne de commande » repliée), services (couper), lien vers
- * l'administration.
- */
 @Component({
   selector: 'app-people-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -266,7 +260,6 @@ export class PeopleSettingsComponent {
   }
 
   protected setKind(d: PersonDeviceView, kind: Kind): Promise<void> {
-    // Ligne de commande : jamais joignable ni par défaut (le relais le refuse).
     const settings = kind === 'cli' ? { kind, reachable: false, default: false } : { kind };
     return this.update(d, settings);
   }

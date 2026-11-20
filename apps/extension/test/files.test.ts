@@ -1,7 +1,3 @@
-// Étape 5, T6 et T8 : fichiers entre l'extension (moteur du service worker,
-// WebAssembly compris) et la CLI `ot`, contre un vrai `ot-server`. Le
-// stockage des fichiers (OPFS dans le navigateur) est ici en mémoire ; les
-// fichiers reçus sont servis par `fileResponse` (note 0029).
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,10 +11,8 @@ import type { ByteSource } from '../src/background/transfer';
 import { Cli, MemoryKV, Relay, eventually, loadWasm } from './support';
 
 const FAST = { backoffInitial: 50, backoffMax: 300, pingEvery: 200, idleTimeout: 2_000 };
-/** Morceaux de 64 Kio : quelques Mio en font des dizaines. */
 const TRANSFER = { chunkSize: 64 * 1024, retryInitial: 20, retryMax: 200 };
 
-/** OPFS en mémoire ; `failAfter` simule un arrêt en plein envoi. */
 class MemFiles implements FileStorage {
   readonly files = new Map<string, Uint8Array>();
   reads = 0;
@@ -81,7 +75,6 @@ describe('fichiers entre l’extension et la CLI', () => {
   const files = new MemFiles();
   const kv = new MemoryKV();
   const idb = new IDBFactory();
-  /** Permission d'accès au relais, comme `chrome.permissions` (note 0027). */
   let relayAllowed = true;
   const open = () =>
     Engine.open({
@@ -123,7 +116,6 @@ describe('fichiers entre l’extension et la CLI', () => {
         to: '',
       });
       expect(msgId).toMatch(/^[0-9A-Z]{26}$/);
-      // Source effacée, plus d'envoi en cours.
       expect(files.files.has('outgoing/a')).toBe(false);
       expect(engine.state().transfers).toEqual([]);
       const announced = await eventually('annoncé au téléphone', () =>
@@ -155,13 +147,11 @@ describe('fichiers entre l’extension et la CLI', () => {
     expect(item.file).toMatchObject({ mime: 'image/jpeg', size: 300_000 });
     const blobId = item.file?.blobId ?? '';
 
-    // Copie chiffrée : aucun morceau ne contient le clair.
     const cached = [...files.files.entries()].filter(([k]) => k.startsWith(`cache/${blobId}/`));
     expect(cached.length).toBeGreaterThan(0);
     const probe = Buffer.from(data.slice(1000, 1064));
     for (const [, c] of cached) expect(Buffer.from(c).includes(probe)).toBe(false);
 
-    // Servi en entier, ouvert par le navigateur (image), en origine opaque.
     const res = await engine.fileResponse(blobId, { download: false, range: null });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/jpeg');
@@ -169,14 +159,12 @@ describe('fichiers entre l’extension et la CLI', () => {
     expect(res.headers.get('content-security-policy')).toBe('sandbox');
     expect(Buffer.compare(Buffer.from(await res.arrayBuffer()), data)).toBe(0);
 
-    // Par plage (vidéos), en téléchargement.
     const part = await engine.fileResponse(blobId, { download: true, range: 'bytes=1000-1999' });
     expect(part.status).toBe(206);
     expect(part.headers.get('content-range')).toBe('bytes 1000-1999/300000');
     expect(part.headers.get('content-disposition')).toMatch(/^attachment;/);
     expect(Buffer.compare(Buffer.from(await part.arrayBuffer()), data.slice(1000, 2000))).toBe(0);
 
-    // Inconnu : 404. Et aucune clé dans l'historique.
     const unknown = await engine.fileResponse('blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V', {
       download: false,
       range: null,
@@ -190,13 +178,11 @@ describe('fichiers entre l’extension et la CLI', () => {
     const chunks = Math.ceil(data.length / TRANSFER.chunkSize);
     files.files.set('outgoing/b', data);
     files.reads = 0;
-    // Le hachage relit tout, puis l'envoi s'arrête à mi-chemin.
     files.failAfter = chunks + Math.floor(chunks / 2);
     const file = { path: 'outgoing/b', name: 'b.bin', mime: '', size: data.length, to: '' };
     await expect(engine.sendFile(file)).rejects.toThrow('service worker arrêté');
     expect(engine.state().transfers[0]?.error).toContain('arrêté');
 
-    // Le service worker redémarre : l'envoi rangé reprend tout seul.
     engine.close();
     files.reads = 0;
     files.failAfter = Infinity;
@@ -227,13 +213,11 @@ describe('fichiers entre l’extension et la CLI', () => {
       (await engine.history()).find((i) => i.body === 'attente.png' && i.file?.error),
     );
     expect(waiting.file?.error).toBe(NO_RELAY_ACCESS);
-    // Un envoi est refusé tout de suite, avec le même message.
     files.files.set('outgoing/c', sample(10));
     const blocked = { path: 'outgoing/c', name: 'c', mime: '', size: 10, to: '' };
     await expect(engine.sendFile(blocked)).rejects.toThrow(NO_RELAY_ACCESS);
     files.files.delete('outgoing/c');
 
-    // L'accès est accordé : la copie repart seule.
     relayAllowed = true;
     await engine.refreshRelayAccess();
     const done = await eventually('copié après l’autorisation', async () =>

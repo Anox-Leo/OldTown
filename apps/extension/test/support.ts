@@ -1,6 +1,3 @@
-// Outils des tests : WebAssembly chargé sous Node, stockage en mémoire, relais
-// `ot-server` et CLI `ot` lancés pour de vrai.
-
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -17,7 +14,6 @@ const run = promisify(execFile);
 
 let wasmReady = false;
 
-/** Charge le WebAssembly construit par `npm run wasm`. */
 export function loadWasm(): void {
   if (wasmReady) return;
   const file = path.join(__dirname, '../src/wasm/ot_wasm_bg.wasm');
@@ -37,7 +33,6 @@ export function vector(name: string): Record<string, unknown> {
   return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
 }
 
-/** chrome.storage.local en mémoire. */
 export class MemoryKV implements KeyValue {
   readonly items = new Map<string, unknown>();
 
@@ -108,7 +103,6 @@ export async function eventually<T>(
   }
 }
 
-/** Relais `ot-server` dans un dossier temporaire. */
 export class Relay {
   private constructor(
     readonly dir: string,
@@ -151,7 +145,6 @@ export class Relay {
     return id;
   }
 
-  /** `ot-server user rename` : le nom de l'admin se donne avant `admin init` (note 0061). */
   async renameUser(user: string, name: string): Promise<void> {
     await run(binary('ot-server'), [
       '--db',
@@ -163,7 +156,6 @@ export class Relay {
     ]);
   }
 
-  /** Arrête le relais (la base reste, pour un redémarrage). */
   async stop(): Promise<void> {
     if (this.proc.exitCode !== null) return;
     const exited = new Promise((r) => this.proc.once('exit', r));
@@ -171,7 +163,6 @@ export class Relay {
     await exited;
   }
 
-  /** Relance le relais sur le même port, avec la même base. */
   async restart(): Promise<void> {
     await this.stop();
     this.proc = spawn(
@@ -194,7 +185,6 @@ export class Relay {
   }
 }
 
-/** CLI `ot`, premier appareil du groupe (le « téléphone » des tests). */
 export class Cli {
   readonly home: string;
 
@@ -209,7 +199,6 @@ export class Cli {
     return run(binary('ot'), ['--home', this.home, ...args], { timeout: 60_000 });
   }
 
-  /** Crée l'appareil, l'enregistre sur le relais et crée le groupe. */
   async setupGroup(): Promise<string> {
     const { stdout } = await this.run('init', '--server', this.relay.url, '--name', this.name);
     const pk = /Clé publique\s*:\s*(\S+)/.exec(stdout)?.[1];
@@ -220,7 +209,6 @@ export class Cli {
     return id;
   }
 
-  /** `ot listen --json` en tâche de fond ; renvoie les messages au fil de l'eau. */
   listen(): { messages: Record<string, unknown>[]; stop(): void } {
     const proc = spawn(binary('ot'), ['--home', this.home, 'listen', '--json'], {
       stdio: ['ignore', 'pipe', 'inherit'],
@@ -239,10 +227,6 @@ export class Cli {
     return { messages, stop: () => proc.kill() };
   }
 
-  /**
-   * Commande longue en tâche de fond (`ot admin invite`, `ot invite join`) :
-   * sa sortie au fil de l'eau, et sa fin.
-   */
   spawn(...args: string[]): { out: () => string; done: Promise<string>; stop(): void } {
     const proc = spawn(binary('ot'), ['--home', this.home, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -259,7 +243,6 @@ export class Cli {
     return { out: () => out, done, stop: () => proc.kill() };
   }
 
-  /** `ot pair new` en tâche de fond : renvoie le code dès qu'il est affiché. */
   async pairNew(): Promise<{ code: string; done: Promise<string> }> {
     const proc = spawn(binary('ot'), ['--home', this.home, 'pair', 'new'], {
       stdio: ['ignore', 'pipe', 'inherit'],

@@ -1,34 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
-// Signe « archivolte » et logotype d'OldTown, repris tels quels de `branding/`
-// (`archivolte-signe.svg`, `archivolte-petit.svg`, `logotype-mono.svg` ;
-// `test/brand.test.ts` le vérifie). Le signe est toujours en pierre
-// (`--mark`), le nom dans la couleur du texte (`--fg`).
-
-/** Boîte serrée du signe, sur la grille de 128. */
 const MARK_BOX = '18 21.66 92 96.34';
 const LOGO_BOX = '18 21.66 360.82 96.34';
 
-/**
- * Logotype : capitales à 46 % de la hauteur du signe, ligne de base du nom à
- * 79 % de la boîte depuis le haut (`charte.mjs`), pour aligner un texte voisin.
- */
 export const LOGO_CAP_HEIGHT = 0.46;
 export const LOGO_BASELINE = 0.79;
 
-/** Signe complet (24 px et plus, sans tuile). */
 export const MARK_PATH =
   'M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM26 118V80A52 52 0 0 1 64 29.92' +
   'A52 52 0 0 1 102 80V118zM32 118V80A46 46 0 0 1 64 36.18A46 46 0 0 1 96 80V118zM40 110V86' +
   'A21 21 0 0 1 50.5 67.81A21 21 0 0 1 61 86V110zM67 110V86A21 21 0 0 1 77.5 67.81' +
   'A21 21 0 0 1 88 86V110z';
 
-/** Taille optique (sous 24 px) : archivolte épaissie, noyau plein. */
 export const MARK_SMALL_PATH =
   'M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM32 118V80A46 46 0 0 1 64 36.18' +
   'A46 46 0 0 1 96 80V118zM40 118V80A38 38 0 0 1 64 44.67A38 38 0 0 1 88 80V118z';
 
-/** « OldTown » en DM Sans demi-gras, vectorisé. */
 export const WORDMARK_PATH =
   'M158.46 98.53Q151.81 98.53 146.84 95.65Q141.87 92.77 139.09 87.61' +
   'Q136.3 82.45 136.3 75.61Q136.3 68.84 139.09 63.68Q141.87 58.52 146.84 55.6' +
@@ -67,7 +54,6 @@ export const WORDMARK_PATH =
   'Q369.06 76.5 367.32 74.25Q365.58 72 361.97 72Q359.69 72 357.86 73.14' +
   'Q356.02 74.28 354.98 76.37Q353.93 78.46 353.93 81.5L353.93 97.77Z';
 
-/** Le signe seul ; taille optique sous 24 px de haut. */
 @Component({
   selector: 'app-mark',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -84,13 +70,11 @@ export const WORDMARK_PATH =
   `,
 })
 export class MarkComponent {
-  /** Hauteur en px. */
   readonly size = input(24);
   protected readonly box = MARK_BOX;
   protected readonly path = computed(() => (this.size() < 24 ? MARK_SMALL_PATH : MARK_PATH));
 }
 
-/** Signe et nom : en-tête de la popup, accueil, réglages. */
 @Component({
   selector: 'app-logo',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -113,7 +97,6 @@ export class MarkComponent {
   `,
 })
 export class LogoComponent {
-  /** Hauteur en px. */
   readonly size = input(24);
   protected readonly box = LOGO_BOX;
   protected readonly word = WORDMARK_PATH;

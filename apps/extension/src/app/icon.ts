@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
-/** Icônes au trait d'après Lucide (ISC, licence dans `third_party/`), comme l'appli Android. */
 const ICONS = {
   settings: [
     'M20 7h-9',
@@ -24,7 +23,6 @@ const ICONS = {
   ],
   'arrow-left': ['m12 19-7-7 7-7', 'M19 12H5'],
   plus: ['M5 12h14', 'M12 5v14'],
-  // Avatars des appareils (`devices.ts`).
   cli: ['m4 17 6-6-6-6', 'M12 19h8'],
   phone: ['M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', 'M12 18h.01'],
   laptop: [

@@ -1,4 +1,3 @@
-/* Tests de l'interface (ng test, Vitest). */
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {

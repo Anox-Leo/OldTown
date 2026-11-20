@@ -13,7 +13,6 @@ import { MarkComponent } from './brand';
 import { QrComponent } from './qr';
 import { connectionStatus } from './status';
 
-/** Appairage en cours : QR inversé à scanner, ou attente du parrain. */
 @Component({
   selector: 'app-pairing',
   changeDetection: ChangeDetectionStrategy.OnPush,

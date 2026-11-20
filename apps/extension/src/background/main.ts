@@ -1,8 +1,3 @@
-// Service worker de l'extension : seul propriétaire de la connexion au relais
-// (note 0009). Les écouteurs Chrome sont enregistrés tout de suite, au
-// premier niveau, comme Manifest V3 l'exige ; le moteur (WebAssembly,
-// secrets, connexion) s'ouvre au premier événement.
-
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
 import { POPUP_PORT, channelOf, userChannel } from '../shared/api';
@@ -21,20 +16,12 @@ const MENU_ALL = 'to:';
 const COMMAND_SEND_PAGE = 'send-page';
 const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
 const COMMAND_FILL_OTP = 'fill-otp';
-/**
- * Un élément reçu s'ouvre de lui-même (navigateur au premier plan) seulement
- * s'il est récent : à la réouverture du navigateur, les messages en attente
- * donnent des notifications, pas une rafale d'onglets.
- */
 const AUTO_OPEN_MAX_AGE = 2 * 60_000;
 const NOTIFICATION_COPY = 0;
-/** Code reçu : « Remplir les codes d'office » (note 0045). */
 const NOTIFICATION_GRANT_OTP = 1;
-/** Délai pour que la popup ouverte pour un élément le réclame (note 0032). */
 const PENDING_CHAT_MAX_AGE = 10_000;
 
 function log(message: string, error?: unknown): void {
-  // Jamais de contenu ni de clé : seulement le message de l'erreur.
   if (error === undefined) console.warn(`[oldtown] ${message}`);
   else
     console.warn(`[oldtown] ${message} :`, error instanceof Error ? error.message : String(error));
@@ -46,7 +33,6 @@ const storage: KeyValue = {
   remove: (keys) => chrome.storage.local.remove(keys),
 };
 
-/** Fichiers dans l'OPFS de l'extension (note 0026). */
 const files: FileStorage = {
   source: (path) => opfs.source(path),
   remove: (path) => opfs.remove(path),
@@ -58,14 +44,8 @@ const files: FileStorage = {
 
 let opening: Promise<Engine> | undefined;
 const popups = new Set<chrome.runtime.Port>();
-/**
- * Conversation à montrer dans la prochaine popup (note 0032) : posé juste
- * avant de l'ouvrir pour un élément reçu, consommé à sa connexion. En
- * mémoire seulement : la popup s'ouvre dans la foulée.
- */
 let pendingChat: { channel: string; until: number } | undefined;
 
-/** Ouvre le moteur une seule fois par vie du service worker. */
 function engine(): Promise<Engine> {
   opening ??= (async () => {
     await init({ module_or_path: chrome.runtime.getURL('wasm/ot_wasm_bg.wasm') });
@@ -86,25 +66,14 @@ function engine(): Promise<Engine> {
   return opening;
 }
 
-// Permission d'accès au relais accordée (ou retirée) : les fichiers en
-// attente repartent.
 chrome.permissions.onAdded.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
 chrome.permissions.onRemoved.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
 
-// --- Démarrage, réveil ---
-
-/** Requête `fetch` reçue par le service worker (types absents de la lib DOM). */
 interface FetchLike {
   readonly request: globalThis.Request;
   respondWith(response: Promise<Response> | Response): void;
 }
 
-/**
- * Fichiers reçus (note 0029) : le service worker répond lui-même aux adresses
- * `chrome-extension://<id>/f/<blob_id>/<nom>`, en flux, déchiffrées dans le
- * WebAssembly ; le navigateur les affiche ou les télécharge. Ces adresses ne
- * sont pas accessibles aux pages web (pas de `web_accessible_resources`).
- */
 (self as unknown as EventTarget).addEventListener('fetch', (event) => {
   const fetchEvent = event as unknown as FetchLike;
   const url = new URL(fetchEvent.request.url);
@@ -131,10 +100,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) void wake();
 });
 
-/**
- * Se connecte s'il le faut. L'alarme (30 s, le minimum) relance le service
- * worker s'il a été arrêté pendant une attente de reconnexion (note 0023).
- */
 async function wake(): Promise<void> {
   await chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
   try {
@@ -144,8 +109,6 @@ async function wake(): Promise<void> {
   }
 }
 
-// --- Événements du moteur ---
-
 function onPush(e: Engine, push: Push): void {
   for (const port of popups) port.postMessage(push);
   if (push.type === 'state') void updateMenus(push.state);
@@ -154,7 +117,6 @@ function onPush(e: Engine, push: Push): void {
   if (push.type === 'person-joined') void personJoined(push);
 }
 
-/** Admin : une personne invitée d'ici a rejoint ; sa notification, hors de la page d'administration. */
 async function personJoined(p: Extract<Push, { type: 'person-joined' }>): Promise<void> {
   if (popups.size > 0) return;
   await chrome.notifications.create(`joined:${p.user}`, {
@@ -165,7 +127,6 @@ async function personJoined(p: Extract<Push, { type: 'person-joined' }>): Promis
   });
 }
 
-/** Badge de l'icône : `!` hors ligne ; fond et texte pris dans les jetons de design. */
 async function updateBadge(state: StateView): Promise<void> {
   const problem = state.phase === 'ready' && state.connection !== 'online';
   if (problem) await setBadgeColors(BADGE.problem);
@@ -177,8 +138,6 @@ async function setBadgeColors(background: string): Promise<void> {
   await chrome.action.setBadgeTextColor({ color: BADGE.text });
 }
 
-// --- Popup et réglages ---
-
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== POPUP_PORT || !fromThisExtension(port.sender)) {
     port.disconnect();
@@ -186,8 +145,6 @@ chrome.runtime.onConnect.addListener((port) => {
   }
   popups.add(port);
   port.onDisconnect.addListener(() => popups.delete(port));
-  // Seule la popup (ou sa fenêtre de repli) réclame la conversation, pas
-  // les réglages ouverts dans un onglet.
   const chat = isPopupPage(port.sender) ? takePendingChat() : undefined;
   void engine()
     .then((e) => {
@@ -208,7 +165,6 @@ function takePendingChat(): string | undefined {
   return chat && Date.now() < chat.until ? chat.channel : undefined;
 }
 
-/** Retient la conversation d'un élément reçu, pour la popup qui va s'ouvrir. */
 function rememberChat(e: Engine, item: Item): void {
   pendingChat = {
     channel: channelOf(item, e.state().device?.id),
@@ -216,12 +172,6 @@ function rememberChat(e: Engine, item: Item): void {
   };
 }
 
-/**
- * Seules les pages de cette extension (popup, réglages ouverts dans un
- * onglet) parlent au service worker : même identifiant et une URL
- * `chrome-extension://<id>/`, ce qu'aucune page web ni autre extension ne
- * peut présenter (pas d'`externally_connectable`, pas de script de contenu).
- */
 function fromThisExtension(sender?: chrome.runtime.MessageSender): boolean {
   return (
     sender?.id === chrome.runtime.id && (sender.url?.startsWith(chrome.runtime.getURL('')) ?? false)
@@ -305,14 +255,8 @@ async function handle(req: Request): Promise<unknown> {
   }
 }
 
-// --- Menus contextuels et raccourci ---
-
 let menuKey = '';
 
-/**
- * Un sous-menu par membre du roster, plus « Tous les appareils », puis les
- * autres personnes (leurs appareils par défaut), sauf les services.
- */
 async function updateMenus(state: StateView): Promise<void> {
   const others =
     state.group?.members
@@ -368,16 +312,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     void sendImage(info.srcUrl, to);
     return;
   }
-  // Sélection, sinon lien, sinon la page.
   const text = info.selectionText ?? info.linkUrl ?? info.pageUrl ?? tab?.url;
   if (text) void sendFromBrowser(text, to);
 });
 
-/**
- * « Envoyer l'image » (note 0027) : lue sans cookies. Si le site ne
- * l'autorise pas (CORS) et que son domaine n'a pas encore été accordé, la
- * page d'envoi demande l'accès à ce seul domaine, sur un clic.
- */
 async function sendImage(src: string, to: string): Promise<void> {
   try {
     const res = await fetch(src, { credentials: 'omit' });
@@ -397,7 +335,6 @@ async function sendImage(src: string, to: string): Promise<void> {
     });
   } catch (err) {
     log('lecture de l’image', err);
-    // Le domaine n'est pas (encore) accordé : la page d'envoi le demande.
     const query = new URLSearchParams({ image: src, to });
     await chrome.windows.create({
       url: `send.html?${query.toString()}`,
@@ -408,23 +345,22 @@ async function sendImage(src: string, to: string): Promise<void> {
   }
 }
 
-/** Nom de l'image d'après son URL, avec une extension d'après son type. */
-function imageName(src: string, mime: string): string {
-  let base = 'image';
+function lastPathSegment(src: string): string | undefined {
   try {
-    const last = new URL(src).pathname.split('/').pop();
-    if (last) base = decodeURIComponent(last);
+    return decodeURIComponent(new URL(src).pathname.split('/').pop() ?? '') || undefined;
   } catch {
-    // URL `data:` ou illisible : nom générique.
+    return undefined;
   }
+}
+
+function imageName(src: string, mime: string): string {
+  const base = lastPathSegment(src) ?? 'image';
   const ext = /^image\/(\w+)/.exec(mime)?.[1]?.replace('jpeg', 'jpg');
   return ext && !base.toLowerCase().endsWith(`.${ext}`) ? `${base}.${ext}` : base;
 }
 
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === COMMAND_SEND_PAGE) {
-    // L'URL de l'onglet actif (permission `activeTab`) ; la sélection
-    // demanderait un script injecté, exclu par le plan (note 0023).
     const url = tab?.url;
     if (url) void engine().then((e) => sendFromBrowser(url, e.state().recipient, true));
   } else if (command === COMMAND_SEND_CLIPBOARD) {
@@ -434,7 +370,6 @@ chrome.commands.onCommand.addListener((command, tab) => {
   }
 });
 
-/** Raccourci : le presse-papiers, lu par le document offscreen, au dernier destinataire. */
 async function sendClipboard(): Promise<void> {
   let text: string;
   try {
@@ -460,7 +395,6 @@ async function problem(message: string, title = 'OldTown : envoi impossible'): P
   });
 }
 
-/** Coche brève sur l'icône : un raccourci n'a pas d'autre retour visible. */
 async function flashSent(): Promise<void> {
   await setBadgeColors(BADGE.ok);
   await chrome.action.setBadgeText({ text: '✓' });
@@ -479,13 +413,10 @@ async function sendFromBrowser(text: string, to: string, shortcut = false): Prom
   }
 }
 
-// --- Notifications ---
-
 function isWebLink(item: Item): boolean {
   return item.kind === 'link' && /^https?:\/\//i.test(item.body);
 }
 
-/** Fenêtre du navigateur qui a le focus de l'OS, s'il y en a une. */
 async function focusedWindow(): Promise<chrome.windows.Window | undefined> {
   try {
     const w = await chrome.windows.getLastFocused();
@@ -495,10 +426,6 @@ async function focusedWindow(): Promise<chrome.windows.Window | undefined> {
   }
 }
 
-/**
- * Ouvre la popup de l'extension (Chromium 127 ou plus, fenêtre au premier
- * plan) ; renvoie `false` si le navigateur refuse.
- */
 async function openPopup(windowId?: number): Promise<boolean> {
   try {
     await chrome.action.openPopup(windowId === undefined ? {} : { windowId });
@@ -509,11 +436,6 @@ async function openPopup(windowId?: number): Promise<boolean> {
   }
 }
 
-/**
- * Élément reçu (note 0024) : popup ouverte, il n'apparaît que dans la liste ;
- * navigateur au premier plan, un lien s'ouvre dans un onglet et un texte
- * ouvre la popup, sans notification ; sinon, notification.
- */
 async function deliver(e: Engine, item: Item): Promise<void> {
   if (popups.size > 0) return;
   const recent = Date.now() - Date.parse(item.createdAt) < AUTO_OPEN_MAX_AGE;
@@ -529,16 +451,7 @@ async function deliver(e: Engine, item: Item): Promise<void> {
   await notify(e, item);
 }
 
-/**
- * Annonce d'un élément. Fichier (note 0029), à sa première annonce seulement
- * (les mises à jour, copie terminée ou erreur, ne disent rien) : popup
- * ouverte, rien ; navigateur au premier plan et élément récent, un petit
- * fichier que le navigateur sait afficher s'ouvre dans un onglet, un gros
- * ouvre la popup ; sinon, et pour un type que le navigateur ne sait pas
- * afficher, notification. Rien n'arrive sur le disque sans geste.
- */
 async function deliverItem(e: Engine, item: Item): Promise<void> {
-  // Un élément envoyé d'ici (note 0030) n'est annoncé nulle part.
   if (item.outgoing) return;
   if (item.kind === 'otp') {
     await deliverOtp(e, item);
@@ -568,20 +481,6 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
   await notify(e, item);
 }
 
-// --- Codes à usage unique (note 0045) ---
-
-/**
- * Code reçu, encore valable : copié, puis rempli d'office si l'onglet actif
- * est en HTTPS sur le site de l'expéditeur (même domaine enregistrable), que
- * l'expéditeur est authentifié (DMARC) et que l'accès aux pages HTTPS est
- * accordé (`OTP_ORIGINS`). L'URL de l'onglet n'est lisible qu'avec cet
- * accès (pas de permission `tabs`). Sinon, le raccourci `fill-otp` le
- * place, sur un geste (`activeTab`).
- *
- * Règle O2 (étape 10) : seulement d'un de mes appareils ou d'un service
- * (`autoFill`). D'une autre personne, le code s'affiche, jamais copié ni
- * rempli ; le raccourci reste possible (c'est moi qui choisis la page).
- */
 async function deliverOtp(e: Engine, item: Item): Promise<void> {
   const otp = item.otp;
   if (!otp || !isLive(otp.expiresAt)) return;
@@ -633,7 +532,6 @@ async function deliverOtp(e: Engine, item: Item): Promise<void> {
   });
 }
 
-/** Onglet actif de la dernière fenêtre ; son URL seulement si l'accès est accordé. */
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -643,7 +541,6 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   }
 }
 
-/** Remplit le code dans le cadre principal de l'onglet. */
 async function fillTab(
   tabId: number,
   code: string,
@@ -662,7 +559,6 @@ async function fillTab(
   }
 }
 
-/** Raccourci `fill-otp` : le dernier code encore valable, dans l'onglet actif. */
 async function fillLastOtp(tabId: number): Promise<void> {
   const items = await (await engine()).history();
   const last = items
@@ -682,20 +578,17 @@ async function fillLastOtp(tabId: number): Promise<void> {
   } else await problem('Cette page ne peut pas être remplie.', 'OldTown : code non rempli');
 }
 
-/** Ce qu'un clic sur un fichier fait : l'ouvrir, le télécharger, ou montrer la popup. */
 function fileAction(item: Item): 'open' | 'download' | 'popup' {
   const file = item.file;
   if (!file || file.size > AUTO_CACHE_MAX) return 'popup';
   return isViewable(file.mime) ? 'open' : 'download';
 }
 
-/** Titre d'un élément reçu : l'appareil, ou « Personne · appareil » pour une autre personne. */
 function senderTitle(e: Engine, item: Item): string {
   const person = item.fromUser ? e.person(item.fromUser)?.name : undefined;
   return person ? `${person} · ${item.fromName}` : item.fromName;
 }
 
-/** Notification d'un élément reçu ; l'identifiant est son `msg_id`. */
 async function notify(e: Engine, item: Item): Promise<void> {
   const file = item.file;
   const hint = {
@@ -717,11 +610,6 @@ async function notify(e: Engine, item: Item): Promise<void> {
   });
 }
 
-/**
- * Fichier depuis le service worker (clic sur une notification) : ouvert dans
- * un onglet, ou téléchargé par un onglet en arrière-plan, que le navigateur
- * referme une fois le téléchargement lancé.
- */
 async function openFileItem(e: Engine, item: Item): Promise<void> {
   const file = item.file;
   if (!file) return;
@@ -740,7 +628,6 @@ chrome.notifications.onClicked.addListener((id) => {
     await chrome.notifications.clear(id);
     const e = await engine();
     const item = await e.item(id);
-    // « Ouvrir » seulement pour un lien http(s), comme sur Android.
     if (item && isWebLink(item)) {
       await chrome.tabs.create({ url: item.body });
       return;
@@ -754,10 +641,6 @@ chrome.notifications.onClicked.addListener((id) => {
   })().catch((e: unknown) => log('notification', e));
 });
 
-/**
- * Montre l'extension après un clic sur une notification : la popup si le
- * navigateur l'accepte, sinon la même page dans une petite fenêtre.
- */
 async function showExtension(): Promise<void> {
   const win = await focusedWindow();
   if (win && (await openPopup(win.id))) return;
@@ -771,17 +654,12 @@ chrome.notifications.onButtonClicked.addListener((id, button) => {
   }
   if (button !== NOTIFICATION_COPY) return;
   void (async () => {
-    // Le texte est relu dans l'historique, pas porté par la notification.
     const item = await (await engine()).item(id);
     if (item) await copy(item.body);
     await chrome.notifications.clear(id);
   })().catch((e: unknown) => log('copie', e));
 });
 
-/**
- * Accès aux pages HTTPS, pour remplir les prochains codes d'office : demandé
- * par la page d'envoi, sur un clic (note 0027).
- */
 async function grantOtp(id: string): Promise<void> {
   await chrome.notifications.clear(id);
   await chrome.windows.create({
@@ -791,8 +669,6 @@ async function grantOtp(id: string): Promise<void> {
     height: 300,
   });
 }
-
-// --- Presse-papiers (document offscreen) ---
 
 let creatingOffscreen: Promise<void> | undefined;
 
@@ -819,7 +695,6 @@ async function copy(text: string): Promise<void> {
   await offscreen<boolean>({ target: 'offscreen', type: 'copy', text });
 }
 
-/** Texte du presse-papiers (permission `clipboardRead`), au raccourci seulement. */
 async function readClipboard(): Promise<string> {
   return (await offscreen<string | null>({ target: 'offscreen', type: 'read' })) ?? '';
 }

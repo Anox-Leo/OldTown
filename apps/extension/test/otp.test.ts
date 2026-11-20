@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-// Codes à usage unique (note 0045) : site de l'expéditeur, champ à remplir.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { autoFillAllowed, fillOtp, isLive, sameSite } from '../src/shared/otp';
 
@@ -7,7 +6,6 @@ describe('règle O2', () => {
   it('remplit d’office ce qui vient de ma personne ou d’un service, jamais d’une autre personne', () => {
     expect(autoFillAllowed({ autoFill: true })).toBe(true);
     expect(autoFillAllowed({ autoFill: false })).toBe(false);
-    // Élément rangé avant l'étape 10 : de mon groupe.
     expect(autoFillAllowed({})).toBe(true);
   });
 });
@@ -25,7 +23,6 @@ describe('sameSite', () => {
     expect(sameSite('login.live.com', 'microsoft.com')).toBe(false);
     expect(sameSite('google.com.evil.example', 'google.com')).toBe(false);
     expect(sameSite('evilgoogle.com', 'google.com')).toBe(false);
-    // Suffixes publics et privés : deux sites distincts.
     expect(sameSite('a.co.uk', 'b.co.uk')).toBe(false);
     expect(sameSite('evil.github.io', 'victim.github.io')).toBe(false);
     expect(sameSite('github.io', 'github.io')).toBe(false);
@@ -43,7 +40,6 @@ describe('isLive', () => {
 
 describe('fillOtp', () => {
   beforeAll(() => {
-    // jsdom ne calcule pas de mise en page : tout champ est visible, sauf `hidden`.
     HTMLElement.prototype.getClientRects = function (this: HTMLElement) {
       const rects = this.hidden ? [] : [new DOMRect(0, 0, 10, 10)];
       return rects as unknown as DOMRectList;

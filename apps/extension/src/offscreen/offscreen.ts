@@ -1,9 +1,3 @@
-// Document offscreen (raison CLIPBOARD) : le service worker n'a pas accès au
-// presse-papiers. `navigator.clipboard` exige une page au premier plan ; un
-// document offscreen n'en est pas une, d'où `execCommand`, la méthode que
-// recommande la documentation de Chrome pour ce cas. La lecture (`paste`)
-// demande la permission `clipboardRead` et ne sert qu'au raccourci.
-
 import type { OffscreenMessage } from '../shared/api';
 
 chrome.runtime.onMessage.addListener((msg: OffscreenMessage, sender, reply) => {

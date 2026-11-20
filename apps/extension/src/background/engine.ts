@@ -1,7 +1,3 @@
-// Cœur du service worker, sans API Chrome (testé sous Node contre un vrai
-// relais) : appareil, coffre et cœur WebAssembly, client du protocole,
-// historique. `main.ts` y branche menus, notifications, alarmes et messages.
-
 import {
   Core,
   Hasher,
@@ -49,37 +45,26 @@ import {
 } from './transfer';
 
 export { HISTORY_LEN };
-/** Historique : contenu en clair, donc rangé chiffré comme les clés. */
 const HISTORY = 'history.json';
 const DEVICE = 'device';
 const RECIPIENT = 'recipient';
 const OUTBOX = 'outbox';
 const SEEN = 'seen';
-/** Envois de fichiers pas terminés, repris au réveil ; rangés chiffrés (noms). */
 const OUTGOING = 'outgoing.json';
-/** Dernière ouverture des conversations des personnes (non-lus) ; rangée chiffrée. */
 const OPENED = 'opened.json';
-/** Alertes de l'annuaire gardées pour l'affichage. */
 const MAX_ALERTS = 20;
-/** Délai maximal de l'enregistrement par code. */
 const REDEEM_TIMEOUT = 10_000;
 export { AUTO_CACHE_MAX };
 
-/** Fichiers de l'appareil (OPFS dans l'extension, mémoire dans les tests). */
 export interface FileStorage {
-  /** Fichier à envoyer, déjà copié sous `path`. */
   source(path: string): Promise<ByteSource>;
   remove(path: string): Promise<void>;
-  /** Copie **chiffrée** des fichiers reçus (note 0029) : un morceau, s'il y est. */
   getChunk(blobId: string, index: number): Promise<Uint8Array | undefined>;
-  /** Range un morceau chiffré (entier ou absent). */
   putChunk(blobId: string, index: number, sealed: Uint8Array): Promise<void>;
   removeCache(blobId: string): Promise<void>;
-  /** Fichiers reçus dont une copie existe. */
   listCache(): Promise<string[]>;
 }
 
-/** Plage demandée par `Range: bytes=…`, bornes comprises. */
 function parseRange(
   header: string | null,
   size: number,
@@ -99,24 +84,17 @@ export interface EngineDeps {
   fetch?: typeof fetch;
   timing?: Partial<Timing>;
   transferTiming?: Partial<TransferTiming>;
-  /**
-   * Accès HTTP à l'origine du relais (permission d'hôte, note 0027). Sans
-   * lui, le navigateur bloque toute requête de fichier. Absent : accordé.
-   */
   relayAllowed?(serverUrl: string): Promise<boolean>;
   log?(message: string, error?: unknown): void;
 }
 
-/** Message d'un fichier bloqué faute d'accès au relais. */
 export const NO_RELAY_ACCESS = 'accès au relais pas encore autorisé : « Autoriser » dans la popup';
 
-/** Envoi de fichier en cours, rangé pour reprendre après l'arrêt du service worker. */
 interface Outgoing {
   path: string;
   name: string;
   mime: string;
   size: number;
-  /** Canal : un de mes appareils, `''` (tous), ou `user:<id>[/<appareil>]`. */
   to: string;
 }
 
@@ -156,17 +134,13 @@ export class Engine {
   private readonly listeners = new Set<(push: Push) => void>();
   private transfers?: Transfers;
   private readonly progress = new Map<string, TransferView>();
-  /** Transferts lancés dans cette vie du service worker. */
   private readonly running = new Set<string>();
   private relayAccess = true;
-  /** Écritures du coffre et de l'historique, dans l'ordre. */
   private writes: Promise<void> = Promise.resolve();
-  /** Annuaire, journal, invitation et administration (étape 10). */
   private readonly people: People;
   private alerts: DirectoryAlert[] = [];
   private opened: Record<string, string> = {};
   private inviteError?: string;
-  /** Enveloppes dont on attend l'acceptation (bienvenue d'un invité). */
   private readonly waiters = new Map<string, { resolve(): void; reject(e: Error): void }>();
 
   private constructor(private readonly deps: EngineDeps) {
@@ -185,7 +159,6 @@ export class Engine {
     });
   }
 
-  /** Relit l'appareil et ses secrets, et se connecte s'il est configuré. */
   static async open(deps: EngineDeps): Promise<Engine> {
     const engine = new Engine(deps);
     await engine.load();
@@ -208,9 +181,6 @@ export class Engine {
       }
       if (device) this.openCore(device.id);
     } catch (e) {
-      // Clé de stockage perdue (profil restauré sans IndexedDB…) ou état
-      // corrompu : l'appareil est inutilisable, mais l'extension doit rester
-      // ouvrable pour l'oublier et l'appairer à nouveau.
       this.log('secrets illisibles', e);
       this.core?.free();
       this.core = undefined;
@@ -233,8 +203,6 @@ export class Engine {
     for (const e of startup.events) void this.onClientEvent(e);
   }
 
-  // --- Écoute (popup ouverte, menus, notifications) ---
-
   onChange(listener: (push: Push) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -253,8 +221,6 @@ export class Engine {
   private changed(): void {
     this.push({ type: 'state', state: this.state() });
   }
-
-  // --- État ---
 
   group(): GroupView | undefined {
     const json = this.core?.group();
@@ -306,10 +272,6 @@ export class Engine {
     };
   }
 
-  /**
-   * Nom d'un membre de mon groupe, ou d'un appareil d'une personne de
-   * l'annuaire ; son identifiant sinon.
-   */
   nameOf(deviceId: string): string {
     const member = this.group()?.members.find((m) => m.device_id === deviceId);
     if (member) return member.name;
@@ -320,12 +282,9 @@ export class Engine {
     return deviceId;
   }
 
-  /** Personne de l'annuaire vérifié. */
   person(user: string): PersonView | undefined {
     return this.people.person(user);
   }
-
-  // --- Stockage ---
 
   private serialWrite(task: () => Promise<void>): Promise<void> {
     const run = this.writes.then(task);
@@ -333,7 +292,6 @@ export class Engine {
     return run;
   }
 
-  /** Chiffre et range ce qui a changé dans le coffre. */
   persistVault(): Promise<void> {
     return this.serialWrite(async () => {
       for (const change of this.vault.takeChanges()) {
@@ -391,7 +349,6 @@ export class Engine {
     this.changed();
   }
 
-  /** Conversation d'une personne ouverte : ses éléments reçus sont lus. */
   markRead(channel: string): Promise<void> {
     const user = parseChannel(channel).user;
     if (!user) return Promise.resolve();
@@ -403,8 +360,6 @@ export class Engine {
       bytes.fill(0);
     });
   }
-
-  // --- Connexion ---
 
   private startClient(): void {
     const device = this.device;
@@ -441,10 +396,6 @@ export class Engine {
     void this.refreshRelayAccess().then(() => this.resumeOutgoing());
   }
 
-  /**
-   * Relit la permission d'accès au relais ; si elle vient d'être accordée,
-   * relance les envois et les téléchargements qu'elle bloquait.
-   */
   async refreshRelayAccess(): Promise<boolean> {
     const url = this.device?.serverUrl;
     const allowed = !url || !this.deps.relayAllowed || (await this.deps.relayAllowed(url));
@@ -463,11 +414,6 @@ export class Engine {
     return allowed;
   }
 
-  /**
-   * Après un refus : en attendant que le parrain enregistre l'appareil (QR
-   * inversé), réessayer toutes les 1 à 3 s jusqu'à l'expiration de l'offre ;
-   * sinon (appareil révoqué…), toutes les 25 s.
-   */
   private authRetryDelay(): number | null {
     const pending = this.pending();
     if (pending?.kind === 'offer') {
@@ -476,17 +422,12 @@ export class Engine {
     return 25_000;
   }
 
-  /**
-   * Réveil (alarme, démarrage de Chrome) : se reconnecter s'il le faut. Pas
-   * après l'expiration d'un QR inversé : l'appareil n'existe pas sur le relais.
-   */
   ensureConnected(): void {
     const client = this.client;
     if (!client || this.offerExpired()) return;
     void client.start().then(() => client.reconnectNow());
   }
 
-  /** Appairage par QR inversé commencé, mais ni groupe ni offre valable. */
   private offerExpired(): boolean {
     if (!this.device || this.group() || this.device.invited) return false;
     const pending = this.pending();
@@ -519,8 +460,6 @@ export class Engine {
           to: e.to ?? [],
           ...origin(e),
         };
-        // Rangé avant l'acquittement : le client attend la fin de ce
-        // traitement.
         await this.addToHistory(item);
         this.push({ type: 'item', item });
         return;
@@ -537,13 +476,9 @@ export class Engine {
           to: e.to ?? [],
           ...origin(e),
         };
-        // L'offre (clé comprise) est déjà dans le coffre, rangé par le client
-        // avant l'acquittement ; l'élément aussi, ici.
         await this.addToHistory(item);
         this.push({ type: 'item', item });
         void this.pruneCache().catch((err: unknown) => this.log('nettoyage des fichiers', err));
-        // Petit fichier : copié (chiffré) d'office, sans retarder
-        // l'acquittement ; sans accès au relais, noté en attente.
         if (e.size <= AUTO_CACHE_MAX && this.deps.files && !this.relayAccess) {
           await this.updateFile(e.msg_id, { error: NO_RELAY_ACCESS });
         } else if (e.size <= AUTO_CACHE_MAX && this.deps.files) {
@@ -588,7 +523,6 @@ export class Engine {
       case 'accepted':
         this.waiters.get(e.msg_id)?.resolve();
         this.waiters.delete(e.msg_id);
-        // Un message envoyé depuis cette extension n'est plus « en cours ».
         await this.updateItem(e.msg_id, { pending: false }, (i) => i.pending === true);
         break;
       case 'group_changed':
@@ -596,7 +530,6 @@ export class Engine {
         break;
       case 'pairing_completed':
         break;
-      // --- Étape 10 ---
       case 'relay_directory_changed':
         this.people.onRelayChanged();
         return;
@@ -646,7 +579,6 @@ export class Engine {
     this.alerts = [...this.alerts, a].slice(-MAX_ALERTS);
   }
 
-  /** Sortie du cœur (déroulés de l'étape 10) : événements, puis enveloppes en file. */
   private async applyOutput(out: CoreOutput): Promise<void> {
     for (const e of out.events) await this.onClientEvent(e);
     for (const env of out.sends) await this.client?.queue(JSON.stringify(env));
@@ -661,8 +593,6 @@ export class Engine {
     );
     return client.queue(env).then(() => accepted);
   }
-
-  // --- Appairage ---
 
   private async resetDevice(): Promise<void> {
     this.client?.stop();
@@ -689,11 +619,6 @@ export class Engine {
       throw new Error('cette extension est déjà dans un groupe : l’oublier d’abord');
   }
 
-  /**
-   * Nouvel appareil, QR inversé : crée l'identité et affiche le QR que le
-   * téléphone scanne. L'extension réessaie de s'authentifier jusqu'à ce que
-   * le parrain l'ait fait enregistrer (10 minutes au plus).
-   */
   async setupOffer(serverUrl: string, name: string): Promise<StateView> {
     this.ensureNotInGroup();
     const url = checkServerUrl(serverUrl);
@@ -715,10 +640,6 @@ export class Engine {
     return this.state();
   }
 
-  /**
-   * Nouvel appareil, code collé (`ot1-…` ou QR « rejoindre ») : s'enregistre
-   * auprès du relais avec le jeton, puis envoie la demande au parrain.
-   */
   async setupCode(text: string, serverUrl: string, name: string): Promise<StateView> {
     this.ensureNotInGroup();
     const join = JSON.parse(parseJoin(text)) as { server_url: string | null; code: string };
@@ -750,12 +671,6 @@ export class Engine {
     return this.state();
   }
 
-  /**
-   * Premier appareil d'une personne invitée (étape 10) : `invite_redeem` à
-   * la place de l'authentification, puis l'invitation rangée (secret et
-   * ancre) avant d'ouvrir le cœur. La demande à l'admin part à chaque
-   * connexion, jusqu'à la bienvenue.
-   */
   async setupInvite(text: string, name: string): Promise<StateView> {
     this.ensureNotInGroup();
     const invite = JSON.parse(parseInvite(text.trim())) as { server_url: string; code: string };
@@ -795,7 +710,6 @@ export class Engine {
     return this.state();
   }
 
-  /** Enregistrement (`pair_redeem`, `invite_redeem`) sur une connexion à part, que le relais ferme ensuite. */
   private redeem<T>(
     serverUrl: string,
     frameFor: (nonce: string) => string,
@@ -838,7 +752,6 @@ export class Engine {
     });
   }
 
-  /** Abandonne un appairage en cours, ou oublie l'appareil. */
   async forget(): Promise<StateView> {
     await this.resetDevice();
     await this.clearHistory();
@@ -855,14 +768,6 @@ export class Engine {
     return this.state();
   }
 
-  // --- Envoi ---
-
-  /**
-   * Chiffre et envoie un texte dans le canal `to` : un membre, tous (`''`),
-   * ou une personne (`user:<id>`, ses appareils par défaut) et peut-être un
-   * de ses appareils (`user:<id>/<appareil>`), en `0x05`, copie à mes
-   * appareils comprise (D43). L'annuaire est relu s'il date de plus de 60 s.
-   */
   async send(text: string, to: string): Promise<string> {
     const core = this.core;
     const client = this.client;
@@ -878,7 +783,6 @@ export class Engine {
       env = core.sealText(text, target.device ? [target.device] : []);
     }
     const trimmed = text.trim();
-    // Comme `ot_core::classify` : un lien s'il n'est fait que d'une URL web.
     const kind = /^https?:\/\/\S+$/i.test(trimmed) ? 'link' : 'text';
     await this.recordSent(env, { kind, body: kind === 'link' ? trimmed : text }, to);
     const msgId = await client.queue(env);
@@ -886,11 +790,6 @@ export class Engine {
     return msgId;
   }
 
-  /**
-   * Range un élément envoyé dans l'historique (note 0030), « en cours »
-   * jusqu'à l'accusé du relais. Rangé **avant** la mise en file : l'accusé
-   * pourrait sinon arriver avant l'élément.
-   */
   private async recordSent(
     env: string,
     content: Pick<Item, 'kind' | 'body' | 'file'>,
@@ -907,7 +806,6 @@ export class Engine {
       createdAt: parsed.created_at,
       ...content,
       outgoing: true,
-      // Vers une personne : les appareils résolus (copie à mes appareils comprise).
       to: target.user !== undefined ? parsed.to : target.device ? [target.device] : [],
       pending: true,
     };
@@ -918,8 +816,6 @@ export class Engine {
     await this.addToHistory(item);
     this.push({ type: 'item', item });
   }
-
-  // --- Fichiers (étape 5) ---
 
   private setProgress(view: TransferView | undefined, id: string): void {
     if (view) this.progress.set(id, view);
@@ -936,11 +832,6 @@ export class Engine {
     return { client, transfers, files };
   }
 
-  /**
-   * Envoie un fichier déjà copié sous `path` à `to` (un membre) ou à tous
-   * (`''`). Rangé d'abord dans `outgoing` : un arrêt du service worker
-   * reprend l'envoi au réveil. Renvoie le `msg_id` de l'annonce.
-   */
   async sendFile(file: Outgoing): Promise<string> {
     this.ready();
     if (!(await this.refreshRelayAccess())) throw new Error(NO_RELAY_ACCESS);
@@ -995,7 +886,6 @@ export class Engine {
       const target = parseChannel(file.to);
       let to: string[] = target.device ? [target.device] : [];
       if (target.user !== undefined) {
-        // Les appareils résolus maintenant : ceux à qui le blob sera ouvert.
         await this.people.fresh().catch((e: unknown) => this.log('relecture de l’annuaire', e));
         to = JSON.parse((this.core as Core).recipients(target.user, target.device)) as string[];
       }
@@ -1020,7 +910,6 @@ export class Engine {
     }
   }
 
-  /** Reprend les envois interrompus par l'arrêt du service worker. */
   private async resumeOutgoing(): Promise<void> {
     if (!this.deps.files || !this.group() || !this.relayAccess) return;
     for (const file of await this.outgoing()) {
@@ -1029,7 +918,6 @@ export class Engine {
     }
   }
 
-  /** Abandonne un envoi (libère la place sur le relais). */
   async cancelUpload(path: string): Promise<void> {
     const { transfers, files } = this.ready();
     const file = (await this.outgoing()).find((o) => o.path === path);
@@ -1039,7 +927,6 @@ export class Engine {
     this.setProgress(undefined, path);
   }
 
-  /** Met à jour le fichier d'un élément de l'historique (copie, erreur…). */
   updateFile(msgId: string, change: Partial<FileView>): Promise<Item | undefined> {
     return this.updateItem(
       msgId,
@@ -1051,10 +938,6 @@ export class Engine {
     );
   }
 
-  /**
-   * Met à jour un élément de l'historique, s'il existe et vérifie `when`, et
-   * le pousse à la popup.
-   */
   private async updateItem(
     msgId: string,
     change: Partial<Item>,
@@ -1077,18 +960,12 @@ export class Engine {
     return updated;
   }
 
-  // --- Fichiers reçus, servis par le service worker (note 0029) ---
-
   private geometry(blobId: string): Geometry {
     const core = this.core;
     if (!core) throw new Error("cette extension n'est pas encore dans un groupe");
     return JSON.parse(core.fileGeometry(blobId)) as Geometry;
   }
 
-  /**
-   * Morceau chiffré `index` : la copie de l'OPFS, sinon le relais (et il
-   * rejoint la copie).
-   */
   private async sealedChunk(blobId: string, index: number): Promise<Uint8Array> {
     const { transfers, files } = this.ready();
     const cached = await files.getChunk(blobId, index);
@@ -1099,10 +976,6 @@ export class Engine {
     return sealed;
   }
 
-  /**
-   * Morceaux déchiffrés `from` à `to` (compris), dans l'ordre, quatre retirés
-   * d'avance. Chaque morceau est authentifié (STREAM) par le WebAssembly.
-   */
   private async *plainChunks(blobId: string, from: number, to: number): AsyncGenerator<Uint8Array> {
     const core = this.core;
     if (!core) throw new Error("cette extension n'est pas encore dans un groupe");
@@ -1111,7 +984,6 @@ export class Engine {
     const fill = () => {
       while (next <= to && pending.length < 4) {
         const p = this.sealedChunk(blobId, next++);
-        // Une erreur sera relevée à son tour ; pas de rejet non traité.
         p.catch(() => undefined);
         pending.push(p);
       }
@@ -1124,10 +996,6 @@ export class Engine {
     }
   }
 
-  /**
-   * Fichier lu en entier : son SHA-256 est vérifié ; s'il concorde, le relais
-   * peut l'effacer et la copie est complète. Sinon la copie est effacée.
-   */
   private async verified(blobId: string, msgId: string, sha256: Uint8Array): Promise<void> {
     const { transfers, files } = this.ready();
     if (!this.core?.checkFile(blobId, sha256)) {
@@ -1142,10 +1010,6 @@ export class Engine {
     await this.updateFile(msgId, { cached: true, error: undefined });
   }
 
-  /**
-   * Copie chiffrée d'un fichier reçu, morceau par morceau, puis vérification
-   * (petits fichiers, à la réception). Sans effet si elle existe déjà.
-   */
   async cacheFile(msgId: string): Promise<void> {
     const item = await this.item(msgId);
     const file = item?.file;
@@ -1183,12 +1047,6 @@ export class Engine {
     }
   }
 
-  /**
-   * Réponse à l'adresse `/f/<blob_id>/…` (note 0029) : le fichier en clair,
-   * en flux, depuis la copie chiffrée ou le relais. `inline` pour un type que
-   * le navigateur affiche, sinon (ou `download`) `attachment`. `Range` pour
-   * les vidéos. Une lecture complète vérifie le SHA-256 et complète la copie.
-   */
   async fileResponse(
     blobId: string,
     opts: { download: boolean; range: string | null },
@@ -1213,7 +1071,6 @@ export class Engine {
     const first = Math.floor(start / g.chunk_size);
     const last = g.size === 0 ? 0 : Math.floor(end / g.chunk_size);
     const chunks = this.plainChunks(blobId, first, last);
-    // Seule une lecture complète permet de vérifier l'empreinte.
     let hasher: Hasher | undefined = range ? undefined : new Hasher();
     const release = () => {
       hasher?.free();
@@ -1260,17 +1117,11 @@ export class Engine {
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
     });
-    // Servi sous l'origine de l'extension : origine opaque, sans script ni
-    // accès aux API (sauf le PDF, lu par le lecteur intégré du navigateur).
     if (mime !== 'application/pdf') headers.set('Content-Security-Policy', 'sandbox');
     if (range) headers.set('Content-Range', `bytes ${start}-${end}/${g.size}`);
     return new Response(body, { status: range ? 206 : 200, headers });
   }
 
-  /**
-   * Efface les copies et les clés des fichiers sortis de l'historique (50
-   * derniers) ou expirés (7 jours) : les deux partent ensemble (note 0029).
-   */
   async pruneCache(): Promise<void> {
     const files = this.deps.files;
     const core = this.core;
@@ -1303,7 +1154,6 @@ export class Engine {
     }));
   }
 
-  /** Nouvelle clé de groupe sans les membres `exclude`. */
   async rotate(exclude: string[]): Promise<number> {
     const core = this.core;
     const client = this.client;
@@ -1315,13 +1165,10 @@ export class Engine {
     return out.epoch;
   }
 
-  // --- Étape 10 : annuaire et administration ---
-
   refreshDirectory(): Promise<void> {
     return this.people.read();
   }
 
-  /** Admin : publie la racine de l'annuaire (`admin_init`), ou adopte celle déjà publiée. */
   adminInit(): Promise<void> {
     return this.people.adoptRoot(true);
   }
@@ -1365,7 +1212,6 @@ export class Engine {
     return this.people.muteService(service, muted);
   }
 
-  /** Pour les tests : arrête la connexion sans rien effacer. */
   close(): void {
     this.people.stop();
     this.client?.stop();
@@ -1376,7 +1222,6 @@ export class Engine {
   }
 }
 
-/** Personne de l'expéditeur et du destinataire d'un élément reçu (étape 10). */
 function origin(e: {
   from_user?: string;
   from_service?: boolean;

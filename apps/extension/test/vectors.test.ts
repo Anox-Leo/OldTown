@@ -1,5 +1,3 @@
-// Compatibilité du format chiffré : les vecteurs de ot-crypto, ouverts par le
-// cœur WebAssembly comme le ferait l'extension.
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { Core, Vault } from '../src/wasm/ot_wasm.js';
@@ -11,7 +9,6 @@ const A = 'dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5';
 const B = 'dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0';
 const enc = new TextEncoder();
 
-/** Octets `start, start+1, …` en base64 (comme `bytes` des vecteurs). */
 function seq(start: number, n: number): string {
   return btoa(String.fromCharCode(...Array.from({ length: n }, (_, i) => (start + i) & 0xff)));
 }
@@ -22,7 +19,6 @@ interface Roster {
   members: unknown[];
 }
 
-/** Appareil B (« windows ») des vecteurs, membre du groupe à l'époque `epoch`. */
 function deviceB(epoch: number): { vault: Vault; core: Core } {
   const roster = (vector('group_roster')['body'] as { roster: Roster }).roster;
   const vault = new Vault();

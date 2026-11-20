@@ -5,11 +5,6 @@ import { BackgroundService } from './background.service';
 import { LogoComponent } from './brand';
 import { suggestedName } from './status';
 
-/**
- * Premier lancement : « Rejoindre un appareil à moi » (URL du relais, nom,
- * puis QR inversé ou code collé), ou « J'ai reçu une invitation » (étape
- * 10 : le lien ou le code reçu de l'admin, qui porte déjà le relais).
- */
 @Component({
   selector: 'app-setup',
   changeDetection: ChangeDetectionStrategy.OnPush,

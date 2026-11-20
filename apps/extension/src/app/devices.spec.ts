@@ -30,7 +30,6 @@ describe('devices', () => {
   });
 
   it("chaque appareil garde le rang de sa couleur (comme dans l'appli Android)", () => {
-    // Rangs dans `AVATAR_COLORS` : ceux de `ConversationsTest.kt` (FNV-1a).
     const rank = (id: string) => (AVATAR_COLORS as readonly string[]).indexOf(avatarColor(id));
     expect(rank('')).toBe(1);
     expect(rank('dev_a')).toBe(0);

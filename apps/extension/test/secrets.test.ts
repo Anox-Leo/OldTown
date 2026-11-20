@@ -1,5 +1,3 @@
-// Stockage des clés (T5) : chiffré par une clé WebCrypto non exportable,
-// jamais en clair dans chrome.storage.
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { describe, expect, it } from 'vitest';
@@ -38,7 +36,6 @@ describe('SecretStore', () => {
     const key = await keys.key();
     expect(key.extractable).toBe(false);
     await expect(crypto.subtle.exportKey('raw', key)).rejects.toThrow();
-    // Un autre démarrage du service worker relit la même clé.
     const again = await new IndexedDbKeySource(idb).key();
     const kv = new MemoryKV();
     await new SecretStore(kv, keys).put('a', enc.encode('x'));
@@ -62,7 +59,6 @@ describe('SecretStore', () => {
     const before = kv.items.get('secret:a');
     await s.clear();
     expect([...kv.items.keys()]).toEqual(['device']);
-    // L'ancienne valeur, même restaurée, n'est plus lisible : la clé est neuve.
     kv.items.set('secret:a', before);
     await expect(new SecretStore(kv, new IndexedDbKeySource(idb)).get('a')).rejects.toThrow(
       /illisible/,

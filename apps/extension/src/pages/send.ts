@@ -1,12 +1,3 @@
-// Page d'envoi de fichiers (note 0026), ouverte dans une petite fenêtre : le
-// sélecteur de fichiers de l'OS peut fermer la popup, et la copie dans l'OPFS
-// doit aller à son terme. Sert aussi aux demandes de permission d'hôte
-// (note 0027), qui exigent un clic : `?image=<url>&to=<id>` (image d'une page
-// que le site ne laisse pas lire), `?grant=relay` (premier accès au
-// relais) et `?grant=otp` (remplir les codes d'office sur les pages HTTPS,
-// note 0045). Le choix de fichiers se fait d'ordinaire dans la popup (note
-// 0029) ; la page garde le sien en repli. Le service worker fait le reste ; la page peut se fermer.
-
 import type { Reply, Request, StateView } from '../shared/api';
 import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
@@ -33,20 +24,17 @@ function fail(e: unknown): void {
   $<HTMLButtonElement>('go').disabled = false;
 }
 
-/** Demande les origines manquantes (sur un clic) ; `false` si refusé. */
 async function grant(origins: string[]): Promise<boolean> {
   if (await chrome.permissions.contains({ origins })) return true;
   return chrome.permissions.request({ origins });
 }
 
-/** Copie dans l'OPFS puis confie l'envoi au service worker (sans l'attendre). */
 async function send(blob: Blob, name: string, to: string): Promise<void> {
   const path = `outgoing/${crypto.randomUUID()}`;
   await writeBlob(path, blob, (done, total) => {
     $('status').textContent = `Préparation de ${name} : ${Math.floor((done * 100) / total)} %`;
   });
   const req: Request = { type: 'send-file', path, name, mime: blob.type, size: blob.size, to };
-  // L'envoi continue dans le service worker même si la fenêtre se ferme.
   void request<string>(req).catch(() => undefined);
 }
 
@@ -103,7 +91,6 @@ async function main(): Promise<void> {
       go.disabled = true;
       try {
         if (!(await grant([relay]))) throw new Error('Accès refusé.');
-        // Le service worker relance seul ce qui attendait l'accès.
         window.close();
       } catch (e) {
         fail(e);
