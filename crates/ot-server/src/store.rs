@@ -1165,8 +1165,12 @@ pub(crate) async fn route(
             return Err(StoreError::Forbidden(
                 "personne en attente : seul l'appareil qui l'a invitée est joignable",
             ));
-        } else if to_state != UserState::Active || to_role == Role::Service {
+        } else if to_state != UserState::Active {
             false
+        } else if to_role == Role::Service {
+            // Un service ne reçoit rien, sauf de l'admin qui parraine ses
+            // appareils : la bienvenue (`service_welcome`, § 6.2).
+            role == Role::Admin
         } else if to_user == user {
             role != Role::Service
         } else {

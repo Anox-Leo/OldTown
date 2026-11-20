@@ -284,7 +284,8 @@ async fn routing_follows_the_network() {
     ok(s.insert_message(msg("b3", &n.bob_phone.id, std::slice::from_ref(&n.bob_laptop.id)), 12)
         .await);
 
-    // Service : sens unique, jamais destinataire, coupé par le membre.
+    // Service : sens unique, destinataire de l'admin seul (bienvenue de ses
+    // appareils), coupé par le membre.
     ok(s.insert_message(msg("n1", &n.notifier_1.id, std::slice::from_ref(&n.bob_phone.id)), 13)
         .await);
     refused(
@@ -292,8 +293,10 @@ async fn routing_follows_the_network() {
             .await,
         &n.carol_phone.id,
     );
+    ok(s.insert_message(msg("a3", &n.alice_phone.id, std::slice::from_ref(&n.notifier_1.id)), 13)
+        .await);
     refused(
-        s.insert_message(msg("a3", &n.alice_phone.id, std::slice::from_ref(&n.notifier_1.id)), 13)
+        s.insert_message(msg("b4", &n.bob_phone.id, std::slice::from_ref(&n.notifier_1.id)), 13)
             .await,
         &n.notifier_1.id,
     );
@@ -739,6 +742,15 @@ async fn directory_is_filtered_by_the_network() {
     let DirectoryPage { users, .. } = s.directory(&n.carol, &Known::new(), None).await.unwrap();
     assert_eq!(ids(&users), vec![n.carol.clone(), n.alice.clone()]);
     assert!(users[1].devices.is_empty() && users[1].cert.is_some() && !users[1].log.is_empty());
+
+    // L'admin voit chaque service, dont il tient le journal, même sans lien
+    // (sans ses appareils alors).
+    s.set_link(&n.notifier, &n.alice, false, 71).await.unwrap();
+    let DirectoryPage { users, .. } = s.directory(&n.alice, &Known::new(), None).await.unwrap();
+    let seen = users.iter().find(|u| u.id == n.notifier).expect("service vu par l'admin");
+    assert!(seen.devices.is_empty() && seen.cert.is_some());
+    let DirectoryPage { users, .. } = s.directory(&n.carol, &Known::new(), None).await.unwrap();
+    assert!(!users.iter().any(|u| u.id == n.notifier), "un membre non lié ne le voit pas");
 
     // Le service voit la coupure du point de vue du membre.
     s.mute_service(&n.bob, &n.notifier, true).await.unwrap();
