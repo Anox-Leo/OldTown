@@ -6,7 +6,8 @@ import { IconComponent } from './icon';
 
 /**
  * Avatar rond d'un appareil : pictogramme de son type sur sa couleur (note
- * 0031) ; « Tous mes appareils » : le signe sur la tuile de l'icône.
+ * 0031) ; « Tous mes appareils » : le signe sur la tuile de l'icône ; une
+ * personne (étape 10) : ses initiales sur sa couleur.
  */
 @Component({
   selector: 'app-avatar',
@@ -15,8 +16,10 @@ import { IconComponent } from './icon';
   template: `
     @if (kind() === 'group') {
       <app-mark [size]="markSize()" />
+    } @else if (kind() === 'person') {
+      <span class="initials" [style.font-size.px]="textSize()">{{ initials() }}</span>
     } @else {
-      <app-icon [name]="kind()" [size]="iconSize()" />
+      <app-icon [name]="iconName()" [size]="iconSize()" />
     }
   `,
   host: {
@@ -34,12 +37,25 @@ import { IconComponent } from './icon';
       border-radius: 50%;
       color: var(--on-avatar);
     }
+    .initials {
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1;
+    }
   `,
 })
 export class AvatarComponent {
   readonly kind = input.required<DeviceKind>();
   readonly color = input.required<string>();
   readonly size = input(44);
+  /** Initiales d'une personne (`kind` = `person`). */
+  readonly initials = input('');
+  protected readonly textSize = computed(() => Math.round(this.size() * 0.38));
+  /** Pictogramme d'un appareil (`group` et `person` n'en ont pas). */
+  protected readonly iconName = computed(() => {
+    const k = this.kind();
+    return k === 'group' || k === 'person' ? 'laptop' : k;
+  });
   protected readonly iconSize = computed(() => Math.round(this.size() * 0.5));
   protected readonly markSize = computed(() => Math.round(this.size() * 0.55));
 }

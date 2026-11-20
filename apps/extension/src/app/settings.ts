@@ -14,13 +14,14 @@ import { type Theme, readTheme, saveTheme } from '../shared/theme';
 import { BackgroundService } from './background.service';
 import { LOGO_BASELINE, LOGO_CAP_HEIGHT, LogoComponent } from './brand';
 import { GroupComponent } from './group';
+import { PeopleSettingsComponent } from './people-settings';
 import { connectionStatus } from './status';
 
 /** Page de réglages : appareil, relais, état, raccourci, oubli. */
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, GroupComponent, LogoComponent],
+  imports: [FormsModule, GroupComponent, LogoComponent, PeopleSettingsComponent],
   template: `
     <h1>
       <app-logo [size]="logoSize" [style.top.px]="logoShift" />
@@ -52,6 +53,8 @@ import { connectionStatus } from './status';
           <button (click)="saveUrl()" [disabled]="serverUrl === d.serverUrl">Enregistrer</button>
         </div>
       </section>
+
+      <app-people-settings />
 
       @if (s.group) {
         <section class="card">

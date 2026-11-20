@@ -32,6 +32,15 @@ import { connectionStatus } from './status';
       <p class="small muted center">
         {{ s.device?.name }} · valable encore {{ remaining(offer.expiresAt) }}
       </p>
+    } @else if (s.pending?.kind === 'invite') {
+      <h1>Invitation acceptée</h1>
+      <p class="muted">
+        En attente de la personne qui vous a invité : dès que son appareil est en ligne, il vous
+        certifie, et vos conversations apparaissent.
+      </p>
+      @if (s.inviteError; as e) {
+        <div class="banner danger" role="alert">{{ e }}</div>
+      }
     } @else if (s.pending?.kind === 'join') {
       <h1>En attente du parrain</h1>
       <p class="muted">

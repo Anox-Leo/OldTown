@@ -47,6 +47,10 @@ function render(state?: Partial<StateView>) {
       pendingSends: 0,
       transfers: [],
       relayAccess: true,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
       ...state,
     });
   }
@@ -141,6 +145,10 @@ describe('App (popup)', () => {
       pendingSends: 0,
       transfers: [],
       relayAccess: true,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: { epoch: 1, key_fingerprint: '', roster_version: 1, members },
     });
@@ -230,6 +238,10 @@ describe('App (popup)', () => {
       pendingSends: 0,
       transfers: [],
       relayAccess: true,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
         epoch: 1,
@@ -291,6 +303,10 @@ describe('App (popup)', () => {
       group: { epoch: 1, key_fingerprint: '', roster_version: 1, members: [] },
       transfers: [{ id: 'outgoing/x', direction: 'up', name: 'video.mp4', done: 50, total: 200 }],
       relayAccess: false,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
     });
     const file = (name: string, cached?: boolean) => ({
       msgId: name,
@@ -345,6 +361,10 @@ describe('App (popup)', () => {
       pendingSends: 0,
       transfers: [],
       relayAccess: true,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
         epoch: 1,
@@ -397,6 +417,10 @@ describe('App (popup)', () => {
       pendingSends: 0,
       transfers: [],
       relayAccess: true,
+      people: [],
+      admin: false,
+      alerts: [],
+      opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
         epoch: 1,
@@ -420,5 +444,101 @@ describe('App (popup)', () => {
     bg.openChat.set('dev_parti');
     fixture.detectChanges();
     expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Tous mes appareils');
+  });
+
+  it('barre latérale : mes appareils à l’ouverture (I1), puis une personne et ses appareils (I2)', () => {
+    const bg = new FakeBackground();
+    const members = ['dev_me', 'dev_tel'].map((id) => ({
+      device_id: id,
+      name: id === 'dev_me' ? 'Chrome Mac' : 'Téléphone',
+      sign_fingerprint: '',
+      exchange_fingerprint: '',
+      added_epoch: 1,
+    }));
+    const dev = (device_id: string, name: string, more = {}) => ({
+      device_id,
+      name,
+      reachable: true,
+      default: false,
+      up_to_date: true,
+      online: false,
+      ...more,
+    });
+    bg.state.set({
+      version: '0.1.0',
+      phase: 'ready',
+      connection: 'online',
+      recipient: '',
+      pendingSends: 0,
+      transfers: [],
+      relayAccess: true,
+      people: [
+        {
+          user: 'usr_me',
+          name: 'Alice',
+          role: 'admin',
+          muted: false,
+          devices: [dev('dev_me', 'Chrome Mac'), dev('dev_tel', 'Téléphone')],
+        },
+        {
+          user: 'usr_bob',
+          name: 'Bob',
+          role: 'member',
+          muted: false,
+          devices: [dev('dev_bob', 'bob-phone', { default: true, online: true })],
+        },
+      ],
+      me: 'usr_me',
+      admin: true,
+      alerts: [],
+      opened: {},
+      device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
+      group: { epoch: 1, key_fingerprint: '', roster_version: 1, members },
+    });
+    bg.items.set([
+      {
+        msgId: 'r',
+        from: 'dev_bob',
+        fromName: 'bob-phone',
+        createdAt: new Date().toISOString(),
+        kind: 'text',
+        body: 'coucou',
+        to: ['dev_me'],
+        fromUser: 'usr_bob',
+      },
+    ]);
+    TestBed.configureTestingModule({ providers: [{ provide: BackgroundService, useValue: bg }] });
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    // I1 : mes appareils d'abord ; le message de Bob n'y est pas.
+    expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
+    const rail = [...el.querySelectorAll<HTMLButtonElement>('app-rail button')];
+    expect(rail.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Mes appareils',
+      'Bob, 1 non lu',
+      'Inviter une personne',
+    ]);
+    // I2 : Bob (ses appareils par défaut), puis ses appareils joignables.
+    rail[1]?.click();
+    fixture.detectChanges();
+    expect(el.querySelector('h1')?.textContent?.trim()).toBe('Bob');
+    expect(rows(el)).toEqual(['Bob', 'bob-phone']);
+    expect(el.querySelector('.chats li:nth-child(1) .last')?.textContent).toContain('coucou');
+    openChat(fixture, 'Bob');
+    expect(el.querySelector('.messages .msg.in .time')?.textContent).toContain('bob-phone');
+    expect(el.querySelector('textarea')?.getAttribute('placeholder')).toBe('Message à Bob');
+  });
+
+  it('sans autre personne et sans être admin : pas de barre latérale', () => {
+    const el = render({
+      phase: 'ready',
+      connection: 'online',
+      device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
+      group: { epoch: 1, key_fingerprint: '', roster_version: 1, members: [] },
+      people: [{ user: 'usr_me', name: 'Léa', role: 'member', muted: false, devices: [] }],
+      me: 'usr_me',
+    });
+    expect(el.querySelector('app-rail')).toBeNull();
   });
 });
