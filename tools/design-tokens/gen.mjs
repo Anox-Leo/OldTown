@@ -173,7 +173,7 @@ export function androidColor(color) {
 const cssFamily = (list) => list.map((f) => (f.includes(' ') ? `'${f}'` : f)).join(', ');
 
 function css(tokens) {
-  const lines = [`/* ${HEADER} */`, ':root {'];
+  const lines = [':root {'];
   for (const [n, c] of roles(tokens, 'dark')) lines.push(`  --${n}: ${c};`);
   for (const [n, v] of dims(tokens, 'radius')) lines.push(`  --radius-${n}: ${v}px;`);
   for (const [n, v] of dims(tokens, 'space')) lines.push(`  --space-${n}: ${v}px;`);
@@ -194,14 +194,10 @@ function css(tokens) {
 function ts(tokens) {
   const badge = children(tokens.badge).map((k) => `  ${k}: '${hex(tokens, `badge.${k}`)}',`);
   return [
-    `// ${HEADER}`,
-    '',
-    '/** Couleurs des avatars, dans l\'ordre : la couleur d\'un appareil en dépend (`devices.ts`). */',
     'export const AVATAR_COLORS = [',
     ...avatars(tokens).map((c) => `  '${c}',`),
     '] as const;',
     '',
-    '/** Badge de l\'icône (`setBadgeBackgroundColor`) : le même dans les deux thèmes du navigateur. */',
     'export const BADGE = {',
     ...badge,
     '} as const;',
