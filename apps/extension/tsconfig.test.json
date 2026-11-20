@@ -1,7 +1,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "chrome"]
+    "types": ["node", "chrome"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"]
   },
   "include": ["test/**/*.ts", "src/background/**/*.ts", "src/shared/**/*.ts", "src/wasm/*.d.ts"]
 }

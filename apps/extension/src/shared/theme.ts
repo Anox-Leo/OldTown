@@ -20,7 +20,7 @@ export function saveTheme(theme: Theme, storage: Storage = localStorage): void {
 
 export function followTheme(): void {
   applyTheme(readTheme());
-  addEventListener('storage', (e) => {
+  window.addEventListener('storage', (e) => {
     if (e.key === THEME_KEY || e.key === null) applyTheme(readTheme());
   });
 }

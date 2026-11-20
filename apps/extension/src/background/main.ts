@@ -69,13 +69,9 @@ function engine(): Promise<Engine> {
 chrome.permissions.onAdded.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
 chrome.permissions.onRemoved.addListener(() => void engine().then((e) => e.refreshRelayAccess()));
 
-interface FetchLike {
-  readonly request: globalThis.Request;
-  respondWith(response: Promise<Response> | Response): void;
-}
+declare const self: ServiceWorkerGlobalScope;
 
-(self as unknown as EventTarget).addEventListener('fetch', (event) => {
-  const fetchEvent = event as unknown as FetchLike;
+self.addEventListener('fetch', (fetchEvent) => {
   const url = new URL(fetchEvent.request.url);
   if (url.origin !== new URL(chrome.runtime.getURL('')).origin) return;
   const file = parseFilePath(url);

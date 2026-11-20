@@ -209,11 +209,23 @@ export class Cli {
     return id;
   }
 
-  listen(): { messages: Record<string, unknown>[]; stop(): void } {
+  listen(): { messages: Record<string, unknown>[]; ready: Promise<void>; stop(): void } {
     const proc = spawn(binary('ot'), ['--home', this.home, 'listen', '--json'], {
-      stdio: ['ignore', 'pipe', 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const messages: Record<string, unknown>[] = [];
+    const ready = new Promise<void>((resolve, reject) => {
+      let log = '';
+      proc.stderr.on('data', (chunk: Buffer) => {
+        process.stderr.write(chunk);
+        log += chunk.toString('utf8');
+        if (log.includes('connecté,')) resolve();
+      });
+      proc.on('exit', (code) =>
+        reject(new Error(`ot listen terminé (${code}) avant la connexion`)),
+      );
+    });
+    ready.catch(() => undefined);
     let buf = '';
     proc.stdout.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8');
@@ -224,7 +236,7 @@ export class Cli {
         if (line) messages.push(JSON.parse(line) as Record<string, unknown>);
       }
     });
-    return { messages, stop: () => proc.kill() };
+    return { messages, ready, stop: () => proc.kill() };
   }
 
   spawn(...args: string[]): { out: () => string; done: Promise<string>; stop(): void } {

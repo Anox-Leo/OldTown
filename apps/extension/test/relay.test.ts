@@ -65,7 +65,7 @@ describe('extension contre ot-server', () => {
     const listen = phone.listen();
     try {
       await eventually('connexion', () => engine.state().connection === 'online' || undefined);
-      await new Promise((r) => setTimeout(r, 500));
+      await listen.ready;
       await engine.send('https://exemple.org/page', '');
       const got = await eventually('reçu par le téléphone', () => listen.messages[0]);
       expect(got).toMatchObject({

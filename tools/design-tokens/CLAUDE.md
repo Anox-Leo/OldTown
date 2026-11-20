@@ -2,7 +2,8 @@
 
 Générateur des jetons de design (note 0059, D50). Source unique :
 `design/tokens.json` (format DTCG). Sorties, **jamais modifiées à la main**
-(en-tête « fichier généré ») :
+(`gen.mjs --check` le vérifie en CI ; en-tête « fichier généré » sauf pour
+l'extension, qui n'admet aucun commentaire, note 0066) :
 
 - `apps/extension/src/tokens.css` : rôles en variables CSS (`:root` sombre,
   `@media (prefers-color-scheme: light)` clair), arrondis, espacements,

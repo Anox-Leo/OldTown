@@ -1,6 +1,3 @@
-// Fichier généré par tools/design-tokens/gen.mjs depuis design/tokens.json : ne pas modifier.
-
-/** Couleurs des avatars, dans l'ordre : la couleur d'un appareil en dépend (`devices.ts`). */
 export const AVATAR_COLORS = [
   '#c4534f',
   '#c77a1c',
@@ -14,7 +11,6 @@ export const AVATAR_COLORS = [
   '#5a7488',
 ] as const;
 
-/** Badge de l'icône (`setBadgeBackgroundColor`) : le même dans les deux thèmes du navigateur. */
 export const BADGE = {
   ok: '#b4552a',
   problem: '#c10007',
