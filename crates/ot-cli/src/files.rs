@@ -22,6 +22,10 @@ pub struct Config {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<DeviceId>,
+    /// `service` pour un appareil de service (`ot pair join --qr
+    /// --service`) : pas de groupe, une personne de service. Absent sinon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ot_core::Role>,
 }
 
 pub struct Home(PathBuf);
@@ -208,9 +212,16 @@ mod tests {
             server_url: "ws://relais:7878".into(),
             device_name: "mac".into(),
             device_id: Some(DeviceId::generate()),
+            role: None,
         };
         home.save_config(&config).unwrap();
         assert_eq!(home.load_config().unwrap().unwrap().device_id, config.device_id);
+        // Appareil de service : le rôle est écrit, et relu.
+        let service = Config { role: Some(ot_core::Role::Service), ..config };
+        home.save_config(&service).unwrap();
+        let text = fs::read_to_string(home.path().join(CONFIG)).unwrap();
+        assert!(text.contains("role = \"service\""), "{text}");
+        assert_eq!(home.load_config().unwrap().unwrap().role, Some(ot_core::Role::Service));
 
         let seen = [Ulid::from_parts(1, 2), Ulid::from_parts(3, 4)];
         home.save_seen(seen.iter()).unwrap();

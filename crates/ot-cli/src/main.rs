@@ -1,5 +1,6 @@
 mod files;
 mod otp;
+mod people;
 mod transfer;
 
 use std::io::{IsTerminal, Read};
@@ -11,7 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use ot_core::{
     BlobId, Client, ClientConfig, ContentKind, Dedup, DeviceId, Event, Events, FileInfo, GroupInfo,
-    Identity, OutgoingFile, Received, ReceivedOtp, TlsRoots,
+    Identity, Origin, OutgoingFile, Person, Received, ReceivedOtp, TlsRoots,
 };
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
@@ -62,6 +63,13 @@ enum Command {
         /// tous les autres.
         #[arg(long = "to")]
         to: Vec<String>,
+        /// Une autre personne (nom ou identifiant), à ses appareils par
+        /// défaut ; une copie part vers mes appareils.
+        #[arg(long = "to-user", conflicts_with = "to")]
+        to_user: Option<String>,
+        /// Avec --to-user : un seul de ses appareils (nom ou identifiant).
+        #[arg(long, requires = "to_user")]
+        device: Option<String>,
         /// Fichier à envoyer. Relancer la même commande reprend un envoi
         /// interrompu.
         #[arg(long, conflicts_with = "text")]
@@ -87,9 +95,28 @@ enum Command {
         #[arg(long)]
         to: Option<PathBuf>,
     },
-    /// Liste les appareils enregistrés sur le relais et signale ceux qui ne
-    /// sont pas membres du groupe.
+    /// Liste les appareils de ma personne enregistrés sur le relais et
+    /// signale ceux qui ne sont pas membres du groupe.
     Devices,
+    /// Règle ou retire un appareil de ma personne (l'admin : de tous).
+    #[command(subcommand)]
+    Device(DeviceCommand),
+    /// Personnes que je peux joindre (annuaire vérifié) et leurs appareils.
+    Users,
+    /// Coupe (`on`) ou rouvre (`off`) un service lié à ma personne : ses
+    /// codes et alertes ne m'arrivent plus.
+    Mute {
+        /// Service (nom ou identifiant).
+        service: String,
+        state: OnOff,
+    },
+    /// Rejoindre OldTown par l'invitation d'une personne.
+    #[command(subcommand)]
+    Invite(InviteCommand),
+    /// Administration (appareil de l'admin) : annuaire, personnes, liens,
+    /// services.
+    #[command(subcommand)]
+    Admin(AdminCommand),
     /// Groupe d'appareils et clé de groupe.
     #[command(subcommand)]
     Group(GroupCommand),
@@ -97,12 +124,18 @@ enum Command {
     #[command(subcommand)]
     Pair(PairCommand),
     /// Relaie les codes à usage unique lus par otp-relay (socket Unix) vers
-    /// des membres du groupe. Tourne jusqu'à l'arrêt (service).
+    /// des membres du groupe, ou vers des personnes. Tourne jusqu'à l'arrêt
+    /// (service).
     OtpBridge {
         /// Destinataire (nom d'un membre du groupe), répétable ; ou, dans
         /// `OT_OTP_TO`, des noms séparés par des virgules.
-        #[arg(long = "to", required = true, env = "OT_OTP_TO", value_delimiter = ',')]
+        #[arg(long = "to", env = "OT_OTP_TO", value_delimiter = ',')]
         to: Vec<String>,
+        /// Personne destinataire (nom ou identifiant), à ses appareils par
+        /// défaut, répétable ; ou, dans `OT_OTP_TO_USER`, séparées par des
+        /// virgules. Ne se combine pas avec --to.
+        #[arg(long = "to-user", env = "OT_OTP_TO_USER", value_delimiter = ',')]
+        to_user: Vec<String>,
         /// Socket d'otp-relay (par défaut
         /// `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`).
         #[arg(long)]
@@ -156,6 +189,10 @@ enum PairCommand {
         /// Affiche un QR que le parrain scanne : rien à taper ici.
         #[arg(long)]
         qr: bool,
+        /// Avec --qr : appareil d'une personne de service (codes, alertes),
+        /// sans groupe, ajouté par l'admin (`ot admin service add`).
+        #[arg(long, requires = "qr")]
+        service: bool,
         /// Repart de zéro si cet appareil est déjà enregistré.
         #[arg(long)]
         force: bool,
@@ -164,6 +201,110 @@ enum PairCommand {
     /// affiché par `ot pair join --qr`.
     Sponsor {
         /// Texte du QR.
+        qr: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DeviceCommand {
+    /// Nature d'un appareil : phone, laptop, desktop, browser ou cli (une
+    /// CLI n'est jamais joignable ni par défaut).
+    Kind {
+        /// Appareil (nom ou identifiant).
+        device: String,
+        kind: String,
+    },
+    /// Appareil par défaut de ma personne (reçoit ce qu'on m'envoie).
+    Default { device: String, state: OnOff },
+    /// Appareil joignable par les autres personnes.
+    Reachable { device: String, state: OnOff },
+    /// Retire un appareil : nouvelle clé de groupe sans lui, roster publié,
+    /// puis révocation par le relais.
+    Revoke { device: String },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Subcommand)]
+enum InviteCommand {
+    /// Rejoint OldTown avec le code (`ot2-…`) ou le lien (`oldtown://invite?…`)
+    /// reçu de l'admin, comme premier appareil de sa personne.
+    Join {
+        /// Code ou lien d'invitation.
+        code: String,
+        /// Nom de cet appareil.
+        #[arg(long)]
+        name: String,
+        /// URL du relais (déjà dans un lien `oldtown://invite?…`).
+        #[arg(long)]
+        server: Option<String>,
+        /// Repart de zéro si cet appareil est déjà enregistré.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// Publie le certificat de l'admin (son empreinte est l'ancre de
+    /// l'annuaire), ou adopte celui d'un autre appareil de l'admin.
+    Init,
+    /// Invite une personne : affiche le code (et le QR), puis attend sa
+    /// demande pour la certifier. Ctrl-C : l'invitation reste valable, un
+    /// prochain `ot listen` ici la mènera à son terme.
+    Invite {
+        /// Nom de la personne.
+        name: String,
+        /// Personne à lier dans les deux sens (nom ou identifiant), répétable.
+        #[arg(long = "link")]
+        links: Vec<String>,
+        /// Affiche aussi l'invitation en QR.
+        #[arg(long)]
+        qr: bool,
+    },
+    /// Nouvelle invitation pour une personne qui a perdu ses appareils
+    /// (révoqués ; ses liens restent).
+    Reinvite {
+        person: String,
+        #[arg(long)]
+        qr: bool,
+    },
+    /// Toutes les personnes, leurs appareils et leurs liens, vus par le relais.
+    Users,
+    /// Liens entre personnes (dans les deux sens ; d'un service vers une
+    /// personne, dans ce seul sens).
+    #[command(subcommand)]
+    Link(LinkCommand),
+    /// Révoque une personne : ses appareils, ses liens, son certificat.
+    Revoke { person: String },
+    /// Renomme une personne (son certificat est re-signé).
+    Rename { person: String, name: String },
+    /// Personnes de service (codes, alertes).
+    #[command(subcommand)]
+    Service(ServiceCommand),
+}
+
+#[derive(Subcommand)]
+enum LinkCommand {
+    /// Pose le lien de `from` vers `to` (et retour, entre deux personnes).
+    Add { from: String, to: String },
+    /// Retire le lien.
+    Remove { from: String, to: String },
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Ajoute l'appareil de service affiché par `ot pair join --qr --service`
+    /// au service nommé, créé à son premier appareil.
+    Add {
+        /// Nom du service.
+        service: String,
+        /// Texte du QR (`oldtown://sponsor?…`).
+        #[arg(long)]
         qr: String,
     },
 }
@@ -178,14 +319,38 @@ fn main() -> Result<()> {
             Command::Init { server, name, device_id, force } => {
                 init(&home, server, name, device_id, force)
             }
+            Command::Send { file: Some(path), to_user: Some(user), device, .. } => {
+                people::send_file_to_user(&home, &path, &user, device.as_deref()).await
+            }
+            Command::Send { text, to_user: Some(user), device, file: None, .. } => {
+                people::send_to_user(&home, text, &user, device.as_deref()).await
+            }
             Command::Send { file: Some(path), to, .. } => send_file(&home, &path, to).await,
-            Command::Send { text, to, file: None } => send(&home, text, to).await,
+            Command::Send { text, to, file: None, .. } => send(&home, text, to).await,
             Command::Listen { json, download_dir } => {
                 listen(&home, json, download_dir, offset).await
             }
             Command::Files => list_files(&home, offset).await,
             Command::Download { blob, to } => download(&home, &blob, to).await,
             Command::Devices => devices(&home).await,
+            Command::Device(DeviceCommand::Kind { device, kind }) => {
+                people::device_kind(&home, &device, &kind).await
+            }
+            Command::Device(DeviceCommand::Default { device, state }) => {
+                people::device_flag(&home, &device, people::Flag::Default, state).await
+            }
+            Command::Device(DeviceCommand::Reachable { device, state }) => {
+                people::device_flag(&home, &device, people::Flag::Reachable, state).await
+            }
+            Command::Device(DeviceCommand::Revoke { device }) => {
+                people::device_revoke(&home, &device).await
+            }
+            Command::Users => people::users(&home).await,
+            Command::Mute { service, state } => people::mute(&home, &service, state).await,
+            Command::Invite(InviteCommand::Join { code, name, server, force }) => {
+                people::invite_join(&home, &code, &name, server, force).await
+            }
+            Command::Admin(cmd) => people::admin(&home, cmd, offset).await,
             Command::Group(GroupCommand::Init { force }) => group_init(&home, force),
             Command::Group(GroupCommand::Show) => group_show(&home),
             Command::Group(GroupCommand::Rotate { exclude }) => group_rotate(&home, exclude).await,
@@ -193,12 +358,12 @@ fn main() -> Result<()> {
             Command::Pair(PairCommand::Join { server, name, code: Some(code), force, .. }) => {
                 pair_join(&home, server, name, code, force).await
             }
-            Command::Pair(PairCommand::Join { server, name, code: None, force, .. }) => {
-                pair_join_qr(&home, server, name, force).await
-            }
+            Command::Pair(PairCommand::Join {
+                server, name, code: None, force, service, ..
+            }) => pair_join_qr(&home, server, name, force, service).await,
             Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
-            Command::OtpBridge { to, socket, min_confidence } => {
-                otp_bridge(&home, to, socket, min_confidence).await
+            Command::OtpBridge { to, to_user, socket, min_confidence } => {
+                otp_bridge(&home, to, to_user, socket, min_confidence).await
             }
         }
     })
@@ -233,10 +398,11 @@ fn init(
     let device_id = match device_id {
         Some(id) => Some(id.parse().map_err(|e| anyhow!("{e}"))?),
         None if new_key => None,
-        None => existing.and_then(|c| c.device_id),
+        None => existing.as_ref().and_then(|c| c.device_id.clone()),
     };
     let registered = device_id.is_some();
-    home.save_config(&Config { server_url, device_name: device_name.clone(), device_id })?;
+    let role = existing.as_ref().and_then(|c| c.role);
+    home.save_config(&Config { server_url, device_name: device_name.clone(), device_id, role })?;
 
     println!("Configuration : {}", home.path().display());
     println!("Clé publique  : {}", identity.public_key_b64());
@@ -426,55 +592,123 @@ fn name_of<'a>(group: Option<&'a GroupInfo>, id: &'a DeviceId) -> &'a str {
     group.and_then(|g| g.member(id)).map_or(id.as_str(), |m| m.name.as_str())
 }
 
+/// Noms d'affichage des appareils et des personnes : mon roster d'abord,
+/// puis l'annuaire vérifié (étape 10).
+#[derive(Default)]
+struct Names {
+    group: Option<GroupInfo>,
+    people: Vec<Person>,
+}
+
+impl Names {
+    /// Appareil de mon groupe : son nom ; d'une autre personne :
+    /// `personne/appareil` ; inconnu : son identifiant.
+    fn device(&self, id: &DeviceId) -> String {
+        if let Some(m) = self.group.as_ref().and_then(|g| g.member(id)) {
+            return m.name.clone();
+        }
+        self.people
+            .iter()
+            .find_map(|p| p.roster.member(id).map(|m| format!("{}/{}", p.name, m.name)))
+            .unwrap_or_else(|| id.to_string())
+    }
+
+    fn user(&self, id: &ot_core::UserId) -> String {
+        self.people.iter().find(|p| &p.id == id).map_or_else(|| id.to_string(), |p| p.name.clone())
+    }
+
+    /// Origine d'un message (étape 10), en champs JSON ; rien pour un
+    /// message de mon groupe.
+    fn origin(&self, o: &Origin, line: &mut serde_json::Value) {
+        if let Some(u) = &o.from_user {
+            line["from_user"] = u.to_string().into();
+            line["from_user_name"] = self.user(u).into();
+        }
+        if o.from_service {
+            line["from_service"] = true.into();
+        }
+        if let Some(u) = &o.to_user {
+            line["to_user"] = u.to_string().into();
+            line["to_user_name"] = self.user(u).into();
+        }
+    }
+
+    /// Préfixe d'affichage d'une copie d'un de mes envois (D43).
+    fn copy(&self, o: &Origin) -> String {
+        o.to_user.as_ref().map_or_else(String::new, |u| format!("(copie, à {}) ", self.user(u)))
+    }
+}
+
 /// Affichage commun à `listen` et `pair new`. Renvoie `true` pour un message.
-fn print_event(
-    event: &Event,
-    group: Option<&GroupInfo>,
-    json: bool,
-    offset: UtcOffset,
-) -> Result<bool> {
+fn print_event(event: &Event, names: &Names, json: bool, offset: UtcOffset) -> Result<bool> {
     match event {
         Event::Connected { pending } => eprintln!("connecté, {pending} message(s) en attente"),
         Event::Disconnected { reason } => eprintln!("déconnecté : {reason} ; nouvel essai…"),
         Event::AuthFailed { message } => eprintln!("authentification refusée : {message}"),
         Event::Rejected { from, reason, .. } => {
-            eprintln!("⚠ message de {} rejeté : {reason}", name_of(group, from))
+            eprintln!("⚠ message de {} rejeté : {reason}", names.device(from))
         }
         Event::GroupChanged { epoch } => eprintln!("groupe mis à jour (époque {epoch})"),
         Event::PairingCompleted { name, .. } => eprintln!("« {name} » a rejoint le groupe"),
         Event::KeyringError { message } => eprintln!("⚠ {message}"),
         Event::DirectoryChanged => {}
         Event::DirectoryRejected { user, reason } => {
-            eprintln!("⚠ annuaire : {user} refusé : {reason}")
+            eprintln!("⚠ annuaire : {} refusé : {reason}", names.user(user))
         }
         Event::DirectoryFork => {
             eprintln!("⚠ le relais publie pour cet appareil un autre groupe que le sien")
         }
-        Event::KeysChanged { user } => eprintln!("⚠ {user} a de nouvelles clés"),
+        Event::KeysChanged { user } => {
+            eprintln!("⚠ {} a de nouvelles clés (réinvitée ?)", names.user(user))
+        }
         Event::PersonJoined { name, device_name, fingerprint, .. } => {
             eprintln!("« {name} » a rejoint OldTown ({device_name}, empreinte {fingerprint})")
         }
         Event::Joined { user } => eprintln!("invitation acceptée : personne {user} certifiée"),
         Event::InviteFailed { reason } => eprintln!("⚠ invitation : {reason}"),
         Event::Message(m) => {
-            print_message(m, name_of(group, &m.from), json, offset)?;
+            print_message(m, names, json, offset)?;
             return Ok(true);
         }
         Event::File(f) => {
-            print_file(&f.file, name_of(group, &f.file.from), json, offset)?;
+            print_file(&f.file, names, json, offset)?;
             return Ok(true);
         }
         Event::Otp(o) => {
-            print_otp(o, name_of(group, &o.from), json, offset)?;
+            print_otp(o, names, json, offset)?;
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn print_otp(o: &ReceivedOtp, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+/// Relit les noms après un changement du groupe ou de l'annuaire.
+async fn refresh_names(client: &Client, event: &Event, names: &mut Names) {
+    match event {
+        Event::GroupChanged { .. } => {
+            if let Ok(Ok(g)) = tokio::time::timeout(COMMAND_TIMEOUT, client.group()).await {
+                names.group = g;
+            }
+        }
+        Event::DirectoryChanged | Event::Connected { .. } => {
+            if let Ok(Ok(p)) = tokio::time::timeout(COMMAND_TIMEOUT, client.directory()).await {
+                names.people = p;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Appareil d'une personne de service (`ot pair join --qr --service`) : pas
+/// de groupe, et c'est normal.
+fn is_service(home: &Home) -> bool {
+    home.load_config().ok().flatten().is_some_and(|c| c.role == Some(ot_core::Role::Service))
+}
+
+fn print_otp(o: &ReceivedOtp, names: &Names, json: bool, offset: UtcOffset) -> Result<()> {
+    let from = names.device(&o.from);
     if json {
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "msg_id": o.msg_id.to_string(),
             "from": o.from,
             "from_name": from,
@@ -486,20 +720,24 @@ fn print_otp(o: &ReceivedOtp, from: &str, json: bool, offset: UtcOffset) -> Resu
             "sender_domain": o.otp.sender_domain,
             "sender_verified": o.otp.sender_verified,
             "expires_at": o.otp.expires_at,
+            "auto_fill": o.auto_fill(),
         });
+        names.origin(&o.origin, &mut line);
         println!("{line}");
     } else {
         let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
         let when = o.created_at.to_offset(offset).format(&fmt)?;
         let verified = if o.otp.sender_verified { "" } else { ", expéditeur non vérifié" };
-        println!("[{when}] {from} 🔑 {} ({}{verified})", o.otp.display, o.otp.sender_domain);
+        let copy = names.copy(&o.origin);
+        println!("[{when}] {copy}{from} 🔑 {} ({}{verified})", o.otp.display, o.otp.sender_domain);
     }
     Ok(())
 }
 
-fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+fn print_file(f: &FileInfo, names: &Names, json: bool, offset: UtcOffset) -> Result<()> {
+    let from = names.device(&f.from);
     if json {
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "msg_id": f.msg_id.to_string(),
             "from": f.from,
             "from_name": from,
@@ -510,12 +748,14 @@ fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result
             "mime": f.mime,
             "size": f.size,
         });
+        names.origin(&f.origin, &mut line);
         println!("{line}");
     } else {
         let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
         let when = f.created_at.to_offset(offset).format(&fmt)?;
         println!(
-            "[{when}] {from} 📎 {} ({}) : ot download {}",
+            "[{when}] {}{from} 📎 {} ({}) : ot download {}",
+            names.copy(&f.origin),
             f.name,
             human_size(f.size),
             f.blob_id
@@ -524,9 +764,10 @@ fn print_file(f: &FileInfo, from: &str, json: bool, offset: UtcOffset) -> Result
     Ok(())
 }
 
-fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Result<()> {
+fn print_message(m: &Received, names: &Names, json: bool, offset: UtcOffset) -> Result<()> {
+    let from = names.device(&m.from);
     if json {
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "msg_id": m.msg_id.to_string(),
             "from": m.from,
             "from_name": from,
@@ -534,13 +775,15 @@ fn print_message(m: &Received, from: &str, json: bool, offset: UtcOffset) -> Res
             "kind": m.content.kind,
             "body": m.content.body,
         });
+        names.origin(&m.origin, &mut line);
         println!("{line}");
     } else {
         let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
         let when = m.created_at.to_offset(offset).format(&fmt)?;
+        let copy = names.copy(&m.origin);
         match m.content.kind {
-            ContentKind::Link => println!("[{when}] {from} 🔗 {}", m.content.body),
-            ContentKind::Text => println!("[{when}] {from} : {}", m.content.body),
+            ContentKind::Link => println!("[{when}] {copy}{from} 🔗 {}", m.content.body),
+            ContentKind::Text => println!("[{when}] {copy}{from} : {}", m.content.body),
         }
     }
     Ok(())
@@ -554,8 +797,9 @@ async fn listen(
 ) -> Result<()> {
     let (client, mut events) = start(home)?;
     let mut seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, home.load_seen());
-    let mut group = ot_core::group_info(&home.keyring()).ok().flatten();
-    if group.is_none() {
+    let mut names =
+        Names { group: ot_core::group_info(&home.keyring()).ok().flatten(), people: Vec::new() };
+    if names.group.is_none() && !is_service(home) {
         eprintln!("⚠ {}", ot_core::ClientError::NoGroup);
     }
 
@@ -565,11 +809,7 @@ async fn listen(
             _ = tokio::signal::ctrl_c() => break,
         };
         let Some(event) = event else { break };
-        if let Event::GroupChanged { .. } = event
-            && let Ok(Ok(g)) = tokio::time::timeout(COMMAND_TIMEOUT, client.group()).await
-        {
-            group = g;
-        }
+        refresh_names(&client, &event, &mut names).await;
         if let (Event::File(f), Some(dir)) = (&event, &download_dir) {
             // Téléchargement en tâche de fond : la réception continue.
             let (client, dir, blob) = (client.clone(), dir.clone(), f.file.blob_id.clone());
@@ -586,7 +826,7 @@ async fn listen(
             Event::Otp(o) => Some(o.msg_id),
             _ => None,
         };
-        if print_event(&event, group.as_ref(), json, offset)?
+        if print_event(&event, &names, json, offset)?
             && let Some(msg_id) = msg_id
         {
             seen.insert(msg_id);
@@ -602,31 +842,71 @@ async fn listen(
 /// Délai maximal entre deux tentatives de connexion au socket d'otp-relay.
 const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
 
+/// Destinataires du pont : des membres de mon groupe, ou des personnes
+/// (étape 10, appareil de service ou membre).
+#[derive(Clone)]
+enum OtpTarget {
+    Devices(Vec<String>),
+    People(Vec<String>),
+}
+
 async fn otp_bridge(
     home: &Home,
     to: Vec<String>,
+    to_user: Vec<String>,
     socket: Option<PathBuf>,
     min_confidence: f64,
 ) -> Result<()> {
     if !(0.0..=1.0).contains(&min_confidence) {
         bail!("--min-confidence doit être compris entre 0 et 1");
     }
+    let clean = |names: Vec<String>| -> Vec<String> {
+        names.iter().map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect()
+    };
+    let target = match (clean(to), clean(to_user)) {
+        (to, users) if !to.is_empty() && !users.is_empty() => {
+            bail!("--to (appareils de mon groupe) et --to-user (personnes) ne se combinent pas")
+        }
+        (to, _) if !to.is_empty() => OtpTarget::Devices(to),
+        (_, users) if !users.is_empty() => OtpTarget::People(users),
+        _ => bail!("aucun destinataire : --to ou --to-user (ou OT_OTP_TO, OT_OTP_TO_USER)"),
+    };
     let socket = match socket {
         Some(path) => path,
         None => otp::default_socket()?,
     };
-    let to: Vec<String> =
-        to.iter().map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect();
-    if to.is_empty() {
-        bail!("aucun destinataire : --to ou OT_OTP_TO");
-    }
     // Une faute dans un nom de destinataire se voit dès le démarrage.
-    let group = group(home)?;
-    for name in &to {
-        resolve(&group, name)?;
+    if let OtpTarget::Devices(to) = &target {
+        let group = group(home)?;
+        for name in to {
+            resolve(&group, name)?;
+        }
     }
 
     let (client, mut events) = start(home)?;
+    if let OtpTarget::People(names) = &target {
+        // Les personnes se lisent dans l'annuaire vérifié : relais injoignable
+        // au démarrage, les noms seront vérifiés au premier code.
+        match tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await {
+            Ok(Ok(people)) => {
+                if people.is_empty() {
+                    client.shutdown().await;
+                    bail!(
+                        "pas d'annuaire sur cet appareil : --to-user demande une installation \
+                         à plusieurs personnes (voir `ot pair join --qr --service`)"
+                    );
+                }
+                for name in names {
+                    if let Err(e) = people::find_person(&people, name) {
+                        client.shutdown().await;
+                        return Err(e);
+                    }
+                }
+            }
+            Ok(Err(e)) => eprintln!("⚠ annuaire illisible : {e}"),
+            Err(_) => eprintln!("⚠ relais injoignable : les noms seront vérifiés au premier code"),
+        }
+    }
     // Une seule session, tenue tant que le pont tourne ; il ne lit pas les
     // messages qui lui arrivent.
     tokio::spawn(async move {
@@ -649,7 +929,7 @@ async fn otp_bridge(
     let mut backoff = Duration::from_secs(1);
     loop {
         let session =
-            otp_session(home, &client, &socket, &to, min_confidence, &mut sent, &mut backoff);
+            otp_session(home, &client, &socket, &target, min_confidence, &mut sent, &mut backoff);
         let result = tokio::select! {
             r = session => r,
             _ = tokio::signal::ctrl_c() => break,
@@ -674,7 +954,7 @@ async fn otp_session(
     home: &Home,
     client: &Client,
     socket: &std::path::Path,
-    to: &[String],
+    target: &OtpTarget,
     min_confidence: f64,
     sent: &mut otp::Sent,
     backoff: &mut Duration,
@@ -725,20 +1005,34 @@ async fn otp_session(
         if let Err(e) = home.save_otp_sent(sent) {
             eprintln!("⚠ codes envoyés non sauvegardés : {e:#}");
         }
-        tokio::spawn(send_otp(client.clone(), to.to_vec(), code));
+        tokio::spawn(send_otp(client.clone(), target.clone(), code));
     }
     Ok(())
 }
 
-/// Envoie un code aux destinataires, résolus dans le roster du moment ;
-/// abandonne à son expiration (relais injoignable jusque-là).
-async fn send_otp(client: Client, to: Vec<String>, code: ot_core::Otp) {
+/// Envoie un code aux destinataires, résolus dans le roster (ou dans
+/// l'annuaire) du moment ; abandonne à son expiration (relais injoignable
+/// jusque-là).
+async fn send_otp(client: Client, target: OtpTarget, code: ot_core::Otp) {
     let domain = code.sender_domain.clone();
     let left = code.expires_at - OffsetDateTime::now_utc().unix_timestamp();
     let send = async {
-        let group = client.group().await?.ok_or(ot_core::ClientError::NoGroup)?;
-        let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
-        client.send_otp(&code, recipients).await?;
+        match &target {
+            OtpTarget::Devices(to) => {
+                let group = client.group().await?.ok_or(ot_core::ClientError::NoGroup)?;
+                let recipients =
+                    to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
+                client.send_otp(&code, recipients).await?;
+            }
+            OtpTarget::People(names) => {
+                let people = client.fresh_directory().await?;
+                let users = people::otp_recipients(&people, names);
+                if users.is_empty() {
+                    bail!("aucune des personnes de --to-user n'est joignable");
+                }
+                client.send_otp_to(&users, &code).await?;
+            }
+        }
         anyhow::Ok(())
     };
     let wait = Duration::from_secs(u64::try_from(left).unwrap_or(0).max(1));
@@ -753,10 +1047,19 @@ async fn devices(home: &Home) -> Result<()> {
     let (client, mut events) = start(home)?;
     connected(&mut events).await?;
     let me = client.device_id().clone();
-    let list = within(client.list_devices()).await?;
+    let list = within(client.list_devices()).await;
+    // Étape 10 : ma personne et les profils de ses appareils, s'il y a un
+    // annuaire (sinon, vide tout de suite).
+    let people = tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await;
     client.shutdown().await;
+    let list = list?;
+    let people = people.ok().and_then(Result::ok).unwrap_or_default();
+    let person = people.iter().find(|p| p.roster.contains(&me));
     let group = ot_core::group_info(&home.keyring())?;
 
+    if let Some(p) = person {
+        println!("Personne : {} ({}, {})", p.name, people::role_name(p.role), p.id);
+    }
     for d in &list {
         let state = if d.id == me {
             "cet appareil"
@@ -769,10 +1072,16 @@ async fn devices(home: &Home) -> Result<()> {
             Some(g) if g.member(&d.id).is_none() => "  ⚠ hors du groupe",
             _ => "",
         };
-        println!("{:<16} {}  {state}{member}", d.name, d.id);
+        let profile = person
+            .and_then(|p| p.devices.iter().find(|x| x.id == d.id))
+            .map(|x| format!("  {}", people::profile(x)))
+            .unwrap_or_default();
+        println!("{:<16} {}  {state}{profile}{member}", d.name, d.id);
     }
     let Some(group) = group else {
-        eprintln!("⚠ {}", ot_core::ClientError::NoGroup);
+        if !is_service(home) {
+            eprintln!("⚠ {}", ot_core::ClientError::NoGroup);
+        }
         return Ok(());
     };
     let strangers = group.strangers(&list);
@@ -853,7 +1162,7 @@ fn print_qr(text: &str) -> Result<()> {
 }
 
 async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
-    let mut group = Some(group(home)?);
+    let mut names = Names { group: Some(group(home)?), people: Vec::new() };
     let (config, _) = registered(home)?;
     let (client, mut events) = start(home)?;
     connected(&mut events).await?;
@@ -892,13 +1201,9 @@ async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
             _ = tokio::signal::ctrl_c() => break Err(anyhow!("appairage abandonné")),
         };
         let Some(event) = event else { break Err(anyhow!("client arrêté")) };
-        if let Event::GroupChanged { .. } = event
-            && let Ok(Ok(g)) = tokio::time::timeout(COMMAND_TIMEOUT, client.group()).await
-        {
-            group = g;
-        }
+        refresh_names(&client, &event, &mut names).await;
         // Les messages reçus pendant l'attente sont affichés, pas perdus.
-        if print_event(&event, group.as_ref(), false, offset)?
+        if print_event(&event, &names, false, offset)?
             && let Event::Message(m) = &event
         {
             seen.insert(m.msg_id);
@@ -917,8 +1222,16 @@ async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
 }
 
 /// Nouvel appareil, QR inversé (note 0022) : affiche le QR, puis attend
-/// que le parrain l'ait fait enregistrer et ait envoyé le groupe.
-async fn pair_join_qr(home: &Home, server: String, name: String, force: bool) -> Result<()> {
+/// que le parrain l'ait fait enregistrer et ait envoyé le groupe. Appareil
+/// de service (`service`) : l'admin l'ajoute à une personne de service, sans
+/// groupe (étape 10, § 6.2).
+async fn pair_join_qr(
+    home: &Home,
+    server: String,
+    name: String,
+    force: bool,
+    service: bool,
+) -> Result<()> {
     if let Some(Config { device_id: Some(id), .. }) = home.load_config()?
         && !force
     {
@@ -937,6 +1250,7 @@ async fn pair_join_qr(home: &Home, server: String, name: String, force: bool) ->
         server_url: server,
         device_name: name.clone(),
         device_id: Some(device_id.clone()),
+        role: service.then_some(ot_core::Role::Service),
     })?;
 
     let (config, _) = registered(home)?;
@@ -948,6 +1262,23 @@ async fn pair_join_qr(home: &Home, server: String, name: String, force: bool) ->
         ot_core::Backoff { initial: Duration::from_secs(1), max: Duration::from_secs(3) };
     let (client, mut events) = Client::start(client);
     let offer = within(client.pair_offer(&name)).await?;
+
+    if service {
+        print_qr(&offer)?;
+        println!("Sur un appareil de l'admin :");
+        println!("  ot admin service add <service> --qr '<texte ci-dessous>'");
+        println!("  {offer}");
+        println!();
+        println!("En attente de l'admin (10 minutes au plus)…");
+        let res = tokio::time::timeout(PAIRING_TIMEOUT, service_received(&mut events)).await;
+        client.shutdown().await;
+        let user = res.map_err(|_| {
+            anyhow!("aucun admin en 10 minutes : relancer `ot pair join --qr --service --force`")
+        })??;
+        println!("Appareil de service « {name} » rangé (personne {user}).");
+        println!("Il écrit aux personnes liées au service : ot otp-bridge --to-user <personne>");
+        return Ok(());
+    }
 
     println!("Sur le téléphone : OldTown → Groupe → « Ajouter un appareil », puis scanner :");
     print_qr(&offer)?;
@@ -972,6 +1303,24 @@ async fn group_received(events: &mut Events) -> Result<u32> {
         match events.next().await {
             Some(Event::GroupChanged { epoch }) => return Ok(epoch),
             Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
+            Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
+            Some(_) => {}
+            None => bail!("client arrêté"),
+        }
+    }
+}
+
+/// Appareil de service : attend que la bienvenue de l'admin soit confirmée
+/// par l'annuaire ; renvoie sa personne de service.
+async fn service_received(events: &mut Events) -> Result<ot_core::UserId> {
+    loop {
+        match events.next().await {
+            Some(Event::Joined { user }) => return Ok(user),
+            Some(Event::InviteFailed { reason }) => {
+                bail!("bienvenue de l'admin refusée : {reason}")
+            }
+            Some(Event::Rejected { reason, .. }) => eprintln!("⚠ message rejeté : {reason}"),
+            Some(Event::DirectoryRejected { reason, .. }) => eprintln!("⚠ annuaire : {reason}"),
             Some(Event::KeyringError { message }) => eprintln!("⚠ {message}"),
             Some(_) => {}
             None => bail!("client arrêté"),
@@ -1016,6 +1365,7 @@ async fn pair_join(
         server_url: server,
         device_name: name.clone(),
         device_id: Some(redeemed.device_id.clone()),
+        role: None,
     })?;
     println!(
         "Appareil « {name} » enregistré ({}). Demande envoyée au parrain…",

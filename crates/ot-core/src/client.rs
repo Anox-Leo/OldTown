@@ -146,6 +146,9 @@ pub(crate) enum Flow {
     Certify(UserId),
     /// Publier mon roster local, plus récent que mon journal.
     Publish,
+    /// Admin : republier le journal d'un service dont la dernière entrée
+    /// vient d'un appareil retiré de l'admin (D47).
+    Republish(UserId),
 }
 
 /// Délai avant de relancer un déroulé en échec (hors reconnexion).
@@ -646,6 +649,13 @@ impl Client {
         rx.await.map_err(|_| ClientError::Closed)
     }
 
+    /// Comme [`Client::directory`], après une lecture de l'annuaire s'il
+    /// date de plus de 60 s (la règle d'un envoi à une personne) ; hors
+    /// ligne, attend la connexion. Pour résoudre un nom avant d'agir.
+    pub async fn fresh_directory(&self) -> Result<Vec<Person>, ClientError> {
+        self.with_fresh(|s| Ok(s.people())).await
+    }
+
     /// Relit l'annuaire maintenant ; sinon il est relu à chaque connexion et
     /// à chaque `directory_changed` du relais. `Event::DirectoryChanged`
     /// signale un changement.
@@ -1015,6 +1025,7 @@ impl Worker {
         if self.secure.needs_publish() {
             due.push(Flow::Publish);
         }
+        due.extend(self.secure.services_to_republish().into_iter().map(Flow::Republish));
         let now = Instant::now();
         self.failed.retain(|(_, at)| now.duration_since(*at) < FLOW_RETRY);
         for flow in due {
@@ -1027,6 +1038,7 @@ impl Worker {
                 let res = match &flow {
                     Flow::Certify(user) => client.certify_invite(user.clone()).await,
                     Flow::Publish => client.publish(Publish::IfBehind).await.map(|_| ()),
+                    Flow::Republish(user) => client.publish_service(user, None).await.map(|_| ()),
                 };
                 if let Err(e) = &res {
                     tracing::warn!(?flow, error = %e, "déroulé de fond en échec, à reprendre");
@@ -1311,7 +1323,14 @@ impl Worker {
                 let Some(i) =
                     self.registrations.iter().position(|r| r.offer.device_id == device_id)
                 else {
-                    tracing::warn!(device = %device_id, "pair_registered inattendu");
+                    // Appareil de service (`service_create`, `service_device`).
+                    let reply = Frame::PairRegistered { device_id };
+                    match self.take_pending(|p| p.answered_by(&reply)) {
+                        Some(Pending::Call { reply: Some(tx), .. }) => {
+                            let _ = tx.send(Ok(reply));
+                        }
+                        _ => tracing::warn!("pair_registered inattendu"),
+                    }
                     return Ok(());
                 };
                 let Registration { offer, reply } = self.registrations.remove(i);
@@ -1489,9 +1508,10 @@ fn call_reference(frame: &Frame) -> Option<String> {
         | Frame::UserRevoke { user }
         | Frame::UserRename { user, .. } => Some(user.to_string()),
         Frame::RosterPublish { seq, .. } => Some(seq.to_string()),
-        Frame::DeviceUpdate { device, .. } | Frame::DeviceRevoke { device } => {
-            Some(device.to_string())
-        }
+        Frame::DeviceUpdate { device, .. }
+        | Frame::DeviceRevoke { device }
+        | Frame::ServiceCreate { device, .. }
+        | Frame::ServiceDevice { device, .. } => Some(device.to_string()),
         Frame::ServiceMute { service, .. } => Some(service.to_string()),
         _ => None,
     }
@@ -1535,6 +1555,10 @@ impl Pending {
             (Frame::DeviceUpdate { device: a, .. }, Frame::DeviceUpdated { device: b })
             | (Frame::DeviceRevoke { device: a }, Frame::DeviceRevoked { device: b }) => a == b,
             (Frame::ServiceMute { service: a, .. }, Frame::ServiceMuted { service: b, .. }) => {
+                a == b
+            }
+            (Frame::ServiceCreate { device: a, .. }, Frame::PairRegistered { device_id: b })
+            | (Frame::ServiceDevice { device: a, .. }, Frame::PairRegistered { device_id: b }) => {
                 a == b
             }
             (Frame::LinkSet { from: a, to: x, .. }, Frame::LinkUpdated { from: b, to: y, .. }) => {

@@ -7,6 +7,8 @@
 # nom relais-diag ; clés dans /var/lib/ot-diag/ot, illisibles par ot-relay.
 # Réglages locaux (jamais dans le dépôt) dans /etc/oldtown/diag.env, ex. :
 #   OT_DIAG_TO=<nom du téléphone>
+# ou, si ot-diag est un appareil de service (`ot pair join --qr --service`) :
+#   OT_DIAG_TO_USER=<personne>
 
 [Unit]
 Description=Diagnostic du relais OldTown (%i)

@@ -84,6 +84,17 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   chose : le client relit l'annuaire lui-même. Les trames d'administration
   passent par `Client::call` (réponse ou refus, `Pending::Call`), coupées par
   une perte de connexion, jamais rejouées.
+- Services (étape 10, § 6.1 et 6.2) : `secure/service.rs` (sans réseau) et
+  `services.rs`. L'admin ajoute un appareil de service par son QR inversé
+  (`Client::add_service_device`) : `service_create` ou `service_device`,
+  certificat engagé par son journal, entrée du journal du service signée par
+  un appareil de l'admin, puis `service_welcome` en `0x04` sous le secret du
+  QR ; chaque étape se reprend avec le même QR. L'appareil de service range
+  la bienvenue en mémoire et ne se dit rangé (`Event::Joined`) qu'une fois
+  l'annuaire lu jusqu'à `admin_head`, son certificat et son roster confirmés
+  et la signature vérifiée par la clé de l'expéditeur dans le roster de
+  l'admin. Après le retrait d'un appareil de l'admin, le client republie le
+  journal de chaque service (`Flow::Republish`, D47).
 - Jamais de contenu, de clé ni de jeton dans les logs `tracing`.
 - Tests : unitaires dans le crate ; les scénarios avec un vrai relais vivent
   dans `crates/ot-server/tests/` (relais en processus).

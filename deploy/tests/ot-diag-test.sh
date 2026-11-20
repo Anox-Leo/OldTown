@@ -155,6 +155,23 @@ reset
 OT_DIAG_TO="" sh "$SCRIPT" report 2>/dev/null
 expect_line "tous les membres" "$(cat "$T/ot.args")" "send"
 
+# Appareil de service : un envoi par personne, même si l'un échoue.
+reset
+OT_DIAG_TO="" OT_DIAG_TO_USER="Alice Bob" sh "$SCRIPT" report 2>/dev/null
+expect_line "personnes" "$(cat "$T/ot.args")" "send --to-user Alice"
+expect_line "personnes" "$(cat "$T/ot.args")" "send --to-user Bob"
+[ "$(sent_count)" = 2 ] || fail "personnes : deux envois attendus"
+reset
+if OT_DIAG_TO="" OT_DIAG_TO_USER="Alice Bob" OT_TEST_OT_STATUS=1 sh "$SCRIPT" report 2>/dev/null; then
+    fail "personnes : un envoi en échec doit faire échouer le rapport"
+fi
+[ "$(sent_count)" = 2 ] || fail "personnes : le second envoi part malgré l'échec du premier"
+reset
+if OT_DIAG_TO_USER=Alice sh "$SCRIPT" report 2>/dev/null; then
+    fail "OT_DIAG_TO et OT_DIAG_TO_USER ensemble doivent être refusés"
+fi
+[ "$(sent_count)" = 0 ] || fail "OT_DIAG_TO et OT_DIAG_TO_USER : aucun envoi attendu"
+
 # --- Changements d'alimentation.
 reset
 sh "$SCRIPT" report 2>/dev/null

@@ -243,8 +243,9 @@ impl Store {
     /// Annuaire vu par `me` : ma personne (tous mes appareils actifs), l'admin
     /// (l'ancre), et les personnes actives liées dans un sens ou dans l'autre
     /// (leurs appareils joignables seulement). L'admin non lié n'y figure que
-    /// par son certificat et son journal, sans appareils. `online` reste à
-    /// `false` : la session le remplit.
+    /// par son certificat et son journal, sans appareils ; l'admin voit de
+    /// même chaque service actif, dont il tient le journal (D47). `online`
+    /// reste à `false` : la session le remplit.
     ///
     /// Une page tient sous [`DIRECTORY_FRAME_BUDGET`], tout compris
     /// (certificats, profils, journaux). Elle part de la personne qui suit
@@ -275,6 +276,7 @@ impl Store {
                 OR (u.state = 'active' AND EXISTS (
                         SELECT 1 FROM links l WHERE (l.from_user = ?1 AND l.to_user = u.id)
                                                  OR (l.from_user = u.id AND l.to_user = ?1)))
+                OR (?1 = ?2 AND u.state = 'active' AND u.role = 'service')
              ORDER BY u.id = ?1 DESC, u.id = ?2 DESC, u.created_at, u.rowid",
         )
         .bind(me.as_str())

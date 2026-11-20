@@ -4,7 +4,9 @@ Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
 (`init`, `send`, `listen`, `devices` ; `group` et `pair` à l'étape 2 ;
 `pair new --qr`, `pair join --qr` et `pair sponsor` à l'étape 3 ;
 `send --file`, `listen --download-dir`, `files` et `download` à l'étape 5 ;
-`otp-bridge`, note 0045).
+`otp-bridge`, note 0045 ; à l'étape 10, `users`, `send --to-user`, `device`,
+`mute`, `invite join`, `admin …`, `pair join --qr --service` et
+`otp-bridge --to-user`, dans `people.rs`).
 
 - Mince couche au-dessus de `ot-core` : pas de logique de protocole ici.
 - Fichiers locaux dans `files.rs` (`config.toml`, `device.key`,
@@ -22,12 +24,22 @@ Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
   `Client::send_otp`, une session tenue tant qu'il tourne. Jamais de code
   ni de ligne du socket dans la sortie.
 - Les destinataires (`--to`, `--exclude`) se résolvent dans le roster, jamais
-  dans la liste du relais.
+  dans la liste du relais. Les personnes (`--to-user`, `--device`, `mute`) se
+  résolvent dans l'annuaire vérifié (`Client::fresh_directory`) ; les
+  commandes d'administration dans la liste du relais (`Client::users`), qui
+  n'engage rien : le cœur signe et vérifie. Un nom ambigu est refusé avec les
+  identifiants (`people::pick`).
+- Appareil de service : `config.toml` porte `role = "service"` ; pas de
+  groupe, et aucun avertissement pour cela. `otp-bridge --to-user` saute les
+  personnes qui ont coupé le service ou sans appareil joignable et à jour,
+  par identifiant dans le journal.
 - Chaque commande ponctuelle ouvre une session et coupe brièvement un
   `ot listen` de la même identité (note 0009). Sur un ordinateur qui a aussi
   l'extension Chrome, la CLI est un appareil distinct (note 0017).
 - Tests : unitaires dans les modules ; `tests/files.rs` lance le binaire
-  `ot` pour deux appareils contre un relais en processus.
+  `ot` pour deux appareils contre un relais en processus ; `tests/people.rs`
+  et `tests/otp.rs` font le parcours de l'étape 10 par les commandes
+  (`tests/common` : admin, invitation, appareil de service).
 - Messages pour l'utilisateur en français, erreurs avec une piste de
   correction (voir la section « Dépannage » du README).
 - Toute commande ou option nouvelle se documente dans le README, section

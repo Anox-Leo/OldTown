@@ -172,6 +172,54 @@ ot pair join --qr --server wss://relay.example.org --name desktop
 
 Scan the QR code shown in the terminal from the phone, as above.
 
+### 6. Other people (optional)
+
+One relay can serve several people, each with their own devices and group
+key. The person who installed the relay is the **admin**: their signed
+certificate anchors a directory that every client verifies, so the relay
+cannot slip in a device or a person. From one of the admin's devices:
+
+```sh
+ots user rename owner Alice          # on the relay: the admin's name is signed once
+ot admin init                        # publish the admin certificate (the anchor)
+ot admin invite Bob --link Alice     # prints an oldtown://invite?… link (and --qr)
+```
+
+The invitation holds a secret: give it to Bob only. On Bob's computer, `ot
+invite join '<link>' --name bob-laptop`. The admin's `ot admin invite` stays running until Bob's
+request arrives, certifies him and prints his device's key fingerprint, to
+compare with the one Bob sees; interrupted, the invitation stays valid
+(48 h) and the next `ot listen` on that device completes it. People can
+only write to people they are linked to:
+
+```sh
+ot admin users                       # everyone, their devices and links
+ot admin link add Bob Carol          # both ways between two people
+ot admin rename Bob Robert           # re-signs his certificate
+ot admin reinvite Robert             # lost all his devices: new invitation
+ot admin revoke Robert               # devices, links and certificate
+```
+
+### 7. Services (optional)
+
+A **service** is a person without a group key, run by the admin, whose
+devices send to people: one-time codes, alerts, reports. Links from a
+service go one way (service → person), and anyone can mute a service
+linked to them (`ot mute <service> on`). OldTown ships no ready-made
+service: write your own on this framework. For example, to relay codes
+from `otp-relay` to Bob:
+
+```sh
+ot pair join --qr --service --server wss://relay.example.org --name notifier-1
+#   then, on an admin device:
+ot admin service add Notifier --qr '<text of the QR>'
+ot admin link add Notifier Bob
+ot otp-bridge --to-user Bob          # on the service device (OT_OTP_TO_USER)
+```
+
+The first device creates the service; more devices can join it the same
+way. `deploy/ot-diag.sh` also accepts `OT_DIAG_TO_USER`.
+
 ## Everyday use
 
 - **Android**: *Share* from any app to OldTown (texts, links, photos,
@@ -199,6 +247,12 @@ Scan the QR code shown in the terminal from the phone, as above.
   ot send --file video.mp4 --to phone    # a file; run again to resume
   ot listen --download-dir ~/Downloads   # receive, files included
   ot otp-bridge --to brave               # relay one-time codes (OT_OTP_TO)
+  ot users                               # people I can reach, their devices
+  ot send --to-user Bob "hello"          # to Bob's default devices (copy to mine)
+  ot send --to-user Bob --device bob-phone --file photo.jpg
+  ot devices                             # my person's devices on the relay
+  ot device default laptop off           # profile: default, reachable, kind
+  ot device revoke old-phone             # new group key without it, then revoked
   ot group show                          # members and key fingerprints
   ot group rotate --exclude phone        # lost device: new group key without it
   ots device revoke phone                # then, on the relay: refuse its connections

@@ -10,6 +10,8 @@
 # Réglages locaux (jamais dans le dépôt) dans
 # ~/.config/oldtown-otp/bridge.env, ex. :
 #   OT_OTP_TO=<nom de l'extension>[,<autre appareil>]
+# ou, si le pont est un appareil de service (`ot pair join --qr --service`) :
+#   OT_OTP_TO_USER=<personne>[,<autre personne>]
 
 [Unit]
 Description=OldTown : codes d'otp-relay vers mes appareils
