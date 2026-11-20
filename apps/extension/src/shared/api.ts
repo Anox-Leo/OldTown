@@ -72,6 +72,7 @@ export interface StateView {
   admin: boolean;
   rootMissing?: { name: string };
   alerts: DirectoryAlert[];
+  lostItems: number;
   opened: Record<string, string>;
   inviteError?: string;
 }
@@ -181,6 +182,7 @@ export type Request =
   | { type: 'forget' }
   | { type: 'send-file'; path: string; name: string; mime: string; size: number; to: string }
   | { type: 'mark-read'; channel: string }
+  | { type: 'dismiss-lost' }
   | { type: 'refresh-directory' }
   | { type: 'admin-init' }
   | { type: 'users' }

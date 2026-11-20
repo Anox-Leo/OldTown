@@ -230,6 +230,8 @@ async function handle(req: Request): Promise<unknown> {
       return e.setupInvite(req.text, req.name);
     case 'mark-read':
       return e.markRead(req.channel);
+    case 'dismiss-lost':
+      return e.dismissLostItems();
     case 'refresh-directory':
       return e.refreshDirectory();
     case 'admin-init':

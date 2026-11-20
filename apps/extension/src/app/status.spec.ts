@@ -13,6 +13,7 @@ function state(over: Partial<StateView>): StateView {
     people: [],
     admin: false,
     alerts: [],
+    lostItems: 0,
     opened: {},
     ...over,
   };
