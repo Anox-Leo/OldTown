@@ -229,16 +229,22 @@ fun DeviceKind.icon(): ImageVector = when (this) {
 /**
  * Avatar rond d'un appareil (note 0031) : pictogramme blanc de son type sur
  * sa couleur ([dev.oldtown.android.ui.avatarColor]), point vert s'il est en
- * ligne.
+ * ligne ; « Tous mes appareils » : le signe sur la tuile de l'icône, comme
+ * l'extension.
  */
 @Composable
 fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false) {
+    val group = kind == DeviceKind.GROUP
     Box(Modifier.size(size)) {
         Box(
-            Modifier.fillMaxSize().clip(CircleShape).background(Color(color)),
+            Modifier.fillMaxSize().clip(CircleShape).background(if (group) Ot.colors.tile else Color(color)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(kind.icon(), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.5f))
+            if (group) {
+                Mark(size * 0.55f)
+            } else {
+                Icon(kind.icon(), contentDescription = null, tint = Ot.colors.onAvatar, modifier = Modifier.size(size * 0.5f))
+            }
         }
         if (online) {
             Box(

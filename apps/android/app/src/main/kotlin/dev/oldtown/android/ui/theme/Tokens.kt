@@ -7,8 +7,7 @@ import androidx.compose.ui.unit.sp
 
 /**
  * Jetons du système de design (`design/tokens.json`), mêmes valeurs que
- * l'extension. `Color.kt` et `Theme.kt` les liront à la place de leurs
- * valeurs (lot G, PR D2).
+ * l'extension, lus par `Color.kt` et `Theme.kt`.
  */
 object OtTokens {
     /** Rôles du thème sombre « nuit ». */

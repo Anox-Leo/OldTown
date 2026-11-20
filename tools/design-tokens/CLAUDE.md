@@ -11,6 +11,10 @@ Générateur des jetons de design (note 0059, D50). Source unique :
   valeur (`AVATAR_COLORS`, `BADGE`) ;
 - `apps/android/.../ui/theme/Tokens.kt` : `object OtTokens` (`Dark`,
   `Light`, `avatarColors`, `Radius`, `Space`, `TextSize`) ;
+- `apps/android/.../res/values/tokens.xml` (clair) et `values-night/tokens.xml`
+  (sombre) : `@color/ot_<rôle>` pour les seuls rôles que lisent les
+  ressources XML (`ANDROID_RES_ROLES` : fond des fenêtres, tuile de l'icône
+  et de l'écran de démarrage, accent des notifications, pictogramme) ;
 - `design/specimen.html` : nuancier des deux thèmes et table des contrastes.
 
 Règles :

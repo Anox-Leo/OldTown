@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Fenêtres sombres par défaut (palette de T3 Code), claires en mode
-         jour : le reste du thème est en Compose (ui/theme). -->
+    <!-- Fenêtres claires « parchemin » en mode jour, « nuit » en mode sombre
+         (values-night) ; couleurs générées dans tokens.xml, le reste du thème
+         est en Compose (ui/theme). Écran de démarrage (Android 12 et plus) :
+         le signe sur la tuile nuit, dans les deux thèmes, comme l'icône. -->
     <style name="Theme.OldTown" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/screen</item>
+        <item name="android:windowBackground">@color/ot_screen</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowSplashScreenBackground">@color/ot_tile</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
     </style>
 
     <style name="Theme.OldTown.Translucent" parent="Theme.OldTown">
@@ -16,7 +20,4 @@
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
     </style>
-
-    <color name="screen">#FCFCFC</color>
-    <color name="launcher_background">#0A0A0A</color>
 </resources>

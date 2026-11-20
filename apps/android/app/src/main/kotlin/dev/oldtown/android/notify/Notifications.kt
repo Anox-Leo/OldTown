@@ -28,7 +28,8 @@ import dev.oldtown.core.Received
 /**
  * Trois canaux : « Connexion » (notification permanente du service,
  * discrète), « Messages » (un élément reçu par notification, groupées) et
- * « Transferts » (progression des fichiers, étape 5).
+ * « Transferts » (progression des fichiers, étape 5). Toutes portent la
+ * petite icône du signe (`ic_stat_oldtown`) et sa pierre en couleur d'accent.
  */
 object Notifications {
     const val CONNECTION_ID = 1
@@ -112,6 +113,7 @@ object Notifications {
     fun connection(context: Context, connection: Connection, waitingSponsor: Boolean): Notification =
         NotificationCompat.Builder(context, CHANNEL_CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_oldtown)
+            .setColor(context.getColor(R.color.ot_mark))
             .setContentTitle(statusText(context, connection, waitingSponsor))
             .setContentIntent(openApp(context))
             .setOngoing(true)
@@ -143,6 +145,7 @@ object Notifications {
         val text = if (item.sensitive) context.getString(R.string.sensitive_hidden) else preview(item.body)
         val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_oldtown)
+            .setColor(context.getColor(R.color.ot_mark))
             .setContentTitle(item.fromName)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(if (item.sensitive) text else item.body))
@@ -166,6 +169,7 @@ object Notifications {
             SUMMARY_ID,
             NotificationCompat.Builder(context, CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setColor(context.getColor(R.color.ot_mark))
                 .setGroup(GROUP)
                 .setGroupSummary(true)
                 .setAutoCancel(true)
@@ -194,6 +198,7 @@ object Notifications {
         }
         val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_oldtown)
+            .setColor(context.getColor(R.color.ot_mark))
             .setContentTitle(item.fromName)
             .setContentText(text)
             .setWhen(item.createdAtMs)
@@ -247,6 +252,7 @@ object Notifications {
             transferId(t.id),
             NotificationCompat.Builder(context, CHANNEL_TRANSFERS)
                 .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setColor(context.getColor(R.color.ot_mark))
                 .setContentTitle(title)
                 .setContentText("${humanSize(t.done)} / ${humanSize(t.total)}")
                 .setProgress(100, percent, t.total <= 0)
@@ -273,6 +279,7 @@ object Notifications {
             transferId(t.id),
             NotificationCompat.Builder(context, CHANNEL_TRANSFERS)
                 .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setColor(context.getColor(R.color.ot_mark))
                 .setContentTitle(title)
                 .setContentText(t.error)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(t.error))

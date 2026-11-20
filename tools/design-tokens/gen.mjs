@@ -20,9 +20,17 @@ export const OUTPUTS = {
   css: 'apps/extension/src/tokens.css',
   ts: 'apps/extension/src/shared/tokens.ts',
   kotlin: 'apps/android/app/src/main/kotlin/dev/oldtown/android/ui/theme/Tokens.kt',
+  androidLight: 'apps/android/app/src/main/res/values/tokens.xml',
+  androidDark: 'apps/android/app/src/main/res/values-night/tokens.xml',
   specimen: 'design/specimen.html',
 };
 export const THEMES = ['dark', 'light'];
+/**
+ * Rôles lus par les ressources Android (thèmes XML, icône, écran de
+ * démarrage, notifications), en `@color/ot_<rôle>` ; le reste passe par
+ * Compose (`Tokens.kt`).
+ */
+export const ANDROID_RES_ROLES = ['screen', 'tile', 'mark', 'on-avatar'];
 export const MIN_RATIO = { text: 4.5, graphic: 3 };
 const HEADER = `Fichier généré par tools/design-tokens/gen.mjs depuis ${SOURCE} : ne pas modifier.`;
 
@@ -157,6 +165,11 @@ export function argb(color) {
   return `0x${c.length === 8 ? c.slice(6) : 'FF'}${c.slice(0, 6)}`;
 }
 
+/** `#rrggbb[aa]` → `#AARRGGBB` (ressources Android). */
+export function androidColor(color) {
+  return `#${argb(color).slice(2)}`;
+}
+
 const cssFamily = (list) => list.map((f) => (f.includes(' ') ? `'${f}'` : f)).join(', ');
 
 function css(tokens) {
@@ -219,8 +232,7 @@ function kotlin(tokens) {
     '',
     '/**',
     ' * Jetons du système de design (`design/tokens.json`), mêmes valeurs que',
-    ' * l\'extension. `Color.kt` et `Theme.kt` les liront à la place de leurs',
-    ' * valeurs (lot G, PR D2).',
+    ' * l\'extension, lus par `Color.kt` et `Theme.kt`.',
     ' */',
     'object OtTokens {',
     ...theme('Dark', 'Rôles du thème sombre « nuit ».', 'dark'),
@@ -238,6 +250,22 @@ function kotlin(tokens) {
     '',
     ...dimObject('TextSize', 'Échelle typographique.', 'type.size', 'sp'),
     '}',
+    '',
+  ].join('\n');
+}
+
+/** Couleurs des ressources Android d'un thème (`values/` clair, `values-night/` sombre). */
+function androidRes(tokens, theme) {
+  const all = new Map(roles(tokens, theme));
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    `<!-- ${HEADER} -->`,
+    '<resources>',
+    ...ANDROID_RES_ROLES.map((n) => {
+      if (!all.has(n)) throw new Error(`rôle inconnu pour Android : ${n}`);
+      return `    <color name="ot_${n.replace(/-/g, '_')}">${androidColor(all.get(n))}</color>`;
+    }),
+    '</resources>',
     '',
   ].join('\n');
 }
@@ -341,6 +369,8 @@ export function render(tokens) {
     [OUTPUTS.css]: css(tokens),
     [OUTPUTS.ts]: ts(tokens),
     [OUTPUTS.kotlin]: kotlin(tokens),
+    [OUTPUTS.androidLight]: androidRes(tokens, 'light'),
+    [OUTPUTS.androidDark]: androidRes(tokens, 'dark'),
     [OUTPUTS.specimen]: specimen(tokens),
   };
 }
