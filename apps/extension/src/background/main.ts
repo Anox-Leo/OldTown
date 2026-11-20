@@ -13,6 +13,7 @@ import { type FillResult, fillOtp, isLive, sameSite } from '../shared/otp';
 import { AUTO_CACHE_MAX, fileUrl, isViewable, parseFilePath } from '../shared/files';
 import { Engine, type FileStorage } from './engine';
 import { type KeyValue, IndexedDbKeySource } from './secrets';
+import { BADGE } from '../shared/tokens';
 
 const KEEPALIVE_ALARM = 'keepalive';
 const MENU_ROOT = 'send';
@@ -152,9 +153,16 @@ function onPush(e: Engine, push: Push): void {
   if (push.type === 'state') void updateBadge(e.state());
 }
 
+/** Badge de l'icône : `!` hors ligne ; fond et texte pris dans les jetons de design. */
 async function updateBadge(state: StateView): Promise<void> {
   const problem = state.phase === 'ready' && state.connection !== 'online';
+  if (problem) await setBadgeColors(BADGE.problem);
   await chrome.action.setBadgeText({ text: problem ? '!' : '' });
+}
+
+async function setBadgeColors(background: string): Promise<void> {
+  await chrome.action.setBadgeBackgroundColor({ color: background });
+  await chrome.action.setBadgeTextColor({ color: BADGE.text });
 }
 
 // --- Popup et réglages ---
@@ -394,6 +402,7 @@ async function problem(message: string, title = 'OldTown : envoi impossible'): P
 
 /** Coche brève sur l'icône : un raccourci n'a pas d'autre retour visible. */
 async function flashSent(): Promise<void> {
+  await setBadgeColors(BADGE.ok);
   await chrome.action.setBadgeText({ text: '✓' });
   setTimeout(() => void engine().then((e) => updateBadge(e.state())), 1500);
 }

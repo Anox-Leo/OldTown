@@ -11,6 +11,9 @@ import type { Reply, Request, StateView } from '../shared/api';
 import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
 import { OTP_ORIGINS, originPattern, relayOrigin } from '../shared/origins';
+import { followTheme } from '../shared/theme';
+
+followTheme();
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);

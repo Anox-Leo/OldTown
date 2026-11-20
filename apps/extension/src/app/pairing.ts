@@ -9,6 +9,7 @@ import {
 
 import type { StateView } from '../shared/api';
 import { BackgroundService } from './background.service';
+import { MarkComponent } from './brand';
 import { QrComponent } from './qr';
 import { connectionStatus } from './status';
 
@@ -16,9 +17,10 @@ import { connectionStatus } from './status';
 @Component({
   selector: 'app-pairing',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [QrComponent],
+  imports: [MarkComponent, QrComponent],
   template: `
     @let s = state();
+    <app-mark class="mark" [size]="32" />
     @if (s.pending?.kind === 'offer') {
       @let offer = $any(s.pending);
       <h1>Scanner avec le téléphone</h1>
@@ -54,6 +56,9 @@ import { connectionStatus } from './status';
     :host {
       display: block;
       padding: 16px;
+    }
+    .mark {
+      margin: 0 0 8px;
     }
     h1 {
       font-size: 18px;

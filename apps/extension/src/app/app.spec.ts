@@ -109,12 +109,17 @@ describe('App (popup)', () => {
         ],
       },
     });
-    // Accueil (note 0031) : le titre, les réglages, une conversation par appareil.
-    expect(el.querySelector('h1')?.textContent).toBe('OldTown');
+    // Accueil (note 0031) : le logotype, les réglages, une conversation par appareil.
+    expect(el.querySelector('h1 app-logo [aria-label="OldTown"]')).toBeTruthy();
     expect(el.querySelector('[aria-label="Réglages"]')).toBeTruthy();
     expect(el.textContent).not.toContain('Connecté');
     expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
     expect(el.querySelector('.chats app-avatar')).toBeTruthy();
+    // « Tous mes appareils » prend le signe, un appareil le pictogramme de son type.
+    const avatars = el.querySelectorAll('.chats app-avatar');
+    expect(avatars[0]?.querySelector('app-mark')).toBeTruthy();
+    expect(avatars[1]?.querySelector('app-mark')).toBeNull();
+    expect(avatars[1]?.querySelector('app-icon')).toBeTruthy();
     expect(el.textContent).toContain('Aucun message');
     expect(el.querySelector('textarea')).toBeNull();
   });

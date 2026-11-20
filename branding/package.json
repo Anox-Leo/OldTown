@@ -1,0 +1,12 @@
+{
+  "name": "oldtown-branding",
+  "private": true,
+  "type": "module",
+  "description": "Draws the OldTown mark, icons and logotype (charte.mjs). Not part of any build.",
+  "scripts": {
+    "draw": "node charte.mjs . ../apps/extension/public/fonts/dm-sans.ttf"
+  },
+  "dependencies": {
+    "fontkit": "2.0.4"
+  }
+}

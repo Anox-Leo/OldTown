@@ -296,7 +296,7 @@ import { connectionStatus, shortTime } from './status';
     .bubble {
       min-width: 0;
       padding: 7px 11px;
-      border-radius: 14px;
+      border-radius: var(--radius-card);
       background: var(--grouped);
       border: 1px solid var(--border);
       display: flex;
@@ -307,9 +307,8 @@ import { connectionStatus, shortTime } from './status';
       border-bottom-left-radius: 4px;
     }
     .msg.out .bubble {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: var(--on-primary);
+      background: var(--bubble-out);
+      border-color: var(--bubble-out);
       border-bottom-right-radius: 4px;
     }
     .bubble.clickable {
@@ -325,10 +324,8 @@ import { connectionStatus, shortTime } from './status';
       max-height: none;
     }
     .text.link {
-      text-decoration: underline;
-    }
-    .msg.in .text.link {
       color: var(--primary-text);
+      text-decoration: underline;
     }
     .file {
       display: inline-flex;
