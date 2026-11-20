@@ -1,0 +1,189 @@
+<!doctype html>
+<!-- Fichier généré par tools/design-tokens/gen.mjs depuis design/tokens.json : ne pas modifier. -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>OldTown · nuancier</title>
+<style>
+  @font-face { font-family: 'DM Sans'; src: url('../apps/extension/public/fonts/dm-sans.ttf') format('truetype'); font-weight: 100 1000; }
+  body { margin: 0; font: 14px/1.45 'DM Sans', system-ui, sans-serif; background: #888; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+  .theme { --radius-control: 10px; --radius-card: 14px; --radius-sheet: 20px; --radius-pill: 999px; background: var(--screen); color: var(--fg); padding: 24px; }
+  h2 { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; font-size: 16px; font-weight: 500; color: var(--muted); }
+  .demo { display: grid; gap: 8px; margin-bottom: 24px; }
+  .row { display: flex; gap: 12px; align-items: center; margin: 0; }
+  .grow { flex: 1; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 10px 12px; }
+  .muted { color: var(--muted); }
+  .av { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--on-avatar); font-size: 12px; }
+  .av.mark { background: var(--tile); }
+  .pill { background: var(--primary); color: var(--on-primary); border-radius: var(--radius-pill); padding: 0 7px; font-size: 12px; }
+  .bubble { margin: 0; padding: 8px 12px; border-radius: var(--radius-card); max-width: 70%; }
+  .bubble.out { justify-self: end; background: var(--bubble-out); }
+  .bubble.in { background: var(--grouped); border: 1px solid var(--border); }
+  a { color: var(--primary-text); }
+  button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--input-border); border-radius: var(--radius-control); padding: 7px 12px; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+  button.danger { color: var(--danger-fg); border-color: var(--danger-border); }
+  .banner { margin: 0; padding: 8px 10px; border-radius: var(--radius-control); }
+  .banner.warning { background: var(--warning); border: 1px solid var(--warning-border); color: var(--warning-fg); }
+  .banner.danger { background: var(--danger); border: 1px solid var(--danger-border); color: var(--danger-fg); }
+  .swatches { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+  .swatches li { display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center; }
+  .sw { width: 28px; height: 20px; border-radius: 6px; border: 1px solid var(--border); }
+  code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .shared { background: #fff; color: #222; padding: 24px; }
+  .shared table { border-collapse: collapse; font-size: 12px; }
+  .shared td { padding: 2px 10px 2px 0; }
+</style>
+</head>
+<body>
+<main>
+    <section class="theme" style="--screen: #0f1120; --card: #161a2e; --grouped: #1d2238; --hover: #1d2238; --fg: #eeecf3; --muted: #8a90ab; --tertiary: #8a90ab; --border: #232843; --input-border: #2a3050; --primary: #d27443; --on-primary: #0f1120; --primary-text: #e39c75; --bubble-out: #2a2f4f; --success: #34d399; --warning: #312108; --warning-border: #fe9a0052; --warning-fg: #ffb900; --danger: #301214; --danger-border: #fb414a52; --danger-fg: #ff6467; --backdrop: #0f11207a; --tile: #232841; --mark: #d27443; --on-avatar: #ffffff;">
+      <h2><img src="../branding/logotype-sombre.svg" alt="OldTown" height="28"> <span>Sombre « nuit »</span></h2>
+      <div class="demo">
+        <div class="row card"><span class="av mark"><img src="../branding/archivolte-signe.svg" alt="" width="22"></span><span class="grow"><b>Tous mes appareils</b><br><span class="muted">Lien : article</span></span><span class="pill">2</span></div>
+        <div class="row card"><span class="av" style="background: #3d74ad"></span><span class="grow"><b>Téléphone</b><br><span class="muted">Code 482 913</span></span></div>
+        <p class="bubble out">Le code arrive dans la page.</p>
+        <p class="bubble in">Bien reçu, merci <a href="#">lien</a></p>
+        <p class="row"><button class="primary">Envoyer</button><button>Annuler</button><button class="danger">Oublier</button></p>
+        <p class="banner warning">Avertissement</p>
+        <p class="banner danger">Erreur</p>
+      </div>
+      <ul class="swatches">
+        <li><span class="sw" style="background: var(--screen)"></span><b>screen</b><code>#0f1120</code></li>
+        <li><span class="sw" style="background: var(--card)"></span><b>card</b><code>#161a2e</code></li>
+        <li><span class="sw" style="background: var(--grouped)"></span><b>grouped</b><code>#1d2238</code></li>
+        <li><span class="sw" style="background: var(--hover)"></span><b>hover</b><code>#1d2238</code></li>
+        <li><span class="sw" style="background: var(--fg)"></span><b>fg</b><code>#eeecf3</code></li>
+        <li><span class="sw" style="background: var(--muted)"></span><b>muted</b><code>#8a90ab</code></li>
+        <li><span class="sw" style="background: var(--tertiary)"></span><b>tertiary</b><code>#8a90ab</code></li>
+        <li><span class="sw" style="background: var(--border)"></span><b>border</b><code>#232843</code></li>
+        <li><span class="sw" style="background: var(--input-border)"></span><b>input-border</b><code>#2a3050</code></li>
+        <li><span class="sw" style="background: var(--primary)"></span><b>primary</b><code>#d27443</code></li>
+        <li><span class="sw" style="background: var(--on-primary)"></span><b>on-primary</b><code>#0f1120</code></li>
+        <li><span class="sw" style="background: var(--primary-text)"></span><b>primary-text</b><code>#e39c75</code></li>
+        <li><span class="sw" style="background: var(--bubble-out)"></span><b>bubble-out</b><code>#2a2f4f</code></li>
+        <li><span class="sw" style="background: var(--success)"></span><b>success</b><code>#34d399</code></li>
+        <li><span class="sw" style="background: var(--warning)"></span><b>warning</b><code>#312108</code></li>
+        <li><span class="sw" style="background: var(--warning-border)"></span><b>warning-border</b><code>#fe9a0052</code></li>
+        <li><span class="sw" style="background: var(--warning-fg)"></span><b>warning-fg</b><code>#ffb900</code></li>
+        <li><span class="sw" style="background: var(--danger)"></span><b>danger</b><code>#301214</code></li>
+        <li><span class="sw" style="background: var(--danger-border)"></span><b>danger-border</b><code>#fb414a52</code></li>
+        <li><span class="sw" style="background: var(--danger-fg)"></span><b>danger-fg</b><code>#ff6467</code></li>
+        <li><span class="sw" style="background: var(--backdrop)"></span><b>backdrop</b><code>#0f11207a</code></li>
+        <li><span class="sw" style="background: var(--tile)"></span><b>tile</b><code>#232841</code></li>
+        <li><span class="sw" style="background: var(--mark)"></span><b>mark</b><code>#d27443</code></li>
+        <li><span class="sw" style="background: var(--on-avatar)"></span><b>on-avatar</b><code>#ffffff</code></li>
+      </ul>
+    </section>
+    <section class="theme" style="--screen: #faf7f2; --card: #ffffff; --grouped: #f3eee6; --hover: #f3eee6; --fg: #232841; --muted: #6b6577; --tertiary: #6b6577; --border: #e8e1d6; --input-border: #dcd3c6; --primary: #b4552a; --on-primary: #ffffff; --primary-text: #a2492a; --bubble-out: #f6e3d6; --success: #059669; --warning: #fcf4e8; --warning-border: #fe9a0052; --warning-fg: #bb4d00; --danger: #fcebec; --danger-border: #fb2c3652; --danger-fg: #c10007; --backdrop: #0f112038; --tile: #232841; --mark: #d27443; --on-avatar: #ffffff;">
+      <h2><img src="../branding/logotype-clair.svg" alt="OldTown" height="28"> <span>Clair « parchemin »</span></h2>
+      <div class="demo">
+        <div class="row card"><span class="av mark"><img src="../branding/archivolte-signe.svg" alt="" width="22"></span><span class="grow"><b>Tous mes appareils</b><br><span class="muted">Lien : article</span></span><span class="pill">2</span></div>
+        <div class="row card"><span class="av" style="background: #3d74ad"></span><span class="grow"><b>Téléphone</b><br><span class="muted">Code 482 913</span></span></div>
+        <p class="bubble out">Le code arrive dans la page.</p>
+        <p class="bubble in">Bien reçu, merci <a href="#">lien</a></p>
+        <p class="row"><button class="primary">Envoyer</button><button>Annuler</button><button class="danger">Oublier</button></p>
+        <p class="banner warning">Avertissement</p>
+        <p class="banner danger">Erreur</p>
+      </div>
+      <ul class="swatches">
+        <li><span class="sw" style="background: var(--screen)"></span><b>screen</b><code>#faf7f2</code></li>
+        <li><span class="sw" style="background: var(--card)"></span><b>card</b><code>#ffffff</code></li>
+        <li><span class="sw" style="background: var(--grouped)"></span><b>grouped</b><code>#f3eee6</code></li>
+        <li><span class="sw" style="background: var(--hover)"></span><b>hover</b><code>#f3eee6</code></li>
+        <li><span class="sw" style="background: var(--fg)"></span><b>fg</b><code>#232841</code></li>
+        <li><span class="sw" style="background: var(--muted)"></span><b>muted</b><code>#6b6577</code></li>
+        <li><span class="sw" style="background: var(--tertiary)"></span><b>tertiary</b><code>#6b6577</code></li>
+        <li><span class="sw" style="background: var(--border)"></span><b>border</b><code>#e8e1d6</code></li>
+        <li><span class="sw" style="background: var(--input-border)"></span><b>input-border</b><code>#dcd3c6</code></li>
+        <li><span class="sw" style="background: var(--primary)"></span><b>primary</b><code>#b4552a</code></li>
+        <li><span class="sw" style="background: var(--on-primary)"></span><b>on-primary</b><code>#ffffff</code></li>
+        <li><span class="sw" style="background: var(--primary-text)"></span><b>primary-text</b><code>#a2492a</code></li>
+        <li><span class="sw" style="background: var(--bubble-out)"></span><b>bubble-out</b><code>#f6e3d6</code></li>
+        <li><span class="sw" style="background: var(--success)"></span><b>success</b><code>#059669</code></li>
+        <li><span class="sw" style="background: var(--warning)"></span><b>warning</b><code>#fcf4e8</code></li>
+        <li><span class="sw" style="background: var(--warning-border)"></span><b>warning-border</b><code>#fe9a0052</code></li>
+        <li><span class="sw" style="background: var(--warning-fg)"></span><b>warning-fg</b><code>#bb4d00</code></li>
+        <li><span class="sw" style="background: var(--danger)"></span><b>danger</b><code>#fcebec</code></li>
+        <li><span class="sw" style="background: var(--danger-border)"></span><b>danger-border</b><code>#fb2c3652</code></li>
+        <li><span class="sw" style="background: var(--danger-fg)"></span><b>danger-fg</b><code>#c10007</code></li>
+        <li><span class="sw" style="background: var(--backdrop)"></span><b>backdrop</b><code>#0f112038</code></li>
+        <li><span class="sw" style="background: var(--tile)"></span><b>tile</b><code>#232841</code></li>
+        <li><span class="sw" style="background: var(--mark)"></span><b>mark</b><code>#d27443</code></li>
+        <li><span class="sw" style="background: var(--on-avatar)"></span><b>on-avatar</b><code>#ffffff</code></li>
+      </ul>
+    </section>
+</main>
+<section class="shared">
+  <h2>Avatars</h2>
+  <p><span class="av" style="background: #c4534f" title="avatar 0 #c4534f">0</span><span class="av" style="background: #c77a1c" title="avatar 1 #c77a1c">1</span><span class="av" style="background: #a68a22" title="avatar 2 #a68a22">2</span><span class="av" style="background: #3e8f62" title="avatar 3 #3e8f62">3</span><span class="av" style="background: #2a8780" title="avatar 4 #2a8780">4</span><span class="av" style="background: #3d74ad" title="avatar 5 #3d74ad">5</span><span class="av" style="background: #6464c8" title="avatar 6 #6464c8">6</span><span class="av" style="background: #9058b0" title="avatar 7 #9058b0">7</span><span class="av" style="background: #be4f75" title="avatar 8 #be4f75">8</span><span class="av" style="background: #5a7488" title="avatar 9 #5a7488">9</span></p>
+  <h2>Contrastes vérifiés</h2>
+  <table>
+    <tbody>
+      <tr><td>dark</td><td>texte</td><td>fg</td><td>screen</td><td>15.99</td></tr>
+      <tr><td>light</td><td>texte</td><td>fg</td><td>screen</td><td>13.54</td></tr>
+      <tr><td>dark</td><td>texte</td><td>fg</td><td>card</td><td>14.68</td></tr>
+      <tr><td>light</td><td>texte</td><td>fg</td><td>card</td><td>14.47</td></tr>
+      <tr><td>dark</td><td>texte</td><td>fg</td><td>grouped</td><td>13.40</td></tr>
+      <tr><td>light</td><td>texte</td><td>fg</td><td>grouped</td><td>12.53</td></tr>
+      <tr><td>dark</td><td>texte</td><td>fg</td><td>bubble-out</td><td>11.08</td></tr>
+      <tr><td>light</td><td>texte</td><td>fg</td><td>bubble-out</td><td>11.63</td></tr>
+      <tr><td>dark</td><td>texte</td><td>muted</td><td>screen</td><td>5.94</td></tr>
+      <tr><td>light</td><td>texte</td><td>muted</td><td>screen</td><td>5.24</td></tr>
+      <tr><td>dark</td><td>texte</td><td>muted</td><td>card</td><td>5.45</td></tr>
+      <tr><td>light</td><td>texte</td><td>muted</td><td>card</td><td>5.60</td></tr>
+      <tr><td>dark</td><td>texte</td><td>muted</td><td>grouped</td><td>4.98</td></tr>
+      <tr><td>light</td><td>texte</td><td>muted</td><td>grouped</td><td>4.85</td></tr>
+      <tr><td>dark</td><td>texte</td><td>primary-text</td><td>screen</td><td>8.27</td></tr>
+      <tr><td>light</td><td>texte</td><td>primary-text</td><td>screen</td><td>5.58</td></tr>
+      <tr><td>dark</td><td>texte</td><td>primary-text</td><td>card</td><td>7.60</td></tr>
+      <tr><td>light</td><td>texte</td><td>primary-text</td><td>card</td><td>5.96</td></tr>
+      <tr><td>dark</td><td>texte</td><td>on-primary</td><td>primary</td><td>5.64</td></tr>
+      <tr><td>light</td><td>texte</td><td>on-primary</td><td>primary</td><td>4.91</td></tr>
+      <tr><td>dark</td><td>texte</td><td>warning-fg</td><td>warning</td><td>9.02</td></tr>
+      <tr><td>light</td><td>texte</td><td>warning-fg</td><td>warning</td><td>4.61</td></tr>
+      <tr><td>dark</td><td>texte</td><td>danger-fg</td><td>danger</td><td>5.95</td></tr>
+      <tr><td>light</td><td>texte</td><td>danger-fg</td><td>danger</td><td>5.58</td></tr>
+      <tr><td>dark</td><td>texte</td><td>danger-fg</td><td>card</td><td>5.95</td></tr>
+      <tr><td>light</td><td>texte</td><td>danger-fg</td><td>card</td><td>6.42</td></tr>
+      <tr><td>tous</td><td>texte</td><td>badge.text</td><td>badge.ok</td><td>4.91</td></tr>
+      <tr><td>tous</td><td>texte</td><td>badge.text</td><td>badge.problem</td><td>6.42</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>mark</td><td>tile</td><td>4.35</td></tr>
+      <tr><td>light</td><td>graphique</td><td>mark</td><td>tile</td><td>4.35</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>mark</td><td>screen</td><td>5.64</td></tr>
+      <tr><td>light</td><td>graphique</td><td>mark</td><td>screen</td><td>3.11</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>primary</td><td>screen</td><td>5.64</td></tr>
+      <tr><td>light</td><td>graphique</td><td>primary</td><td>screen</td><td>4.60</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>primary</td><td>card</td><td>5.17</td></tr>
+      <tr><td>light</td><td>graphique</td><td>primary</td><td>card</td><td>4.91</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>success</td><td>screen</td><td>9.74</td></tr>
+      <tr><td>light</td><td>graphique</td><td>success</td><td>screen</td><td>3.53</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>success</td><td>card</td><td>8.94</td></tr>
+      <tr><td>light</td><td>graphique</td><td>success</td><td>card</td><td>3.77</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.0</td><td>4.47</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.1</td><td>3.37</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.2</td><td>3.34</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.3</td><td>3.95</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.4</td><td>4.31</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.5</td><td>4.88</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.6</td><td>5.00</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.7</td><td>4.99</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.8</td><td>4.60</td></tr>
+      <tr><td>dark</td><td>graphique</td><td>on-avatar</td><td>color.avatar.9</td><td>4.90</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.0</td><td>4.47</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.1</td><td>3.37</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.2</td><td>3.34</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.3</td><td>3.95</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.4</td><td>4.31</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.5</td><td>4.88</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.6</td><td>5.00</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.7</td><td>4.99</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.8</td><td>4.60</td></tr>
+      <tr><td>light</td><td>graphique</td><td>on-avatar</td><td>color.avatar.9</td><td>4.90</td></tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>

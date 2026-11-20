@@ -92,7 +92,9 @@ cargo deny check
 Plus, selon les dossiers touchés : `./gradlew lint test assembleDebug` dans
 `apps/android` (étape 3), `npm run lint && npm test` dans `apps/extension`
 (étape 4), `python3 -m unittest discover -s tests -t .` dans
-`tools/otp-relay`. Une commande qui ne passe pas se signale avec
+`tools/otp-relay`, `node tools/design-tokens/gen.mjs --check` et
+`node --test 'tools/design-tokens/*.test.mjs'` si `design/` ou une couleur
+change. Une commande qui ne passe pas se signale avec
 sa sortie ; jamais de test désactivé pour passer.
 
 ## Compte rendu attendu

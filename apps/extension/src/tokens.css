@@ -1,0 +1,75 @@
+/* Fichier généré par tools/design-tokens/gen.mjs depuis design/tokens.json : ne pas modifier. */
+:root {
+  --screen: #0f1120;
+  --card: #161a2e;
+  --grouped: #1d2238;
+  --hover: #1d2238;
+  --fg: #eeecf3;
+  --muted: #8a90ab;
+  --tertiary: #8a90ab;
+  --border: #232843;
+  --input-border: #2a3050;
+  --primary: #d27443;
+  --on-primary: #0f1120;
+  --primary-text: #e39c75;
+  --bubble-out: #2a2f4f;
+  --success: #34d399;
+  --warning: #312108;
+  --warning-border: #fe9a0052;
+  --warning-fg: #ffb900;
+  --danger: #301214;
+  --danger-border: #fb414a52;
+  --danger-fg: #ff6467;
+  --backdrop: #0f11207a;
+  --tile: #232841;
+  --mark: #d27443;
+  --on-avatar: #ffffff;
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-sheet: 20px;
+  --radius-pill: 999px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+  --text-label: 11px;
+  --text-small: 13px;
+  --text-popup: 14px;
+  --text-body: 15px;
+  --text-title: 17px;
+  --text-large: 20px;
+  --text-headline: 24px;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --screen: #faf7f2;
+    --card: #ffffff;
+    --grouped: #f3eee6;
+    --hover: #f3eee6;
+    --fg: #232841;
+    --muted: #6b6577;
+    --tertiary: #6b6577;
+    --border: #e8e1d6;
+    --input-border: #dcd3c6;
+    --primary: #b4552a;
+    --on-primary: #ffffff;
+    --primary-text: #a2492a;
+    --bubble-out: #f6e3d6;
+    --success: #059669;
+    --warning: #fcf4e8;
+    --warning-border: #fe9a0052;
+    --warning-fg: #bb4d00;
+    --danger: #fcebec;
+    --danger-border: #fb2c3652;
+    --danger-fg: #c10007;
+    --backdrop: #0f112038;
+    --tile: #232841;
+    --mark: #d27443;
+    --on-avatar: #ffffff;
+  }
+}

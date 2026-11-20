@@ -1,13 +1,18 @@
 name: Extension
 
-# Extension Chrome (étape 4) : seulement quand l'extension ou le cœur Rust
-# change, sous Linux. Construit le WebAssembly, lance lint et tests (dont un
-# vrai relais et la CLI), et produit l'extension non empaquetée.
+# Extension Chrome (étape 4) : seulement quand l'extension, ses jetons de
+# design ou le cœur Rust changent, sous Linux. Vérifie les jetons générés,
+# construit le WebAssembly, lance lint et tests (dont un vrai relais et la
+# CLI), et produit l'extension non empaquetée.
 on:
   push:
     branches: [main]
     paths:
       - "apps/extension/**"
+      - "design/**"
+      - "tools/design-tokens/**"
+      - "branding/**"
+      - "apps/android/app/src/main/kotlin/dev/oldtown/android/ui/theme/Tokens.kt"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -15,6 +20,10 @@ on:
   pull_request:
     paths:
       - "apps/extension/**"
+      - "design/**"
+      - "tools/design-tokens/**"
+      - "branding/**"
+      - "apps/android/app/src/main/kotlin/dev/oldtown/android/ui/theme/Tokens.kt"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -58,6 +67,12 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: apps/extension/package-lock.json
+      # Jetons de design (note 0059) : sorties à jour, contrastes, tests du
+      # générateur (Node seul, sans dépendance).
+      - name: Jetons de design
+        run: |
+          node tools/design-tokens/gen.mjs --check
+          node --test 'tools/design-tokens/*.test.mjs'
       - name: npm ci
         working-directory: apps/extension
         run: npm ci
