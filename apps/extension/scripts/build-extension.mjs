@@ -29,10 +29,11 @@ await build({
 mkdirSync(path.join(dist, 'wasm'), { recursive: true });
 copyFileSync(path.join(app, 'src/wasm/ot_wasm_bg.wasm'), path.join(dist, 'wasm/ot_wasm_bg.wasm'));
 copyFileSync(path.join(app, 'src/offscreen/offscreen.html'), path.join(dist, 'offscreen.html'));
-// Page d'envoi et de permissions (étape 5).
+// Page d'envoi et de permissions (étape 5), sur les jetons de design.
 for (const page of ['send.html', 'page.css']) {
   copyFileSync(path.join(app, 'src/pages', page), path.join(dist, page));
 }
+copyFileSync(path.join(app, 'src/tokens.css'), path.join(dist, 'tokens.css'));
 copyFileSync(path.join(app, 'manifest.json'), path.join(dist, 'manifest.json'));
 // Les réglages sont la même appli Angular, ouverte sous un autre nom.
 copyFileSync(path.join(dist, 'index.html'), path.join(dist, 'options.html'));

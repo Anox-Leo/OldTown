@@ -11,6 +11,7 @@ import {
 import type { Item, RelayDevice, StateView } from '../shared/api';
 import { AvatarComponent } from './avatar';
 import { BackgroundService } from './background.service';
+import { LogoComponent } from './brand';
 import { ChatComponent } from './chat';
 import { type Conversation, conversations, preview } from './devices';
 import { IconComponent } from './icon';
@@ -27,13 +28,13 @@ const PRESENCE_EVERY_MS = 15_000;
 @Component({
   selector: 'app-home',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AvatarComponent, ChatComponent, IconComponent],
+  imports: [AvatarComponent, ChatComponent, IconComponent, LogoComponent],
   template: `
     @if (open(); as id) {
       <app-chat [channel]="id.channel" [presence]="presence()" (back)="open.set(undefined)" />
     } @else {
       <header class="row">
-        <h1 class="grow">OldTown</h1>
+        <h1 class="grow"><app-logo [size]="26" /></h1>
         <button class="icon ghost" (click)="openSettings()" title="Réglages" aria-label="Réglages">
           <app-icon name="settings" />
         </button>
@@ -90,8 +91,7 @@ const PRESENCE_EVERY_MS = 15_000;
     }
     h1 {
       margin: 0;
-      font-size: 20px;
-      font-weight: 700;
+      display: flex;
     }
     .ghost {
       display: inline-flex;

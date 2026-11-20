@@ -106,10 +106,18 @@ l'interface.
 - **Tests** : `npm test` = WebAssembly, puis Vitest sous Node
   (`vitest.worker.config.mts` : golden, vecteurs, stockage, et
   `test/otp.test.ts` sous jsdom, `test/relay.test.ts` et
+  `test/design.test.ts` (couleurs, signe, icônes),
   `test/files.test.ts` contre un vrai `ot-server`
   avec la CLI `ot` comme parrain : binaires de `target/debug`, ou
   `OT_BIN_DIR`), puis `ng test`
   (interface). `npm run lint` = ESLint, Prettier et `tsc` du service worker
   et des tests.
-- UI en français, thème repris de l'appli Android (DM Sans, OFL, licence
-  dans `third_party/`).
+- UI en français. **Identité visuelle** (note 0059) : couleurs, arrondis,
+  tailles et polices viennent de `src/tokens.css` et `src/shared/tokens.ts`
+  (avatars, badge), **générés** depuis `design/tokens.json` par
+  `tools/design-tokens/gen.mjs` : jamais modifiés à la main, et aucune
+  couleur en dur ailleurs dans `src/` hors `qr.ts` (QR noir sur blanc ;
+  `test/design.test.ts` le vérifie). Signe et logotype : `src/app/brand.ts`
+  (`app-mark`, `app-logo`), tracés repris de `branding/`. Icônes
+  `public/icons/` exportées depuis `branding/` (16 et 32 en taille
+  optique). DM Sans, OFL, licence dans `third_party/`.

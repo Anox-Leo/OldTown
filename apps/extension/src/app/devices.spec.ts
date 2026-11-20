@@ -1,4 +1,5 @@
 import type { Item, MemberView } from '../shared/api';
+import { AVATAR_COLORS } from '../shared/tokens';
 import { ALL_NAME, avatarColor, conversations, deviceKind, preview } from './devices';
 
 const member = (id: string, name: string): MemberView => ({
@@ -26,6 +27,18 @@ describe('devices', () => {
   it('une couleur stable par appareil', () => {
     expect(avatarColor('dev_a')).toBe(avatarColor('dev_a'));
     expect(avatarColor('dev_a')).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("chaque appareil garde le rang de sa couleur (comme dans l'appli Android)", () => {
+    // Rangs dans `AVATAR_COLORS` : ceux de `ConversationsTest.kt` (FNV-1a).
+    const rank = (id: string) => (AVATAR_COLORS as readonly string[]).indexOf(avatarColor(id));
+    expect(rank('')).toBe(1);
+    expect(rank('dev_a')).toBe(0);
+    expect(rank('dev_b')).toBe(7);
+    expect(rank('dev_c')).toBe(8);
+    expect(rank('dev_tel')).toBe(2);
+    expect(rank('Téléphone')).toBe(9);
+    expect(rank('01J9ZK3Q4W5E6R7T8Y9U0I1O2P')).toBe(0);
   });
 
   it('« Tous » en premier, puis du plus récemment actif au moins récent', () => {

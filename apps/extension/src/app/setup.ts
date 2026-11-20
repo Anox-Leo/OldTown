@@ -2,15 +2,16 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 
 import { BackgroundService } from './background.service';
+import { LogoComponent } from './brand';
 import { suggestedName } from './status';
 
 /** Premier lancement : URL du relais, nom, puis QR inversé ou code collé. */
 @Component({
   selector: 'app-setup',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule],
+  imports: [FormsModule, LogoComponent],
   template: `
-    <h1>OldTown</h1>
+    <h1><app-logo [size]="36" /></h1>
     <p class="muted">
       Textes et liens entre vos appareils, chiffrés de bout en bout. Le relais ne voit jamais le
       contenu.
@@ -58,8 +59,8 @@ import { suggestedName } from './status';
       padding: 16px;
     }
     h1 {
-      font-size: 20px;
-      margin: 0 0 4px;
+      display: flex;
+      margin: 4px 0 10px;
     }
     .wide {
       width: 100%;

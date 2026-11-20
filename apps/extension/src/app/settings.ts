@@ -11,6 +11,7 @@ import { FormsModule } from '@angular/forms';
 import type { RelayDevice, StateView } from '../shared/api';
 import { OTP_ORIGINS } from '../shared/origins';
 import { BackgroundService } from './background.service';
+import { LogoComponent } from './brand';
 import { GroupComponent } from './group';
 import { connectionStatus } from './status';
 
@@ -18,9 +19,9 @@ import { connectionStatus } from './status';
 @Component({
   selector: 'app-settings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, GroupComponent],
+  imports: [FormsModule, GroupComponent, LogoComponent],
   template: `
-    <h1>OldTown · réglages</h1>
+    <h1><app-logo [size]="32" /><span class="muted">Réglages</span></h1>
     @let s = state();
     @if (s.device; as d) {
       <section class="card">
@@ -131,7 +132,11 @@ import { connectionStatus } from './status';
       padding: 0 16px;
     }
     h1 {
+      display: flex;
+      align-items: center;
+      gap: 14px;
       font-size: 22px;
+      font-weight: 500;
     }
     h2 {
       font-size: 15px;

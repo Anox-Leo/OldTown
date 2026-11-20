@@ -1,4 +1,4 @@
-/* Pages simples de l'extension (envoi, aperçu), dans le thème de la popup. */
+/* Pages simples de l'extension (envoi, aperçu), dans le thème de la popup : jetons de `tokens.css`. */
 @font-face {
   font-family: 'DM Sans';
   src: url('/fonts/dm-sans.ttf') format('truetype');
@@ -6,44 +6,28 @@
   font-display: swap;
 }
 :root {
-  color-scheme: light dark;
-  --bg: #fafaf9;
-  --fg: #1c1917;
-  --muted: #78716c;
-  --card: #ffffff;
-  --border: #e7e5e4;
-  --primary: #4f46e5;
-  --danger: #b91c1c;
+  color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --bg: #0c0a09;
-    --fg: #e7e5e4;
-    --muted: #a8a29e;
-    --card: #1c1917;
-    --border: #292524;
-    --primary: #818cf8;
-    --danger: #f87171;
+    color-scheme: light;
   }
 }
 body {
   margin: 0;
   padding: 16px;
-  font:
-    14px/1.45 'DM Sans',
-    system-ui,
-    sans-serif;
-  background: var(--bg);
+  font: var(--text-popup) / 1.45 var(--font-sans);
+  background: var(--screen);
   color: var(--fg);
 }
 h1 {
-  font-size: 16px;
+  font-size: var(--text-title);
   margin: 0 0 12px;
 }
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   padding: 12px;
   display: grid;
   gap: 10px;
@@ -52,7 +36,7 @@ h1 {
   color: var(--muted);
 }
 .error {
-  color: var(--danger);
+  color: var(--danger-fg);
 }
 button,
 select,
@@ -60,8 +44,8 @@ input {
   font: inherit;
 }
 button {
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-control);
   padding: 7px 12px;
   background: var(--card);
   color: var(--fg);
@@ -70,7 +54,7 @@ button {
 button.primary {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 button:disabled {
   opacity: 0.5;

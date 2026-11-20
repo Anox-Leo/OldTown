@@ -1,4 +1,5 @@
 import { type Item, type MemberView, channelOf } from '../shared/api';
+import { AVATAR_COLORS } from '../shared/tokens';
 
 /** Type d'appareil, pour l'avatar ; `group` : la conversation « Tous ». */
 export type DeviceKind = 'phone' | 'laptop' | 'desktop' | 'browser' | 'group';
@@ -26,21 +27,12 @@ export function deviceKind(name: string): Exclude<DeviceKind, 'group'> {
   return 'laptop';
 }
 
-/** Couleurs d'avatar, lisibles sous un pictogramme blanc dans les deux thèmes. */
-const COLORS = [
-  '#e05d5d',
-  '#e0803c',
-  '#c99a1e',
-  '#3fa66b',
-  '#22988a',
-  '#3b82c4',
-  '#6d6cf0',
-  '#a35cc8',
-  '#d6567f',
-  '#5f7d95',
-];
-
-/** Couleur d'un appareil : tirée de son identifiant, donc la même à chaque ouverture. */
+/**
+ * Couleur d'un appareil : tirée de son identifiant, donc la même à chaque
+ * ouverture. Les dix teintes viennent des jetons de design (`AVATAR_COLORS`,
+ * lisibles sous un pictogramme blanc dans les deux thèmes) : leur ordre ne
+ * change pas, pour qu'un appareil garde sa famille de couleur.
+ */
 export function avatarColor(id: string): string {
   // FNV-1a 32 bits.
   let h = 0x811c9dc5;
@@ -48,7 +40,7 @@ export function avatarColor(id: string): string {
     h ^= id.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return COLORS[(h >>> 0) % COLORS.length] ?? '#5f7d95';
+  return AVATAR_COLORS[(h >>> 0) % AVATAR_COLORS.length] ?? AVATAR_COLORS[0];
 }
 
 export interface Conversation {
