@@ -151,6 +151,18 @@ export class Relay {
     return id;
   }
 
+  /** `ot-server user rename` : le nom de l'admin se donne avant `admin init` (note 0061). */
+  async renameUser(user: string, name: string): Promise<void> {
+    await run(binary('ot-server'), [
+      '--db',
+      path.join(this.dir, 'relay.db'),
+      'user',
+      'rename',
+      user,
+      name,
+    ]);
+  }
+
   /** Arrête le relais (la base reste, pour un redémarrage). */
   async stop(): Promise<void> {
     if (this.proc.exitCode !== null) return;
@@ -225,6 +237,26 @@ export class Cli {
       }
     });
     return { messages, stop: () => proc.kill() };
+  }
+
+  /**
+   * Commande longue en tâche de fond (`ot admin invite`, `ot invite join`) :
+   * sa sortie au fil de l'eau, et sa fin.
+   */
+  spawn(...args: string[]): { out: () => string; done: Promise<string>; stop(): void } {
+    const proc = spawn(binary('ot'), ['--home', this.home, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    proc.stdout.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    proc.stderr.on('data', (c: Buffer) => (out += c.toString('utf8')));
+    const done = new Promise<string>((resolve, reject) => {
+      proc.on('exit', (code) =>
+        code === 0 ? resolve(out) : reject(new Error(`ot ${args.join(' ')} : ${out}`)),
+      );
+    });
+    done.catch(() => undefined);
+    return { out: () => out, done, stop: () => proc.kill() };
   }
 
   /** `ot pair new` en tâche de fond : renvoie le code dès qu'il est affiché. */

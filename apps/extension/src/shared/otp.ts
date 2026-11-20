@@ -17,6 +17,15 @@ export function sameSite(pageHost: string, senderDomain: string): boolean {
   return page !== null && page === site(senderDomain);
 }
 
+/**
+ * Règle O2 (étape 10) : un code n'est copié ou rempli d'office que s'il vient
+ * d'un de mes appareils ou d'un service (`auto_fill` du cœur). Absent : un
+ * élément d'avant l'étape 10, donc de mon groupe.
+ */
+export function autoFillAllowed(item: { autoFill?: boolean }): boolean {
+  return item.autoFill !== false;
+}
+
 /** Code encore valable (`expiresAt` en millisecondes Unix). */
 export function isLive(expiresAt: number, now = Date.now()): boolean {
   return expiresAt > now;

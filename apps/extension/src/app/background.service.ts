@@ -22,6 +22,8 @@ export class BackgroundService {
   readonly error = signal<string | undefined>(undefined);
   /** Conversation à ouvrir, demandée par le service worker (note 0032). */
   readonly openChat = signal<string | undefined>(undefined);
+  /** Admin : dernière personne invitée qui vient de rejoindre (étape 10). */
+  readonly joined = signal<Extract<Push, { type: 'person-joined' }> | undefined>(undefined);
 
   private port?: chrome.runtime.Port;
 
@@ -33,6 +35,7 @@ export class BackgroundService {
     port.onMessage.addListener((push: Push) => {
       if (push.type === 'state') this.state.set(push.state);
       else if (push.type === 'open') this.openChat.set(push.channel);
+      else if (push.type === 'person-joined') this.joined.set(push);
       else
         this.items.update((items) =>
           [push.item, ...items.filter((i) => i.msgId !== push.item.msgId)].slice(0, HISTORY_LEN),

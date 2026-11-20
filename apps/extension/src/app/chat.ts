@@ -4,10 +4,12 @@ import {
   ElementRef,
   afterRenderEffect,
   computed,
+  effect,
   inject,
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -17,21 +19,25 @@ import {
   type Item,
   type StateView,
   type TransferView,
-  channelOf,
+  inChannel,
+  parseChannel,
 } from '../shared/api';
 import { filePath, isViewable } from '../shared/files';
 import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
 import { AvatarComponent } from './avatar';
 import { BackgroundService } from './background.service';
-import { ALL_NAME, avatarColor, deviceKind } from './devices';
+import { ALL_NAME, avatarColor, deviceKind, initials } from './devices';
 import { IconComponent } from './icon';
 import { connectionStatus, shortTime } from './status';
 
 /**
  * Conversation d'un canal (notes 0030 et 0031) : « Tous » ou un appareil du
- * groupe. Les messages envoyés d'ici sont à droite, les reçus à gauche ; la
- * zone d'envoi, en bas, envoie dans ce canal. La flèche revient à la liste.
+ * groupe ; étape 10 : une autre personne (`user:<id>`, ses appareils par
+ * défaut) ou un de ses appareils, avec le nom de l'appareil sous chaque
+ * bulle reçue. Les messages envoyés d'ici sont à droite, les reçus à
+ * gauche ; la zone d'envoi, en bas, envoie dans ce canal. La flèche revient
+ * à la liste.
  */
 @Component({
   selector: 'app-chat',
@@ -43,7 +49,7 @@ import { connectionStatus, shortTime } from './status';
       <button class="icon ghost" (click)="back.emit()" title="Retour" aria-label="Retour">
         <app-icon name="arrow-left" />
       </button>
-      <app-avatar [kind]="kind()" [color]="color()" [size]="36" />
+      <app-avatar [kind]="kind()" [color]="color()" [initials]="avatarInitials()" [size]="36" />
       <div class="grow title">
         <strong class="name">{{ channelName() }}</strong>
         @if (subtitle(); as sub) {
@@ -53,6 +59,11 @@ import { connectionStatus, shortTime } from './status';
     </header>
     @if (status().help; as help) {
       <div class="banner warning">{{ help }}</div>
+    }
+    @if (outdated()) {
+      <div class="banner warning">
+        {{ channelName() }} n'est pas à jour : il ne recevra rien de vous.
+      </div>
     }
     @if (!s.relayAccess) {
       <div class="banner warning row">
@@ -130,6 +141,9 @@ import { connectionStatus, shortTime } from './status';
             }
           </div>
           <span class="time small">
+            @if (!item.outgoing && person()) {
+              {{ item.fromName }} ·
+            }
             {{ time(item.createdAt) }}{{ item.pending ? ' · envoi…' : '' }}
           </span>
         </li>
@@ -161,58 +175,62 @@ import { connectionStatus, shortTime } from './status';
       }
     </ol>
 
-    <footer class="composer">
-      @if (bg.error(); as error) {
-        <div class="banner danger" role="alert">{{ error }}</div>
-      } @else if (notice(); as n) {
-        <p class="small muted notice">{{ n }}</p>
-      }
-      <div class="row">
-        <input
-          #picker
-          type="file"
-          multiple
-          hidden
-          aria-hidden="true"
-          (change)="sendPicked(picker)"
-        />
-        <button
-          class="icon"
-          (click)="openSendFile(picker)"
-          [disabled]="busy()"
-          title="Envoyer un fichier"
-          aria-label="Envoyer un fichier"
-        >
-          <app-icon name="paperclip" />
-        </button>
-        <textarea
-          class="grow"
-          rows="1"
-          [(ngModel)]="text"
-          [placeholder]="placeholder()"
-          aria-label="Message"
-          (keydown)="onKey($event)"
-        ></textarea>
-        <button
-          class="icon"
-          (click)="sendClipboard()"
-          [disabled]="busy()"
-          title="Coller et envoyer le presse-papiers"
-          aria-label="Coller et envoyer le presse-papiers"
-        >
-          <app-icon name="clipboard" />
-        </button>
-        <button
-          class="primary icon"
-          (click)="send()"
-          [disabled]="busy() || !text.trim()"
-          title="Envoyer (Entrée)"
-          aria-label="Envoyer"
-        >
-          <app-icon name="send" />
-        </button>
-      </div>
-    </footer>
+    @if (person()?.role === 'service') {
+      <p class="small muted service">Un service écrit, on ne lui répond pas.</p>
+    } @else {
+      <footer class="composer">
+        @if (bg.error(); as error) {
+          <div class="banner danger" role="alert">{{ error }}</div>
+        } @else if (notice(); as n) {
+          <p class="small muted notice">{{ n }}</p>
+        }
+        <div class="row">
+          <input
+            #picker
+            type="file"
+            multiple
+            hidden
+            aria-hidden="true"
+            (change)="sendPicked(picker)"
+          />
+          <button
+            class="icon"
+            (click)="openSendFile(picker)"
+            [disabled]="busy()"
+            title="Envoyer un fichier"
+            aria-label="Envoyer un fichier"
+          >
+            <app-icon name="paperclip" />
+          </button>
+          <textarea
+            class="grow"
+            rows="1"
+            [(ngModel)]="text"
+            [placeholder]="placeholder()"
+            aria-label="Message"
+            (keydown)="onKey($event)"
+          ></textarea>
+          <button
+            class="icon"
+            (click)="sendClipboard()"
+            [disabled]="busy()"
+            title="Coller et envoyer le presse-papiers"
+            aria-label="Coller et envoyer le presse-papiers"
+          >
+            <app-icon name="clipboard" />
+          </button>
+          <button
+            class="primary icon"
+            (click)="send()"
+            [disabled]="busy() || !text.trim()"
+            title="Envoyer (Entrée)"
+            aria-label="Envoyer"
+          >
+            <app-icon name="send" />
+          </button>
+        </div>
+      </footer>
+    }
   `,
   styles: `
     :host {
@@ -405,6 +423,10 @@ import { connectionStatus, shortTime } from './status';
     .notice {
       margin: 0;
     }
+    .service {
+      margin: 0;
+      text-align: center;
+    }
     .ok {
       color: var(--success);
     }
@@ -429,17 +451,51 @@ export class ChatComponent {
   protected readonly others = computed(
     () => this.state().group?.members.filter((m) => m.device_id !== this.state().device?.id) ?? [],
   );
+  protected readonly target = computed(() => parseChannel(this.channel()));
   protected readonly member = computed(() =>
     this.others().find((m) => m.device_id === this.channel()),
   );
-  protected readonly channelName = computed(() => this.member()?.name ?? ALL_NAME);
-  protected readonly kind = computed(() => {
-    const m = this.member();
-    return m ? deviceKind(m.name) : 'group';
+  /** Autre personne du canal (étape 10), et l'appareil visé s'il y en a un. */
+  protected readonly person = computed(() => {
+    const user = this.target().user;
+    return user ? this.state().people.find((p) => p.user === user) : undefined;
   });
-  protected readonly color = computed(() => avatarColor(this.channel()));
+  protected readonly personDevice = computed(() => {
+    const t = this.target();
+    return t.user ? this.person()?.devices.find((d) => d.device_id === t.device) : undefined;
+  });
+  protected readonly outdated = computed(() => this.personDevice()?.up_to_date === false);
+  protected readonly channelName = computed(() => {
+    const p = this.person();
+    if (p) {
+      const d = this.personDevice();
+      return d ? `${p.name} · ${d.name}` : p.name;
+    }
+    return this.member()?.name ?? ALL_NAME;
+  });
+  protected readonly kind = computed(() => {
+    const d = this.personDevice();
+    if (d) return deviceKind(d.name, d.kind);
+    if (this.target().user) return 'person';
+    const m = this.member();
+    const profile = this.state()
+      .people.find((p) => p.user === this.state().me)
+      ?.devices.find((x) => x.device_id === m?.device_id);
+    return m ? deviceKind(m.name, profile?.kind) : 'group';
+  });
+  protected readonly color = computed(() => {
+    const t = this.target();
+    return avatarColor(t.user ? (t.device ?? t.user) : this.channel());
+  });
+  protected readonly avatarInitials = computed(() => initials(this.person()?.name ?? ''));
   /** Sous le nom : « en ligne » ou « hors ligne » ; pour « Tous », combien sont en ligne. */
   protected readonly subtitle = computed(() => {
+    const p = this.person();
+    if (p) {
+      const d = this.personDevice();
+      const online = d ? d.online : p.devices.some((x) => x.online);
+      return { online, text: online ? 'en ligne' : 'hors ligne' };
+    }
     const presence = this.presence();
     if (!presence) return undefined;
     const m = this.member();
@@ -455,7 +511,7 @@ export class ChatComponent {
     const me = this.state().device?.id;
     return this.bg
       .items()
-      .filter((i) => channelOf(i, me) === this.channel())
+      .filter((i) => inChannel(i, this.channel(), me))
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   });
   /** Fichiers en cours d'envoi, en bas de la conversation. */
@@ -475,6 +531,13 @@ export class ChatComponent {
   private readonly list = viewChild<ElementRef<HTMLElement>>('list');
 
   constructor() {
+    // Conversation d'une personne ouverte, ou un élément y arrive : lu.
+    effect(() => {
+      const channel = this.channel();
+      const n = this.visible().length;
+      if (!this.target().user || n < 0) return;
+      untracked(() => void this.bg.request({ type: 'mark-read', channel }).catch(() => undefined));
+    });
     // Le dernier message en vue, à l'ouverture, au changement de canal et à
     // chaque nouveau message.
     afterRenderEffect(() => {

@@ -3,7 +3,17 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { checkServerUrl, decode, encode, wsUrl } from '../src/background/frames';
+import {
+  type ClientFrame,
+  type ServerFrame,
+  answers,
+  callReference,
+  checkServerUrl,
+  decode,
+  encode,
+  request,
+  wsUrl,
+} from '../src/background/frames';
 import { type Geometry, createBlobBody } from '../src/background/transfer';
 import { Vault, decodeFrame, fileGeometry } from '../src/wasm/ot_wasm.js';
 import { ROOT, golden, loadWasm } from './support';
@@ -32,6 +42,76 @@ describe('golden de ot-proto', () => {
     expect(encode.listDevices()).toBe(golden('list_devices'));
     const env = (JSON.parse(golden('send')) as { env: unknown }).env;
     expect(encode.send(JSON.stringify(env))).toBe(golden('send'));
+  });
+
+  it('les demandes de l’étape 10 écrites en TypeScript sont celles des golden', () => {
+    const g = (name: string) => JSON.parse(golden(name)) as Record<string, unknown>;
+    const BOB = 'usr_01J9Z4B1C2D3E4F5G6H7J8K9M0';
+    expect(encode.request(request.usersGet())).toBe(golden('users_get'));
+    expect(encode.request(request.userInvite('Bob', ['usr_01J9Z4A1B2C3D4E5F6G7H8J9K0']))).toBe(
+      golden('user_invite'),
+    );
+    expect(encode.request(request.userReinvite(BOB))).toBe(golden('user_reinvite'));
+    const cert = g('user_certify')['cert'] as { data: string; sig: string };
+    expect(encode.request(request.userCertify(BOB, cert))).toBe(golden('user_certify'));
+    expect(encode.request(request.userRevoke(BOB))).toBe(golden('user_revoke'));
+    expect(encode.request(request.userRename(BOB, 'Bobby'))).toBe(golden('user_rename'));
+    const link = g('link_set');
+    expect(
+      encode.request(request.linkSet(link['from'] as string, link['to'] as string, true)),
+    ).toBe(golden('link_set'));
+    expect(encode.request(request.deviceRevoke('dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5'))).toBe(
+      golden('device_revoke'),
+    );
+    const mute = g('service_mute');
+    expect(encode.request(request.serviceMute(mute['service'] as string, true))).toBe(
+      golden('service_mute'),
+    );
+    // `features` n'est déclaré que par le WebAssembly (`featuresFrame`).
+    const update = g('device_update');
+    delete update['features'];
+    expect(
+      encode.request(
+        request.deviceUpdate(update['device'] as string, {
+          kind: 'cli',
+          reachable: false,
+          default: false,
+        }),
+      ),
+    ).toBe(JSON.stringify(update));
+    expect(decodeFrame(JSON.stringify(update))).toBe(JSON.stringify(update));
+    // Champs absents : inchangés.
+    expect(request.deviceUpdate('dev_x', { default: true })).toEqual({
+      t: 'device_update',
+      device: 'dev_x',
+      default: true,
+    });
+  });
+
+  it('chaque réponse va à sa demande, chaque refus à sa référence', () => {
+    const reply = (name: string) => decode(golden(name), decodeFrame);
+    const publish: ClientFrame = {
+      t: 'roster_publish',
+      user: 'usr_01J9Z4A1B2C3D4E5F6G7H8J9K0',
+      seq: 21,
+      entry: {},
+    };
+    expect(answers(publish, reply('roster_published'))).toBe(true);
+    expect(answers({ ...publish, seq: 20 }, reply('roster_published'))).toBe(false);
+    expect(callReference(publish)).toBe('21');
+    expect(answers({ t: 'directory_get' }, reply('directory'))).toBe(true);
+    expect(answers({ t: 'users_get' }, reply('users'))).toBe(true);
+    expect(answers({ t: 'users_get' }, reply('directory'))).toBe(false);
+    const invited = reply('user_invited') as Extract<ServerFrame, { t: 'user_invited' }>;
+    expect(answers(request.userInvite('Bob', []), invited)).toBe(true);
+    expect(answers(request.userReinvite(invited.user), invited)).toBe(true);
+    expect(answers(request.userReinvite('usr_autre'), invited)).toBe(false);
+    // Refus sans référence : `user_invite`, `link_set`, `users_get`, `directory_get`.
+    expect(callReference(request.userInvite('Bob', []))).toBeUndefined();
+    expect(callReference(request.linkSet('a', 'b', true))).toBeUndefined();
+    expect(callReference(request.userRevoke('usr_b'))).toBe('usr_b');
+    expect(callReference(request.deviceUpdate('dev_x', {}))).toBe('dev_x');
+    expect(callReference(request.serviceMute('usr_s', true))).toBe('usr_s');
   });
 
   it('le corps de création d’un fichier est celui du golden', () => {

@@ -196,12 +196,16 @@ impl Geometry {
     }
 }
 
-/// Dépôt en cours, sans clé.
+/// Dépôt en cours, sans clé. `to` et `to_user` disent sa cible : une
+/// reprise n'a de sens que vers la même (comme `Client::send_file_info`).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct UploadOut {
     pub blob_id: String,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
+    pub to: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<String>,
     #[serde(flatten)]
     pub geometry: Geometry,
 }
@@ -211,6 +215,8 @@ impl UploadOut {
         Ok(Self {
             blob_id: p.meta.blob_id.to_string(),
             expires_at: p.expires_at,
+            to: p.to.iter().map(ToString::to_string).collect(),
+            to_user: p.to_user.as_ref().map(ToString::to_string),
             geometry: Geometry::new(p.meta.size, p.meta.chunk_size)?,
         })
     }
@@ -423,6 +429,18 @@ pub struct PublishOut {
     pub head: Option<ot_core::crypto::directory::LogHead>,
 }
 
+/// Réponse d'`adminRoot` : trame `admin_init` à envoyer, ou certificat déjà
+/// publié par un autre appareil de mon groupe, adopté (`adopted`, avec ses
+/// effets) ; relire alors l'annuaire.
+#[derive(Debug, Default, Serialize)]
+pub struct AdminRootOut {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Frame>,
+    pub adopted: bool,
+    #[serde(flatten)]
+    pub out: Output,
+}
+
 pub struct CoreState {
     vault: Arc<VaultStore>,
     secure: Secure,
@@ -431,6 +449,13 @@ pub struct CoreState {
     read: Option<DirectoryRead>,
     /// Entrée envoyée (`roster_publish`), en attente de `roster_published`.
     publishing: Option<OwnEntry>,
+    /// Entrées de journaux de services envoyées (D47), en attente de leur
+    /// `roster_published` ; une par service.
+    publishing_services: Vec<OwnEntry>,
+    /// Certificat racine envoyé (`admin_init`), en attente de
+    /// `admin_initialized`. Perdu à l'arrêt du service worker : la lecture
+    /// suivante trouve alors le certificat publié et l'adopte.
+    admin_root: Option<SignedBlob>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -445,7 +470,15 @@ impl CoreState {
         let identity = vault.identity()?.ok_or("identité de l'appareil absente")?;
         let keyring = StoreKeyring::new(vault.clone());
         let (secure, startup) = Secure::load(me, identity, Arc::new(keyring.clone()));
-        let mut core = Self { vault, secure, pending: None, read: None, publishing: None };
+        let mut core = Self {
+            vault,
+            secure,
+            pending: None,
+            read: None,
+            publishing: None,
+            publishing_services: Vec::new(),
+            admin_root: None,
+        };
         let mut out = Output::default();
         out.push(startup.into_iter().map(Effect::Emit).collect());
         core.restore(OffsetDateTime::now_utc(), &mut out);
@@ -583,7 +616,7 @@ impl CoreState {
 
     // --- Fichiers (étape 5, note 0026) --------------------------------------
 
-    /// Dépôt en cours de cette source, s'il reste valable.
+    /// Dépôt en cours de cette source, s'il reste valable (avec sa cible).
     pub fn upload(&self, source_id: &str, size: u64) -> Result<Option<UploadOut>, String> {
         let now = OffsetDateTime::now_utc();
         self.secure
@@ -595,7 +628,9 @@ impl CoreState {
     }
 
     /// Nouveau dépôt, après la création du blob par le relais : tire la clé
-    /// du fichier et la range dans le coffre.
+    /// du fichier et la range dans le coffre. Vers une autre personne
+    /// (`to_user`), `to` est la résolution de [`Self::recipients`], celle à
+    /// qui le blob a été ouvert ; l'annonce partira en `0x05`.
     #[allow(clippy::too_many_arguments)]
     pub fn start_upload(
         &self,
@@ -606,20 +641,26 @@ impl CoreState {
         chunk_size: u32,
         sha256: &[u8],
         to: &[String],
+        to_user: Option<&str>,
         blob_id: &str,
         expires_at: &str,
     ) -> Result<UploadOut, String> {
         let sha256: [u8; 32] = sha256.try_into().map_err(|_| "SHA-256 de 32 octets attendu")?;
         let blob: BlobId = blob_id.parse().map_err(err)?;
-        let to =
+        let to: Vec<DeviceId> =
             to.iter().map(|id| id.parse::<DeviceId>().map_err(err)).collect::<Result<_, _>>()?;
+        let to_user = to_user.map(str::parse::<UserId>).transpose().map_err(err)?;
+        if to_user.is_some() && to.is_empty() {
+            // `to` est la résolution de `recipients`, jamais vide.
+            return Err("envoi à une personne sans appareil destinataire".into());
+        }
         let expires_at =
             OffsetDateTime::parse(expires_at, &time::format_description::well_known::Rfc3339)
                 .map_err(err)?;
         let meta =
             new_file_meta(blob, name, mime, size, chunk_size, sha256).ok_or("fichier trop gros")?;
         let pending =
-            PendingUpload { source_id: source_id.to_owned(), to, to_user: None, expires_at, meta };
+            PendingUpload { source_id: source_id.to_owned(), to, to_user, expires_at, meta };
         let out = UploadOut::new(&pending)?;
         self.secure.save_upload(pending, OffsetDateTime::now_utc()).map_err(err)?;
         Ok(out)
@@ -883,6 +924,124 @@ impl CoreState {
         self.secure.awaits_directory()
     }
 
+    // --- Admin : racine, appareils retirés, services (PR 5) ---
+
+    /// Début d'`admin_init` (note 0052) : trame `directory_get` qui dit qui
+    /// je suis et si le certificat de l'admin manque. Refusé sans groupe ou
+    /// si l'ancre est déjà là. Passer la trame `directory` reçue à
+    /// [`Self::admin_root`].
+    pub fn admin_init_start(&self) -> Result<Frame, String> {
+        if self.secure.info().is_none() {
+            return Err(ClientError::NoGroup.to_string());
+        }
+        if self.secure.has_anchor() {
+            return Err("certificat de l'admin déjà publié".into());
+        }
+        Ok(Frame::DirectoryGet { known: Default::default(), after: None })
+    }
+
+    /// Page de l'annuaire lue pour `admin_init` (comme `client.rs`) :
+    /// certificat de l'admin déjà publié par un autre appareil de mon
+    /// groupe, adopté s'il est le mien (`adopt_existing_root`) ; sinon
+    /// certificat racine et entrée 1 signés ici, à envoyer (`admin_init`),
+    /// adoptés à la réponse par [`Self::adopt_admin_root`].
+    pub fn admin_root(&mut self, frame: Frame) -> Result<AdminRootOut, String> {
+        let Frame::Directory { me, admin, users, .. } = frame else {
+            return Err("trame directory attendue".into());
+        };
+        let raw =
+            users.into_iter().find(|u| u.id == admin).ok_or("l'admin manque dans l'annuaire")?;
+        if me != admin {
+            return Err("cet appareil n'est pas à l'admin".into());
+        }
+        let mut res = AdminRootOut::default();
+        if let Some(cert) = &raw.cert {
+            res.out.push(self.secure.adopt_existing_root(&admin, cert).map_err(err)?);
+            res.adopted = true;
+            self.admin_root = None;
+            return Ok(res);
+        }
+        let (cert, entry) =
+            self.secure.admin_root(&admin, &raw.name, OffsetDateTime::now_utc()).map_err(err)?;
+        res.frame = Some(Frame::AdminInit { cert: cert.clone(), entry });
+        self.admin_root = Some(cert);
+        Ok(res)
+    }
+
+    /// `admin_initialized` reçu : l'ancre est mon certificat racine. Relire
+    /// ensuite l'annuaire ([`Self::directory_start`]).
+    pub fn adopt_admin_root(&mut self, user: &str) -> Result<Output, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        let cert = self.admin_root.as_ref().ok_or("aucun admin_init en cours")?;
+        let ours = ot_core::crypto::directory::UserCert::read_unverified(cert)
+            .is_ok_and(|c| c.user == user);
+        if !ours {
+            return Err("admin_initialized pour une autre personne".into());
+        }
+        let mut out = Output::default();
+        out.push(self.secure.adopt_admin_root(cert));
+        self.admin_root = None;
+        Ok(out)
+    }
+
+    /// Admin : personnes dont le certificat a été signé par `device`, à
+    /// re-signer ([`Self::recertify`]) après le retrait de cet appareil.
+    pub fn certified_by(&self, device: &str) -> Result<Vec<String>, String> {
+        let device: DeviceId = device.parse().map_err(err)?;
+        Ok(self.secure.certified_by(&device).iter().map(ToString::to_string).collect())
+    }
+
+    /// Admin : certificat de `user` re-signé par cet appareil (même
+    /// `genesis`), renommé si `name` est donné. À rendre au relais
+    /// (`user_certify`), puis à engager (`nextEntry` `certify`).
+    pub fn recertify(&self, user: &str, name: Option<&str>) -> Result<SignedBlob, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        self.secure.recertify(&user, name, OffsetDateTime::now_utc()).map_err(err)
+    }
+
+    /// Admin : services dont la dernière entrée vient d'un appareil retiré
+    /// de l'admin, à republier (D47, note 0054) ; vide hors de l'admin.
+    pub fn services_to_republish(&self) -> Vec<String> {
+        self.secure.services_to_republish().iter().map(ToString::to_string).collect()
+    }
+
+    /// Admin : entrée suivante du journal du service `user` (même roster,
+    /// version + 1), ou rien à faire (`frame` absente, `head`). À la réponse
+    /// `roster_published`, [`Self::service_entry_published`] ; sur
+    /// `conflict`, relire l'annuaire et redemander. Ajouter un appareil de
+    /// service reste à la CLI et à Android.
+    pub fn next_service_entry(&mut self, user: &str) -> Result<PublishOut, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        match self.secure.next_service_entry(&user, None).map_err(err)? {
+            NextEntry::Done(head) => Ok(PublishOut { frame: None, head }),
+            NextEntry::Entry(own) => {
+                let frame = Frame::RosterPublish {
+                    user: own.user.clone(),
+                    seq: own.entry.seq,
+                    entry: own.entry.entry.clone(),
+                };
+                let head = Some(own.head());
+                self.publishing_services.retain(|o| o.user != own.user);
+                self.publishing_services.push(*own);
+                Ok(PublishOut { frame: Some(frame), head })
+            }
+        }
+    }
+
+    /// `roster_published` reçu pour l'entrée `seq` du service `user`.
+    pub fn service_entry_published(&mut self, user: &str, seq: u64) -> Result<Output, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        let i = self
+            .publishing_services
+            .iter()
+            .position(|o| o.user == user && o.entry.seq == seq)
+            .ok_or("aucune publication en cours pour ce service")?;
+        let own = self.publishing_services.swap_remove(i);
+        let mut out = Output::default();
+        out.push(self.secure.service_entry_published(&own));
+        Ok(out)
+    }
+
     /// Nouvelle clé de groupe sans les membres `exclude`. Les `group_key` à
     /// envoyer sont dans `sends`.
     pub fn rotate(&mut self, exclude: &[String]) -> Result<(u32, Output), String> {
@@ -906,6 +1065,7 @@ mod tests {
 
     /// Parrain en Rust (comme le téléphone) et nouvel appareil « extension ».
     struct Sponsor {
+        id: DeviceId,
         secure: Secure,
     }
 
@@ -914,7 +1074,7 @@ mod tests {
         let identity = Identity::generate();
         let keyring = Arc::new(MemoryKeyring::new());
         init_group(&*keyring, &id, "téléphone", &identity, false).unwrap();
-        Sponsor { secure: Secure::load(id, identity, keyring).0 }
+        Sponsor { id: id.clone(), secure: Secure::load(id, identity, keyring).0 }
     }
 
     fn extension() -> (Arc<VaultStore>, String) {
@@ -1036,6 +1196,7 @@ mod tests {
                 16,
                 &sha,
                 &[],
+                None,
                 &blob,
                 "2099-01-01T00:00:00Z",
             )
@@ -1128,5 +1289,313 @@ mod tests {
         assert_eq!(json["user"], user.to_string());
         let ev = EventOut::from_event(Event::DirectoryFork).unwrap();
         assert_eq!(serde_json::to_value(&ev).unwrap()["type"], "directory_fork");
+    }
+
+    // --- Admin : racine, retrait d'un appareil, services (PR 5) ---
+
+    /// Relais en miniature : l'annuaire tel que le relais le sert, journaux
+    /// complets, rendus après ce que le client connaît.
+    #[derive(Default)]
+    struct Relay {
+        admin: Option<UserId>,
+        users: Vec<ot_proto::DirectoryUser>,
+    }
+
+    impl Relay {
+        fn user(&mut self, id: &UserId) -> &mut ot_proto::DirectoryUser {
+            self.users.iter_mut().find(|u| &u.id == id).unwrap()
+        }
+
+        fn append(&mut self, frame: &Frame) {
+            let Frame::RosterPublish { user, seq, entry } = frame else { panic!("{frame:?}") };
+            let log = &mut self.user(user).log;
+            assert_eq!(log.len() as u64 + 1, *seq, "journal continu");
+            log.push(ot_proto::LogEntry { seq: *seq, entry: entry.clone() });
+        }
+
+        fn page(&self, request: &Frame) -> Frame {
+            let Frame::DirectoryGet { known, .. } = request else { panic!("{request:?}") };
+            let admin = self.admin.clone().unwrap();
+            let users = self
+                .users
+                .iter()
+                .map(|u| {
+                    let after = known.get(&u.id).copied().unwrap_or(0);
+                    let log = u.log.iter().filter(|e| e.seq > after).cloned().collect();
+                    ot_proto::DirectoryUser { log, ..u.clone() }
+                })
+                .collect();
+            Frame::Directory { me: admin.clone(), admin, users, next: None }
+        }
+    }
+
+    fn device(id: &DeviceId, name: &str) -> ot_proto::DirectoryDevice {
+        ot_proto::DirectoryDevice {
+            id: id.clone(),
+            name: name.into(),
+            kind: None,
+            reachable: true,
+            default: true,
+            features: vec![ot_proto::Feature::users_v1()],
+            online: true,
+        }
+    }
+
+    fn person(id: &UserId, name: &str, role: ot_proto::Role) -> ot_proto::DirectoryUser {
+        ot_proto::DirectoryUser {
+            id: id.clone(),
+            name: name.into(),
+            role,
+            state: ot_proto::UserState::Active,
+            cert: None,
+            log: Vec::new(),
+            more: false,
+            muted: false,
+            devices: Vec::new(),
+        }
+    }
+
+    /// Lecture complète de l'annuaire par l'extension ; ses événements.
+    fn read(core: &mut CoreState, relay: &Relay) -> Vec<EventOut> {
+        let mut events = Vec::new();
+        let mut frame = core.directory_start().expect("ancre");
+        loop {
+            let step = core.directory_page(relay.page(&frame)).unwrap();
+            events.extend(step.out.events);
+            match step.frame {
+                Some(f) if !step.done => frame = f,
+                _ => return events,
+            }
+        }
+    }
+
+    /// Lecture complète par le téléphone (un tour suffit ici).
+    fn phone_read(phone: &mut Sponsor, relay: &Relay) {
+        let request = Frame::DirectoryGet { known: phone.secure.directory_known(), after: None };
+        let Frame::Directory { me, admin, users, .. } = relay.page(&request) else {
+            unreachable!()
+        };
+        let (fx, _) = phone.secure.apply_directory(&me, &admin, &users);
+        assert!(!fx.iter().any(|f| matches!(f, Effect::Emit(Event::DirectoryRejected { .. }))));
+    }
+
+    /// Téléphone et extension dans un groupe, extension admin : elle signe
+    /// la racine (comme à la migration d'une installation) ; l'annuaire est lu.
+    fn admin_pair() -> (Sponsor, CoreState, String, Relay, UserId) {
+        let mut phone = sponsor();
+        let (vault, id) = extension();
+        let (mut core, _) = CoreState::open(vault, &id).unwrap();
+        let offer = core.offer("chrome").unwrap();
+        core.process(1, welcome(&mut phone, &offer.qr));
+
+        let admin = UserId::generate();
+        let mut relay = Relay { admin: Some(admin.clone()), ..Relay::default() };
+        let mut root = person(&admin, "Alice", ot_proto::Role::Admin);
+        root.devices = vec![device(&phone.id, "téléphone"), device(&id.parse().unwrap(), "chrome")];
+        relay.users.push(root);
+
+        let get = core.admin_init_start().unwrap();
+        assert!(core.adopt_admin_root(&admin.to_string()).is_err(), "rien d'envoyé");
+        let res = core.admin_root(relay.page(&get)).unwrap();
+        assert!(!res.adopted);
+        let Some(Frame::AdminInit { cert, entry }) = res.frame else { panic!("admin_init") };
+        assert!(core.directory_start().is_none(), "pas d'ancre avant la réponse du relais");
+        assert!(core.adopt_admin_root(&UserId::generate().to_string()).is_err());
+        core.adopt_admin_root(&admin.to_string()).unwrap();
+        assert!(core.admin_init_start().is_err(), "ancre déjà là");
+        let user = relay.user(&admin);
+        user.cert = Some(cert.clone());
+        user.log.push(ot_proto::LogEntry { seq: 1, entry });
+
+        let events = read(&mut core, &relay);
+        assert!(events.contains(&EventOut::DirectoryChanged), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, EventOut::DirectoryRejected { .. })));
+        let people = core.people();
+        assert_eq!((people.len(), people[0].role, people[0].devices.len()), (1, "admin", 2));
+
+        phone.secure.adopt_existing_root(&admin, &cert).unwrap();
+        phone_read(&mut phone, &relay);
+        (phone, core, id, relay, admin)
+    }
+
+    #[test]
+    fn an_existing_root_is_adopted_only_from_my_group() {
+        let (_phone, _core, _, relay, admin) = admin_pair();
+        let get = Frame::DirectoryGet { known: Default::default(), after: None };
+
+        // Un autre appareil du groupe : il adopte la racine publiée.
+        let (vault, id) = extension();
+        let mut other = CoreState::open(vault, &id).unwrap().0;
+        assert!(other.admin_init_start().is_err(), "sans groupe");
+        let mut stranger = sponsor();
+        let offer = other.offer("chrome-2").unwrap();
+        other.process(1, welcome(&mut stranger, &offer.qr));
+        let why = other.admin_root(relay.page(&get)).unwrap_err();
+        assert!(why.contains("hors de mon groupe"), "{why}");
+        assert!(other.directory_start().is_none());
+
+        // L'extension d'un appareil qui n'est pas à l'admin est refusée.
+        let Frame::Directory { admin: a, users, .. } = relay.page(&get) else { unreachable!() };
+        let page = Frame::Directory { me: UserId::generate(), admin: a, users, next: None };
+        let why = other.admin_root(page).unwrap_err();
+        assert!(why.contains("pas à l'admin"), "{why}");
+        let page = Frame::Directory { me: admin.clone(), admin, users: Vec::new(), next: None };
+        assert!(other.admin_root(page).unwrap_err().contains("manque"));
+    }
+
+    #[test]
+    fn a_second_device_of_the_group_adopts_the_root() {
+        let (mut phone, _core, _, relay, _) = admin_pair();
+        let (vault, id) = extension();
+        let mut second = CoreState::open(vault, &id).unwrap().0;
+        let offer = second.offer("chrome-2").unwrap();
+        second.process(1, welcome(&mut phone, &offer.qr));
+        let res = second.admin_root(relay.page(&second.admin_init_start().unwrap())).unwrap();
+        assert!(res.adopted && res.frame.is_none());
+        assert!(second.directory_start().is_some(), "ancre adoptée");
+    }
+
+    #[test]
+    fn removing_the_device_that_created_a_service_republishes_it() {
+        let (mut phone, mut core, _, mut relay, admin) = admin_pair();
+        let now = OffsetDateTime::now_utc();
+
+        // Le téléphone crée le service « Notifier » (comme `ot admin service
+        // add`) : engagement du certificat, puis journal du service.
+        let svc = UserId::generate();
+        let mut notifier = Secure::load(
+            DeviceId::generate(),
+            Identity::generate(),
+            Arc::new(MemoryKeyring::new()),
+        )
+        .0;
+        let offer = notifier.offer("notifier-1").unwrap();
+        let cert = phone.secure.service_cert(&svc, "Notifier", &offer, now).unwrap();
+        let mut user = person(&svc, "Notifier", ot_proto::Role::Service);
+        user.cert = Some(cert.clone());
+        user.devices = vec![device(&offer.device_id, "notifier-1")];
+        relay.users.push(user);
+        let NextEntry::Entry(own) =
+            phone.secure.next_entry(&Publish::Certify(svc.clone(), cert)).unwrap()
+        else {
+            panic!("entrée attendue")
+        };
+        relay.append(&Frame::RosterPublish {
+            user: own.user.clone(),
+            seq: own.entry.seq,
+            entry: own.entry.entry.clone(),
+        });
+        phone.secure.entry_published(&own);
+        let member = ot_core::crypto::Member {
+            device_id: offer.device_id.clone(),
+            name: offer.name.clone(),
+            sign_key: offer.sign_key,
+            exchange_key: offer.exchange_key,
+            added_epoch: 0,
+        };
+        let NextEntry::Entry(own) = phone.secure.next_service_entry(&svc, Some(&member)).unwrap()
+        else {
+            panic!("entrée du service attendue")
+        };
+        relay.append(&Frame::RosterPublish {
+            user: own.user.clone(),
+            seq: own.entry.seq,
+            entry: own.entry.entry.clone(),
+        });
+
+        read(&mut core, &relay);
+        assert!(core.people().iter().any(|p| p.name == "Notifier" && p.role == "service"));
+        let phone_id = phone.id.to_string();
+        assert_eq!(core.certified_by(&phone_id).unwrap(), vec![svc.to_string()]);
+        assert!(core.services_to_republish().is_empty(), "signataire encore là");
+        assert!(core.recertify(&admin.to_string(), None).is_err(), "la racine ne se re-signe pas");
+
+        // Retrait du téléphone depuis l'extension (`remove_device`) :
+        // rotation, roster publié, révocation par le relais.
+        let (epoch, _) = core.rotate(std::slice::from_ref(&phone_id)).unwrap();
+        assert_eq!(epoch, 2);
+        let publish = core.next_entry(PublishIn::IfBehind).unwrap();
+        relay.append(publish.frame.as_ref().unwrap());
+        core.entry_published().unwrap();
+        relay.user(&admin).devices.retain(|d| d.id.to_string() != phone_id);
+        assert_eq!(core.services_to_republish(), vec![svc.to_string()], "D47");
+
+        // Certificats signés par le téléphone re-signés ici et engagés.
+        for user in core.certified_by(&phone_id).unwrap() {
+            let cert = core.recertify(&user, None).unwrap();
+            relay.user(&user.parse().unwrap()).cert = Some(cert.clone());
+            let what = PublishIn::Certify { user: user.parse().unwrap(), cert };
+            let publish = core.next_entry(what).unwrap();
+            relay.append(publish.frame.as_ref().unwrap());
+            core.entry_published().unwrap();
+        }
+
+        // Republication du journal du service, même roster.
+        let publish = core.next_service_entry(&svc.to_string()).unwrap();
+        let frame = publish.frame.unwrap();
+        let Frame::RosterPublish { seq, .. } = &frame else { panic!("{frame:?}") };
+        assert_eq!(*seq, 2);
+        assert!(core.service_entry_published(&svc.to_string(), 3).is_err(), "autre entrée");
+        relay.append(&frame);
+        core.service_entry_published(&svc.to_string(), 2).unwrap();
+        assert!(core.service_entry_published(&svc.to_string(), 2).is_err(), "une seule fois");
+        assert!(core.services_to_republish().is_empty());
+        let again = core.next_service_entry(&svc.to_string()).unwrap();
+        assert!(again.frame.is_none() && again.head.is_some_and(|h| h.seq == 2));
+
+        // Relu depuis le relais, tout tient : rien de refusé, le service
+        // reste visible, signé par l'extension.
+        let events = read(&mut core, &relay);
+        assert!(
+            !events.iter().any(|e| matches!(e, EventOut::DirectoryRejected { .. })),
+            "{events:?}"
+        );
+        assert!(core.people().iter().any(|p| p.name == "Notifier"));
+        assert!(core.certified_by(&phone_id).unwrap().is_empty());
+        assert!(core.services_to_republish().is_empty());
+    }
+
+    #[test]
+    fn an_upload_to_a_person_keeps_its_target_and_seals_for_its_devices() {
+        let (phone, core, _, _, admin) = admin_pair();
+        let sha = [7; 32];
+        let blob = BlobId::generate().to_string();
+        let user = admin.to_string();
+        let start = |to: &[String], to_user: Option<&str>| {
+            core.start_upload(
+                "f",
+                "a.bin",
+                "application/x",
+                40,
+                16,
+                &sha,
+                to,
+                to_user,
+                &blob,
+                "2099-01-01T00:00:00Z",
+            )
+        };
+        assert!(start(&[], Some(&user)).is_err(), "sans appareil résolu");
+        assert!(start(&[], Some("pas-une-personne")).is_err());
+
+        let to = vec![phone.id.to_string()];
+        let up = start(&to, Some(&user)).unwrap();
+        assert_eq!((up.to.clone(), up.to_user.clone()), (to.clone(), Some(user.clone())));
+        let json = serde_json::to_value(core.upload("f", 40).unwrap().unwrap()).unwrap();
+        assert_eq!(json["to_user"], user);
+        assert_eq!(json["to"][0], to[0]);
+        // L'annonce part en `0x05` : seuls les appareils de l'annuaire
+        // vérifié peuvent la recevoir.
+        let env = core.seal_file("f").unwrap();
+        assert_eq!(env.to, vec![phone.id.clone()]);
+        let stranger = DeviceId::generate().to_string();
+        start(std::slice::from_ref(&stranger), Some(&user)).unwrap();
+        let why = core.seal_file("f").unwrap_err();
+        assert!(why.contains("annuaire vérifié"), "{why}");
+
+        // Sans personne : comme avant, `to_user` absent du JSON.
+        start(&[], None).unwrap();
+        let json = serde_json::to_value(core.upload("f", 40).unwrap().unwrap()).unwrap();
+        assert!(json.get("to_user").is_none(), "{json}");
     }
 }

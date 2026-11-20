@@ -5,11 +5,11 @@
 
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
-import { POPUP_PORT, channelOf } from '../shared/api';
+import { POPUP_PORT, channelOf, userChannel } from '../shared/api';
 import { humanSize } from '../shared/format';
 import * as opfs from '../shared/opfs';
 import { OTP_ORIGINS, relayOrigin } from '../shared/origins';
-import { type FillResult, fillOtp, isLive, sameSite } from '../shared/otp';
+import { type FillResult, autoFillAllowed, fillOtp, isLive, sameSite } from '../shared/otp';
 import { AUTO_CACHE_MAX, fileUrl, isViewable, parseFilePath } from '../shared/files';
 import { Engine, type FileStorage } from './engine';
 import { type KeyValue, IndexedDbKeySource } from './secrets';
@@ -151,6 +151,18 @@ function onPush(e: Engine, push: Push): void {
   if (push.type === 'state') void updateMenus(push.state);
   if (push.type === 'item') void deliverItem(e, push.item);
   if (push.type === 'state') void updateBadge(e.state());
+  if (push.type === 'person-joined') void personJoined(push);
+}
+
+/** Admin : une personne invitée d'ici a rejoint ; sa notification, hors de la page d'administration. */
+async function personJoined(p: Extract<Push, { type: 'person-joined' }>): Promise<void> {
+  if (popups.size > 0) return;
+  await chrome.notifications.create(`joined:${p.user}`, {
+    type: 'basic',
+    iconUrl: 'icons/icon-128.png',
+    title: `${p.name} a rejoint OldTown`,
+    message: `Depuis ${p.deviceName}. Empreinte : ${p.fingerprint}`,
+  });
 }
 
 /** Badge de l'icône : `!` hors ligne ; fond et texte pris dans les jetons de design. */
@@ -264,6 +276,32 @@ async function handle(req: Request): Promise<unknown> {
         size: req.size,
         to: req.to,
       });
+    case 'setup-invite':
+      return e.setupInvite(req.text, req.name);
+    case 'mark-read':
+      return e.markRead(req.channel);
+    case 'refresh-directory':
+      return e.refreshDirectory();
+    case 'admin-init':
+      return e.adminInit();
+    case 'users':
+      return e.users();
+    case 'invite':
+      return e.invite(req.name, req.links);
+    case 'reinvite':
+      return e.reinvite(req.user);
+    case 'revoke-user':
+      return e.revokeUser(req.user);
+    case 'rename-user':
+      return e.renameUser(req.user, req.name);
+    case 'link-set':
+      return e.linkSet(req.from, req.to, req.allowed);
+    case 'update-device':
+      return e.updateDevice(req.device, req.settings);
+    case 'remove-device':
+      return e.removeDevice(req.device);
+    case 'mute-service':
+      return e.muteService(req.service, req.muted);
   }
 }
 
@@ -271,13 +309,19 @@ async function handle(req: Request): Promise<unknown> {
 
 let menuKey = '';
 
-/** Un sous-menu par membre du roster, plus « Tous les appareils ». */
+/**
+ * Un sous-menu par membre du roster, plus « Tous les appareils », puis les
+ * autres personnes (leurs appareils par défaut), sauf les services.
+ */
 async function updateMenus(state: StateView): Promise<void> {
   const others =
     state.group?.members
       .filter((m) => m.device_id !== state.device?.id)
       .map((m) => [m.device_id, m.name]) ?? [];
-  const key = JSON.stringify(others);
+  const people = state.people
+    .filter((p) => p.user !== state.me && p.role !== 'service')
+    .map((p) => [userChannel(p.user), p.name]);
+  const key = JSON.stringify([others, people]);
   if (key === menuKey) return;
   menuKey = key;
   await chrome.contextMenus.removeAll();
@@ -297,6 +341,22 @@ async function updateMenus(state: StateView): Promise<void> {
       title: 'Tous les appareils',
       contexts,
     });
+  }
+  if (people.length > 0) {
+    chrome.contextMenus.create({
+      id: 'people',
+      parentId: MENU_ROOT,
+      type: 'separator',
+      contexts,
+    });
+    for (const [channel, name] of people) {
+      chrome.contextMenus.create({
+        id: `to:${channel}`,
+        parentId: MENU_ROOT,
+        title: name,
+        contexts,
+      });
+    }
   }
 }
 
@@ -466,7 +526,7 @@ async function deliver(e: Engine, item: Item): Promise<void> {
     rememberChat(e, item);
     if (await openPopup(win.id)) return;
   }
-  await notify(item);
+  await notify(e, item);
 }
 
 /**
@@ -481,7 +541,7 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
   // Un élément envoyé d'ici (note 0030) n'est annoncé nulle part.
   if (item.outgoing) return;
   if (item.kind === 'otp') {
-    await deliverOtp(item);
+    await deliverOtp(e, item);
     return;
   }
   const file = item.file;
@@ -505,7 +565,7 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
       return;
     }
   }
-  await notify(item);
+  await notify(e, item);
 }
 
 // --- Codes à usage unique (note 0045) ---
@@ -517,10 +577,25 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
  * accordé (`OTP_ORIGINS`). L'URL de l'onglet n'est lisible qu'avec cet
  * accès (pas de permission `tabs`). Sinon, le raccourci `fill-otp` le
  * place, sur un geste (`activeTab`).
+ *
+ * Règle O2 (étape 10) : seulement d'un de mes appareils ou d'un service
+ * (`autoFill`). D'une autre personne, le code s'affiche, jamais copié ni
+ * rempli ; le raccourci reste possible (c'est moi qui choisis la page).
  */
-async function deliverOtp(item: Item): Promise<void> {
+async function deliverOtp(e: Engine, item: Item): Promise<void> {
   const otp = item.otp;
   if (!otp || !isLive(otp.expiresAt)) return;
+  if (!autoFillAllowed(item)) {
+    if (popups.size > 0) return;
+    await chrome.notifications.create(item.msgId, {
+      type: 'basic',
+      iconUrl: 'icons/icon-128.png',
+      title: senderTitle(e, item),
+      message: `Code ${otp.display} (${otp.senderName || otp.senderDomain}) : ni copié ni rempli d'office, il vient d'une autre personne.`,
+      buttons: [{ title: 'Copier' }],
+    });
+    return;
+  }
   try {
     await copy(item.body);
   } catch (err) {
@@ -614,8 +689,14 @@ function fileAction(item: Item): 'open' | 'download' | 'popup' {
   return isViewable(file.mime) ? 'open' : 'download';
 }
 
+/** Titre d'un élément reçu : l'appareil, ou « Personne · appareil » pour une autre personne. */
+function senderTitle(e: Engine, item: Item): string {
+  const person = item.fromUser ? e.person(item.fromUser)?.name : undefined;
+  return person ? `${person} · ${item.fromName}` : item.fromName;
+}
+
 /** Notification d'un élément reçu ; l'identifiant est son `msg_id`. */
-async function notify(item: Item): Promise<void> {
+async function notify(e: Engine, item: Item): Promise<void> {
   const file = item.file;
   const hint = {
     open: 'Cliquer pour ouvrir',
@@ -625,7 +706,7 @@ async function notify(item: Item): Promise<void> {
   await chrome.notifications.create(item.msgId, {
     type: 'basic',
     iconUrl: 'icons/icon-128.png',
-    title: item.fromName,
+    title: senderTitle(e, item),
     message: file ? `📎 ${file.name} (${humanSize(file.size)})` : item.body.slice(0, 500),
     contextMessage: file
       ? hint[fileAction(item)]

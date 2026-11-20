@@ -8,18 +8,19 @@ l'interface.
 
 - **Arborescence** : `src/background/` (service worker : `main.ts` branche
   les API Chrome, `engine.ts` le cœur sans API Chrome, `client.ts` le
-  protocole, `secrets.ts` le stockage chiffré, `frames.ts` les trames,
+  protocole, `people.ts` les personnes (annuaire, journal, invitation,
+  administration ; étape 10), `secrets.ts` le stockage chiffré, `frames.ts` les trames,
   `transfer.ts` les fichiers, sans API Chrome), `src/offscreen/` (copie
   dans le presse-papiers), `src/pages/` (`send.html` : permissions sur un
   clic, et choix de fichiers en repli ; TypeScript simple, esbuild),
-  `src/app/` (popup et réglages, Angular), `src/shared/` (`api.ts` messages
+  `src/app/` (popup, réglages et administration, Angular), `src/shared/` (`api.ts` messages
   interface ↔ service worker, `files.ts` adresses des fichiers reçus,
   `opfs.ts` fichiers, `origins.ts` permissions d'hôte), `src/wasm/` (liaisons générées par
   `npm run wasm`, **jamais versionnées**), `test/` (tests du service worker sous Node),
   `manifest.json`, `scripts/` (build).
 - **Build** : `npm run build` = WebAssembly (`cargo build --profile wasm`
   puis `wasm-bindgen --target web`), `ng build` (popup `index.html`,
-  réglages `options.html`), puis esbuild pour `background.js`,
+  réglages `options.html`, administration `admin.html`), puis esbuild pour `background.js`,
   `offscreen.js` et `send.js`. Résultat non empaqueté : `dist/extension`.
   `npm run deploy -- <dossier>` (`scripts/deploy.sh`) construit et copie
   dans le dossier chargé par le navigateur (jamais de chemin personnel dans
@@ -42,8 +43,10 @@ l'interface.
   `chrome.storage.local` sous `secret:<nom>`, chiffrés en AES-256-GCM par une
   clé WebCrypto non exportable (IndexedDB), nom en donnée associée. L'état
   du coffre est rangé (`persistVault`) avant l'acquittement du message qui
-  l'a changé. L'historique (contenu en clair) et les envois de fichiers en
-  cours (`outgoing.json`, des noms) sont rangés de la même façon.
+  l'a changé. L'historique (contenu en clair), les envois de fichiers en
+  cours (`outgoing.json`, des noms) et la dernière ouverture des
+  conversations des personnes (`opened.json`, non-lus) sont rangés de la
+  même façon.
   En clair dans `chrome.storage.local` : seulement `device` (id, nom, URL),
   `recipient`, `outbox` (enveloppes chiffrées) et `seen` (`msg_id`).
   Dans le `localStorage` des pages : seulement `theme` (choix d'affichage,
@@ -59,6 +62,22 @@ l'interface.
   sa conversation directement (push `open`, note 0032).
   L'historique (100 éléments) garde aussi les envois, « en cours » jusqu'à
   `accepted` ; les destinataires d'un reçu viennent de l'enveloppe.
+- **Personnes** (étape 10, `people.ts`, déroulés de `client.rs` refaits
+  au-dessus de `ot-wasm`) : annuaire relu à chaque connexion, à chaque
+  `directory_changed` (2 s au plus) et après tout changement fait d'ici
+  (le relais ne prévient pas la session qui change) ; relu avant un envoi
+  s'il date de plus de 60 s. Demandes au relais par `RelayClient.call`,
+  refus rangés par référence ou, sans référence, à la plus ancienne
+  demande qui n'en a pas (comme `client.rs`). Racine de l'annuaire
+  adoptée d'office si un autre appareil du groupe l'a publiée, publiée
+  seulement sur un clic (« Publier l'annuaire », réglages). Barre latérale
+  (`rail.ts`) : moi, puis les personnes par activité ; une personne montre
+  elle (ses appareils par défaut) puis ses appareils joignables. Canaux
+  `user:<id>` et `user:<id>/<appareil>` (`channelOf`, `inChannel` dans
+  `shared/api.ts`), destinataires des envois, menus et raccourcis compris.
+  Appareils `cli` hors des conversations (« Ligne de commande » repliée
+  dans les réglages). Page `admin.html` (admin seulement) : inviter,
+  personnes, grille du réseau (une case par paire, les deux sens), services.
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
   navigateur au premier plan et élément récent → lien ouvert dans un onglet,
   texte → popup (`action.openPopup`) ; sinon notification. Raccourcis
@@ -66,7 +85,8 @@ l'interface.
   par le document offscreen) et `fill-otp` (`Alt+Shift+O`). Navigateur cible : Brave (Chromium).
 - **Codes à usage unique** (note 0045, `src/shared/otp.ts`) : élément
   `kind: 'otp'` (`body` = le code, `otp` = affichage, expéditeur, DMARC,
-  expiration). Code valable reçu (`deliverOtp`) : copié ; rempli d'office
+  expiration). Code valable reçu (`deliverOtp`), d'un de mes appareils ou
+  d'un service seulement (règle O2, `autoFillAllowed`) : copié ; rempli d'office
   (`chrome.scripting`, cadre principal) seulement si expéditeur authentifié,
   onglet actif en HTTPS sur son site (`sameSite` : même domaine
   enregistrable, `tldts`) et accès aux pages HTTPS accordé (`OTP_ORIGINS`) ;
@@ -109,7 +129,8 @@ l'interface.
   (`vitest.worker.config.mts` : golden, vecteurs, stockage, et
   `test/otp.test.ts` sous jsdom, `test/relay.test.ts` et
   `test/design.test.ts` (couleurs, signe, icônes),
-  `test/files.test.ts` contre un vrai `ot-server`
+  `test/files.test.ts` et `test/people.test.ts` (étape 10 : admin,
+  invitée) contre un vrai `ot-server`
   avec la CLI `ot` comme parrain : binaires de `target/debug`, ou
   `OT_BIN_DIR`), puis `ng test`
   (interface). `npm run lint` = ESLint, Prettier et `tsc` du service worker

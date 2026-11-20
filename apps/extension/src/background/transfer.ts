@@ -31,6 +31,15 @@ export interface Geometry {
 interface Upload extends Geometry {
   blob_id: string;
   expires_at: string;
+  /** Cible du dépôt : une reprise n'a lieu que vers la même. */
+  to: string[];
+  to_user?: string;
+}
+
+function sameTarget(up: Upload, to: string[], toUser: string | undefined): boolean {
+  const a = [...up.to].sort();
+  const b = [...to].sort();
+  return up.to_user === toUser && a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
 /** Ce que le transfert demande au cœur WebAssembly (`Core`). */
@@ -46,6 +55,7 @@ export interface TransferCore {
     to: string[],
     blobId: string,
     expiresAt: string,
+    toUser?: string,
   ): string;
   sealChunk(sourceId: string, index: number, plain: Uint8Array): Uint8Array;
   sealFile(sourceId: string): string;
@@ -205,12 +215,14 @@ export class Transfers {
   }
 
   /**
-   * Dépose le fichier (en reprenant un dépôt interrompu de la même source)
-   * et renvoie l'annonce chiffrée à envoyer, avec l'identifiant du fichier.
-   * Appeler `uploadSent` une fois l'annonce acceptée par le relais.
+   * Dépose le fichier (en reprenant un dépôt interrompu de la même source,
+   * vers la même cible) et renvoie l'annonce chiffrée à envoyer, avec
+   * l'identifiant du fichier. Vers une autre personne (`toUser`), `to` est la
+   * résolution de `recipients`. Appeler `uploadSent` une fois l'annonce
+   * acceptée par le relais.
    */
   async upload(
-    file: { sourceId: string; name: string; mime: string; to: string[] },
+    file: { sourceId: string; name: string; mime: string; to: string[]; toUser?: string },
     source: ByteSource,
     onProgress?: Progress,
   ): Promise<{ env: string; blobId: string }> {
@@ -218,8 +230,10 @@ export class Transfers {
     let up: Upload | undefined;
     const existing = core.upload(file.sourceId, source.size);
     let missing: number[] | undefined;
-    if (existing) {
-      up = JSON.parse(existing) as Upload;
+    const previous = existing ? (JSON.parse(existing) as Upload) : undefined;
+    // Vers une autre cible : un nouveau dépôt (l'ancien expire seul).
+    if (previous && sameTarget(previous, file.to, file.toUser)) {
+      up = previous;
       try {
         const st = await this.json<{ missing: number[] }>(
           'GET',
@@ -253,6 +267,7 @@ export class Transfers {
           file.to,
           created.blob_id,
           created.expires_at,
+          file.toUser,
         ),
       ) as Upload;
       await this.deps.persistVault();

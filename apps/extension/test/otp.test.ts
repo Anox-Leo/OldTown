@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 // Codes à usage unique (note 0045) : site de l'expéditeur, champ à remplir.
 import { beforeAll, describe, expect, it } from 'vitest';
-import { fillOtp, isLive, sameSite } from '../src/shared/otp';
+import { autoFillAllowed, fillOtp, isLive, sameSite } from '../src/shared/otp';
+
+describe('règle O2', () => {
+  it('remplit d’office ce qui vient de ma personne ou d’un service, jamais d’une autre personne', () => {
+    expect(autoFillAllowed({ autoFill: true })).toBe(true);
+    expect(autoFillAllowed({ autoFill: false })).toBe(false);
+    // Élément rangé avant l'étape 10 : de mon groupe.
+    expect(autoFillAllowed({})).toBe(true);
+  });
+});
 
 describe('sameSite', () => {
   it('compare les domaines enregistrables', () => {

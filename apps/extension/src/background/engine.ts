@@ -5,31 +5,40 @@
 import {
   Core,
   Hasher,
-  type QrCode,
   Vault,
   decodeFrame,
   newDeviceId,
+  parseInvite,
   parseJoin,
-  qrCode,
   version,
 } from '../wasm/ot_wasm.js';
-import { HISTORY_LEN } from '../shared/api';
+import { HISTORY_LEN, parseChannel } from '../shared/api';
 import type {
   Connection,
   DeviceView,
+  DirectoryAlert,
   FileView,
   GroupView,
+  InvitationView,
   Item,
   PendingView,
+  PersonDeviceView,
+  PersonView,
   Push,
-  QrView,
   RelayDevice,
   StateView,
   TransferView,
 } from '../shared/api';
 import { AUTO_CACHE_MAX, isViewable } from '../shared/files';
-import { type ClientEvent, type ClientStorage, RelayClient, type Timing } from './client';
-import { checkServerUrl, decode, wsUrl } from './frames';
+import {
+  type ClientEvent,
+  type ClientStorage,
+  RelayClient,
+  RelayError,
+  type Timing,
+} from './client';
+import { type AdminUser, type ServerFrame, checkServerUrl, decode, wsUrl } from './frames';
+import { type CoreOutput, People, qrView } from './people';
 import { type KeySource, type KeyValue, SecretStore } from './secrets';
 import {
   type ByteSource,
@@ -48,6 +57,10 @@ const OUTBOX = 'outbox';
 const SEEN = 'seen';
 /** Envois de fichiers pas terminés, repris au réveil ; rangés chiffrés (noms). */
 const OUTGOING = 'outgoing.json';
+/** Dernière ouverture des conversations des personnes (non-lus) ; rangée chiffrée. */
+const OPENED = 'opened.json';
+/** Alertes de l'annuaire gardées pour l'affichage. */
+const MAX_ALERTS = 20;
 /** Délai maximal de l'enregistrement par code. */
 const REDEEM_TIMEOUT = 10_000;
 export { AUTO_CACHE_MAX };
@@ -103,19 +116,11 @@ interface Outgoing {
   name: string;
   mime: string;
   size: number;
+  /** Canal : un de mes appareils, `''` (tous), ou `user:<id>[/<appareil>]`. */
   to: string;
 }
 
 type Pending = { kind: 'offer'; qr: string; expires_at: string } | { kind: 'join' };
-
-function qrView(text: string): QrView {
-  const qr: QrCode = qrCode(text);
-  try {
-    return { size: qr.size, modules: Array.from(qr.modules) };
-  } finally {
-    qr.free();
-  }
-}
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -156,9 +161,28 @@ export class Engine {
   private relayAccess = true;
   /** Écritures du coffre et de l'historique, dans l'ordre. */
   private writes: Promise<void> = Promise.resolve();
+  /** Annuaire, journal, invitation et administration (étape 10). */
+  private readonly people: People;
+  private alerts: DirectoryAlert[] = [];
+  private opened: Record<string, string> = {};
+  private inviteError?: string;
+  /** Enveloppes dont on attend l'acceptation (bienvenue d'un invité). */
+  private readonly waiters = new Map<string, { resolve(): void; reject(e: Error): void }>();
 
   private constructor(private readonly deps: EngineDeps) {
     this.secrets = new SecretStore(deps.kv, deps.keys);
+    this.people = new People({
+      core: () => this.core,
+      client: () => this.client,
+      device: () => this.device,
+      group: () => this.group(),
+      persistVault: () => this.persistVault(),
+      apply: (out) => this.applyOutput(out),
+      sendAndWait: (env) => this.sendAndWait(env),
+      rotate: (exclude) => this.rotate(exclude),
+      changed: () => this.changed(),
+      log: (m, e) => this.log(m, e),
+    });
   }
 
   /** Relit l'appareil et ses secrets, et se connecte s'il est configuré. */
@@ -178,7 +202,8 @@ export class Engine {
     this.recipient = typeof items[RECIPIENT] === 'string' ? items[RECIPIENT] : '';
     try {
       for (const [name, value] of await this.secrets.loadAll()) {
-        if (name !== HISTORY && name !== OUTGOING) this.vault.load(name, value);
+        if (name === OPENED) this.opened = parseOpened(value);
+        else if (name !== HISTORY && name !== OUTGOING) this.vault.load(name, value);
         value.fill(0);
       }
       if (device) this.openCore(device.id);
@@ -254,7 +279,11 @@ export class Engine {
       };
     } else if (pending?.kind === 'join') {
       pendingView = { kind: 'join' };
+    } else if (!group && this.device?.invited) {
+      pendingView = { kind: 'invite' };
     }
+    const people = this.people.people();
+    const me = this.people.me();
     return {
       version: version(),
       phase: !this.device ? 'unconfigured' : group ? 'ready' : 'pairing',
@@ -267,12 +296,33 @@ export class Engine {
       pendingSends: this.client?.pendingSends ?? 0,
       transfers: [...this.progress.values()],
       relayAccess: this.relayAccess,
+      people,
+      me: me?.user,
+      admin: me?.role === 'admin',
+      rootMissing: this.people.rootMissing,
+      alerts: this.alerts,
+      opened: this.opened,
+      inviteError: this.inviteError,
     };
   }
 
-  /** Nom d'un membre, ou son identifiant s'il n'est pas (plus) au roster. */
+  /**
+   * Nom d'un membre de mon groupe, ou d'un appareil d'une personne de
+   * l'annuaire ; son identifiant sinon.
+   */
   nameOf(deviceId: string): string {
-    return this.group()?.members.find((m) => m.device_id === deviceId)?.name ?? deviceId;
+    const member = this.group()?.members.find((m) => m.device_id === deviceId);
+    if (member) return member.name;
+    for (const p of this.people.people()) {
+      const d = p.devices.find((x: PersonDeviceView) => x.device_id === deviceId);
+      if (d) return d.name;
+    }
+    return deviceId;
+  }
+
+  /** Personne de l'annuaire vérifié. */
+  person(user: string): PersonView | undefined {
+    return this.people.person(user);
   }
 
   // --- Stockage ---
@@ -341,6 +391,19 @@ export class Engine {
     this.changed();
   }
 
+  /** Conversation d'une personne ouverte : ses éléments reçus sont lus. */
+  markRead(channel: string): Promise<void> {
+    const user = parseChannel(channel).user;
+    if (!user) return Promise.resolve();
+    this.opened = { ...this.opened, [user]: new Date().toISOString() };
+    this.changed();
+    const bytes = new TextEncoder().encode(JSON.stringify(this.opened));
+    return this.serialWrite(async () => {
+      await this.secrets.put(OPENED, bytes);
+      bytes.fill(0);
+    });
+  }
+
   // --- Connexion ---
 
   private startClient(): void {
@@ -357,6 +420,7 @@ export class Engine {
       persistVault: () => this.persistVault(),
       storage: new KvClientStorage(this.deps.kv),
       onEvent: (e) => this.onClientEvent(e),
+      afterDeliver: () => this.people.afterDeliver(),
       authRetryDelay: () => this.authRetryDelay(),
       webSocket: this.deps.webSocket,
       timing: this.deps.timing,
@@ -424,7 +488,7 @@ export class Engine {
 
   /** Appairage par QR inversé commencé, mais ni groupe ni offre valable. */
   private offerExpired(): boolean {
-    if (!this.device || this.group()) return false;
+    if (!this.device || this.group() || this.device.invited) return false;
     const pending = this.pending();
     return !pending || (pending.kind === 'offer' && Date.parse(pending.expires_at) <= Date.now());
   }
@@ -434,6 +498,7 @@ export class Engine {
       case 'connected':
         this.connection = 'online';
         this.connectionError = undefined;
+        this.people.onConnected();
         break;
       case 'disconnected':
         this.connection = 'offline';
@@ -452,6 +517,7 @@ export class Engine {
           kind: e.kind,
           body: e.body,
           to: e.to ?? [],
+          ...origin(e),
         };
         // Rangé avant l'acquittement : le client attend la fin de ce
         // traitement.
@@ -469,6 +535,7 @@ export class Engine {
           body: e.name,
           file: { blobId: e.blob_id, name: e.name, mime: e.mime, size: e.size },
           to: e.to ?? [],
+          ...origin(e),
         };
         // L'offre (clé comprise) est déjà dans le coffre, rangé par le client
         // avant l'acquittement ; l'élément aussi, ici.
@@ -500,6 +567,8 @@ export class Engine {
             expiresAt: e.expires_at * 1000,
           },
           to: e.to ?? [],
+          ...origin(e),
+          autoFill: e.auto_fill,
         };
         await this.addToHistory(item);
         this.push({ type: 'item', item });
@@ -513,16 +582,84 @@ export class Engine {
         return;
       case 'send_failed':
         this.log(`envoi refusé par le relais : ${e.code}`);
+        this.waiters.get(e.msg_id)?.reject(new RelayError(e.code, e.message));
+        this.waiters.delete(e.msg_id);
         break;
       case 'accepted':
+        this.waiters.get(e.msg_id)?.resolve();
+        this.waiters.delete(e.msg_id);
         // Un message envoyé depuis cette extension n'est plus « en cours ».
         await this.updateItem(e.msg_id, { pending: false }, (i) => i.pending === true);
         break;
       case 'group_changed':
+        this.people.onGroupChanged();
+        break;
       case 'pairing_completed':
+        break;
+      // --- Étape 10 ---
+      case 'relay_directory_changed':
+        this.people.onRelayChanged();
+        return;
+      case 'directory_changed':
+        break;
+      case 'directory_rejected':
+        this.log(`objet de l'annuaire refusé : ${e.reason}`);
+        this.alert({ kind: 'rejected', user: e.user, reason: e.reason });
+        break;
+      case 'directory_fork':
+        this.log('le relais publie un autre groupe que le mien');
+        this.alert({ kind: 'fork' });
+        break;
+      case 'keys_changed':
+        this.alert({ kind: 'keys_changed', user: e.user });
+        break;
+      case 'person_joined':
+        this.push({
+          type: 'person-joined',
+          user: e.user,
+          name: e.name,
+          deviceName: e.device_name,
+          fingerprint: e.fingerprint,
+        });
+        break;
+      case 'joined':
+        if (this.device?.invited) {
+          this.device = {
+            id: this.device.id,
+            name: this.device.name,
+            serverUrl: this.device.serverUrl,
+          };
+          await this.deps.kv.set({ [DEVICE]: this.device });
+        }
+        this.inviteError = undefined;
+        break;
+      case 'invite_failed':
+        this.inviteError = e.reason;
         break;
     }
     this.changed();
+  }
+
+  private alert(a: DirectoryAlert): void {
+    const key = JSON.stringify(a);
+    if (this.alerts.some((x) => JSON.stringify(x) === key)) return;
+    this.alerts = [...this.alerts, a].slice(-MAX_ALERTS);
+  }
+
+  /** Sortie du cœur (déroulés de l'étape 10) : événements, puis enveloppes en file. */
+  private async applyOutput(out: CoreOutput): Promise<void> {
+    for (const e of out.events) await this.onClientEvent(e);
+    for (const env of out.sends) await this.client?.queue(JSON.stringify(env));
+  }
+
+  private sendAndWait(env: string): Promise<void> {
+    const client = this.client;
+    if (!client) return Promise.reject(new Error('appareil pas encore appairé'));
+    const msgId = (JSON.parse(env) as { msg_id: string }).msg_id;
+    const accepted = new Promise<void>((resolve, reject) =>
+      this.waiters.set(msgId, { resolve, reject }),
+    );
+    return client.queue(env).then(() => accepted);
   }
 
   // --- Appairage ---
@@ -541,6 +678,10 @@ export class Engine {
     this.device = undefined;
     this.connection = 'offline';
     this.connectionError = undefined;
+    this.people.stop();
+    this.alerts = [];
+    this.opened = {};
+    this.inviteError = undefined;
   }
 
   private ensureNotInGroup(): void {
@@ -588,7 +729,12 @@ export class Engine {
     await this.persistVault();
     let redeemed: { device_id: string; sponsor: string };
     try {
-      redeemed = await this.redeem(url, join.code, deviceName);
+      redeemed = await this.redeem(
+        url,
+        (nonce) => this.vault.pairRedeemFrame(nonce, join.code, deviceName),
+        (f) =>
+          f.t === 'pair_redeemed' ? { device_id: f.device_id, sponsor: f.sponsor } : undefined,
+      );
     } catch (e) {
       await this.resetDevice();
       throw e;
@@ -604,23 +750,68 @@ export class Engine {
     return this.state();
   }
 
-  /** `pair_redeem` sur une connexion à part, que le relais ferme ensuite. */
-  private redeem(
+  /**
+   * Premier appareil d'une personne invitée (étape 10) : `invite_redeem` à
+   * la place de l'authentification, puis l'invitation rangée (secret et
+   * ancre) avant d'ouvrir le cœur. La demande à l'admin part à chaque
+   * connexion, jusqu'à la bienvenue.
+   */
+  async setupInvite(text: string, name: string): Promise<StateView> {
+    this.ensureNotInGroup();
+    const invite = JSON.parse(parseInvite(text.trim())) as { server_url: string; code: string };
+    const url = checkServerUrl(invite.server_url);
+    const deviceName = name.trim();
+    if (!deviceName) throw new Error('nom de l’appareil vide');
+    await this.resetDevice();
+    this.vault.ensureIdentity();
+    await this.persistVault();
+    let redeemed: { user: string; device: string; inviter: string };
+    try {
+      redeemed = await this.redeem(
+        url,
+        (nonce) => this.vault.inviteRedeemFrame(nonce, invite.code, deviceName),
+        (f) =>
+          f.t === 'invite_redeemed'
+            ? { user: f.user, device: f.device, inviter: f.inviter }
+            : undefined,
+      );
+      this.vault.savePendingInvite(
+        invite.code,
+        redeemed.user,
+        redeemed.device,
+        redeemed.inviter,
+        deviceName,
+      );
+    } catch (e) {
+      await this.resetDevice();
+      throw e;
+    }
+    await this.persistVault();
+    this.openCore(redeemed.device);
+    this.device = { id: redeemed.device, name: deviceName, serverUrl: url, invited: true };
+    await this.deps.kv.set({ [DEVICE]: this.device });
+    this.startClient();
+    this.changed();
+    return this.state();
+  }
+
+  /** Enregistrement (`pair_redeem`, `invite_redeem`) sur une connexion à part, que le relais ferme ensuite. */
+  private redeem<T>(
     serverUrl: string,
-    code: string,
-    name: string,
-  ): Promise<{ device_id: string; sponsor: string }> {
+    frameFor: (nonce: string) => string,
+    done: (frame: ServerFrame) => T | undefined,
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
       const url = wsUrl(serverUrl);
       const ws = this.deps.webSocket ? this.deps.webSocket(url) : new WebSocket(url);
       let settled = false;
-      const finish = (error: Error | null, value?: { device_id: string; sponsor: string }) => {
+      const finish = (error: Error | null, value?: T) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         ws.close();
         if (error) reject(error);
-        else if (value) resolve(value);
+        else if (value !== undefined) resolve(value);
       };
       const timer = setTimeout(
         () => finish(new Error('pas de réponse du relais : vérifier Tailscale et l’URL')),
@@ -630,12 +821,13 @@ export class Engine {
         if (typeof ev.data !== 'string') return;
         try {
           const frame = decode(ev.data, decodeFrame);
+          const value = frame.t === 'challenge' ? undefined : done(frame);
           if (frame.t === 'challenge') {
-            ws.send(this.vault.pairRedeemFrame(frame.nonce, code, name));
-          } else if (frame.t === 'pair_redeemed') {
-            finish(null, { device_id: frame.device_id, sponsor: frame.sponsor });
+            ws.send(frameFor(frame.nonce));
+          } else if (value !== undefined) {
+            finish(null, value);
           } else if (frame.t === 'error') {
-            finish(new Error(`appairage refusé par le relais : ${frame.message}`));
+            finish(new Error(`refusé par le relais : ${frame.message}`));
           }
         } catch (e) {
           finish(new Error(message(e)));
@@ -665,14 +857,26 @@ export class Engine {
 
   // --- Envoi ---
 
-  /** Chiffre et envoie un texte à `to` (un membre) ou à tous (`''`). */
+  /**
+   * Chiffre et envoie un texte dans le canal `to` : un membre, tous (`''`),
+   * ou une personne (`user:<id>`, ses appareils par défaut) et peut-être un
+   * de ses appareils (`user:<id>/<appareil>`), en `0x05`, copie à mes
+   * appareils comprise (D43). L'annuaire est relu s'il date de plus de 60 s.
+   */
   async send(text: string, to: string): Promise<string> {
     const core = this.core;
     const client = this.client;
     if (!core || !client || !this.group()) {
       throw new Error("cette extension n'est pas encore dans un groupe");
     }
-    const env = core.sealText(text, to ? [to] : []);
+    const target = parseChannel(to);
+    let env: string;
+    if (target.user !== undefined) {
+      await this.people.fresh().catch((e: unknown) => this.log('relecture de l’annuaire', e));
+      env = core.sealTextTo(text, target.user, target.device);
+    } else {
+      env = core.sealText(text, target.device ? [target.device] : []);
+    }
     const trimmed = text.trim();
     // Comme `ot_core::classify` : un lien s'il n'est fait que d'une URL web.
     const kind = /^https?:\/\/\S+$/i.test(trimmed) ? 'link' : 'text';
@@ -694,7 +898,8 @@ export class Engine {
   ): Promise<void> {
     const device = this.device;
     if (!device) return;
-    const parsed = JSON.parse(env) as { msg_id: string; created_at: string };
+    const parsed = JSON.parse(env) as { msg_id: string; created_at: string; to: string[] };
+    const target = parseChannel(to);
     const item: Item = {
       msgId: parsed.msg_id,
       from: device.id,
@@ -702,9 +907,14 @@ export class Engine {
       createdAt: parsed.created_at,
       ...content,
       outgoing: true,
-      to: to ? [to] : [],
+      // Vers une personne : les appareils résolus (copie à mes appareils comprise).
+      to: target.user !== undefined ? parsed.to : target.device ? [target.device] : [],
       pending: true,
     };
+    if (target.user !== undefined) {
+      item.toUser = target.user;
+      if (target.device) item.toDevice = target.device;
+    }
     await this.addToHistory(item);
     this.push({ type: 'item', item });
   }
@@ -782,8 +992,15 @@ export class Engine {
     });
     try {
       const source = await files.source(file.path);
+      const target = parseChannel(file.to);
+      let to: string[] = target.device ? [target.device] : [];
+      if (target.user !== undefined) {
+        // Les appareils résolus maintenant : ceux à qui le blob sera ouvert.
+        await this.people.fresh().catch((e: unknown) => this.log('relecture de l’annuaire', e));
+        to = JSON.parse((this.core as Core).recipients(target.user, target.device)) as string[];
+      }
       const { env, blobId } = await transfers.upload(
-        { sourceId: file.path, name: file.name, mime: file.mime, to: file.to ? [file.to] : [] },
+        { sourceId: file.path, name: file.name, mime: file.mime, to, toUser: target.user },
         source,
         (done) => this.setProgress(view(done), file.path),
       );
@@ -1098,12 +1315,85 @@ export class Engine {
     return out.epoch;
   }
 
+  // --- Étape 10 : annuaire et administration ---
+
+  refreshDirectory(): Promise<void> {
+    return this.people.read();
+  }
+
+  /** Admin : publie la racine de l'annuaire (`admin_init`), ou adopte celle déjà publiée. */
+  adminInit(): Promise<void> {
+    return this.people.adoptRoot(true);
+  }
+
+  users(): Promise<AdminUser[]> {
+    return this.people.users();
+  }
+
+  invite(name: string, links: string[]): Promise<InvitationView> {
+    return this.people.invite(name, links);
+  }
+
+  reinvite(user: string): Promise<InvitationView> {
+    return this.people.reinvite(user);
+  }
+
+  revokeUser(user: string): Promise<void> {
+    return this.people.revokeUser(user);
+  }
+
+  renameUser(user: string, name: string): Promise<void> {
+    return this.people.renameUser(user, name);
+  }
+
+  linkSet(from: string, to: string, allowed: boolean): Promise<void> {
+    return this.people.linkSet(from, to, allowed);
+  }
+
+  updateDevice(
+    device: string,
+    settings: { kind?: PersonDeviceView['kind']; reachable?: boolean; default?: boolean },
+  ): Promise<void> {
+    return this.people.updateDevice(device, settings);
+  }
+
+  removeDevice(device: string): Promise<void> {
+    return this.people.removeDevice(device);
+  }
+
+  muteService(service: string, muted: boolean): Promise<void> {
+    return this.people.muteService(service, muted);
+  }
+
   /** Pour les tests : arrête la connexion sans rien effacer. */
   close(): void {
+    this.people.stop();
     this.client?.stop();
     this.client = undefined;
     this.transfers = undefined;
     this.core?.free();
     this.core = undefined;
+  }
+}
+
+/** Personne de l'expéditeur et du destinataire d'un élément reçu (étape 10). */
+function origin(e: {
+  from_user?: string;
+  from_service?: boolean;
+  to_user?: string;
+}): Pick<Item, 'fromUser' | 'fromService' | 'toUser'> {
+  const o: Pick<Item, 'fromUser' | 'fromService' | 'toUser'> = {};
+  if (e.from_user) o.fromUser = e.from_user;
+  if (e.from_service) o.fromService = true;
+  if (e.to_user) o.toUser = e.to_user;
+  return o;
+}
+
+function parseOpened(bytes: Uint8Array): Record<string, string> {
+  try {
+    const v = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
   }
 }

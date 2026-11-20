@@ -10,6 +10,10 @@ function state(over: Partial<StateView>): StateView {
     pendingSends: 0,
     transfers: [],
     relayAccess: true,
+    people: [],
+    admin: false,
+    alerts: [],
+    opened: {},
     ...over,
   };
 }

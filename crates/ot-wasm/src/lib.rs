@@ -73,6 +73,14 @@ pub fn parse_invite(text: &str) -> Result<String, JsError> {
     to_json(&Out { server_url: uri.server_url, code: uri.code })
 }
 
+/// Lien d'invitation à transmettre (`oldtown://invite?s=…&c=…`, comme
+/// `ot admin invite`) : le relais et le code `ot2-…`, secret compris.
+#[wasm_bindgen(js_name = inviteUri)]
+pub fn invite_uri(server_url: &str, code: &str) -> Result<String, JsError> {
+    InviteCode::parse(code).map_err(js)?;
+    Ok(InviteUri { server_url: server_url.to_owned(), code: code.to_owned() }.encode())
+}
+
 /// Texte collé pour rejoindre un groupe : QR « rejoindre »
 /// (`oldtown://pair?s=…&c=…`) ou code `ot1-…` seul. Renvoie
 /// `{"server_url": …|null, "code": …}`.
@@ -401,13 +409,17 @@ impl Core {
         to_json(&self.state.start_join(code, sponsor, name).map_err(js)?)
     }
 
-    /// Dépôt en cours de cette source (`{"blob_id", "expires_at", …géométrie}`),
-    /// `undefined` sinon.
+    /// Dépôt en cours de cette source (`{"blob_id", "expires_at", "to",
+    /// "to_user"?, …géométrie}`), `undefined` sinon. Ne le reprendre que vers
+    /// la même cible.
     pub fn upload(&self, source_id: &str, size: f64) -> Result<Option<String>, JsError> {
         self.state.upload(source_id, exact_u64(size)?).map_err(js)?.map(|u| to_json(&u)).transpose()
     }
 
-    /// Nouveau dépôt après `POST /v1/blobs` ; la clé reste ici.
+    /// Nouveau dépôt après `POST /v1/blobs` ; la clé reste ici. Vers une
+    /// autre personne : `toUser`, et `to` rendu par `recipients` (les
+    /// appareils à qui le blob est ouvert) ; `sealFile` scelle alors en
+    /// `0x05`.
     #[wasm_bindgen(js_name = startUpload)]
     #[allow(clippy::too_many_arguments)]
     pub fn start_upload(
@@ -421,6 +433,7 @@ impl Core {
         to: Vec<String>,
         blob_id: &str,
         expires_at: &str,
+        to_user: Option<String>,
     ) -> Result<String, JsError> {
         let up = self
             .state
@@ -432,6 +445,7 @@ impl Core {
                 chunk_size,
                 sha256,
                 &to,
+                to_user.as_deref(),
                 blob_id,
                 expires_at,
             )
@@ -611,6 +625,61 @@ impl Core {
     #[wasm_bindgen(js_name = awaitsDirectory)]
     pub fn awaits_directory(&self) -> bool {
         self.state.awaits_directory()
+    }
+
+    /// Admin, début d'`admin_init` : trame `directory_get` à envoyer ; la
+    /// trame `directory` reçue va à `adminRoot`.
+    #[wasm_bindgen(js_name = adminInitStart)]
+    pub fn admin_init_start(&self) -> Result<String, JsError> {
+        Ok(self.state.admin_init_start().map_err(js)?.to_json())
+    }
+
+    /// Admin : `{"frame": admin_init?, "adopted": bool, "events", "sends"}`.
+    /// Sans `frame`, le certificat publié par un autre appareil de mon groupe
+    /// est adopté : relire l'annuaire.
+    #[wasm_bindgen(js_name = adminRoot)]
+    pub fn admin_root(&mut self, frame: &str) -> Result<String, JsError> {
+        let frame = Frame::from_json(frame).map_err(js)?;
+        to_json(&self.state.admin_root(frame).map_err(js)?)
+    }
+
+    /// Admin, `admin_initialized` reçu : `{"events", "sends"}`, puis relire
+    /// l'annuaire.
+    #[wasm_bindgen(js_name = adoptAdminRoot)]
+    pub fn adopt_admin_root(&mut self, user: &str) -> Result<String, JsError> {
+        to_json(&self.state.adopt_admin_root(user).map_err(js)?)
+    }
+
+    /// Admin : personnes certifiées par cet appareil retiré (JSON).
+    #[wasm_bindgen(js_name = certifiedBy)]
+    pub fn certified_by(&self, device: &str) -> Result<String, JsError> {
+        to_json(&self.state.certified_by(device).map_err(js)?)
+    }
+
+    /// Admin : certificat re-signé ici (`{data, sig}`), pour `user_certify`
+    /// puis `nextEntry` `certify` ; `name` le renomme.
+    pub fn recertify(&self, user: &str, name: Option<String>) -> Result<String, JsError> {
+        to_json(&self.state.recertify(user, name.as_deref()).map_err(js)?)
+    }
+
+    /// Admin : services à republier (D47), JSON. À regarder après chaque
+    /// lecture de l'annuaire et chaque publication de mon journal.
+    #[wasm_bindgen(js_name = servicesToRepublish)]
+    pub fn services_to_republish(&self) -> Result<String, JsError> {
+        to_json(&self.state.services_to_republish())
+    }
+
+    /// Admin : `{"frame": roster_publish?, "head": tête?}` pour le journal
+    /// du service `user`.
+    #[wasm_bindgen(js_name = nextServiceEntry)]
+    pub fn next_service_entry(&mut self, user: &str) -> Result<String, JsError> {
+        to_json(&self.state.next_service_entry(user).map_err(js)?)
+    }
+
+    /// Admin, `roster_published` reçu pour un service : `{"events", "sends"}`.
+    #[wasm_bindgen(js_name = serviceEntryPublished)]
+    pub fn service_entry_published(&mut self, user: &str, seq: f64) -> Result<String, JsError> {
+        to_json(&self.state.service_entry_published(user, exact_u64(seq)?).map_err(js)?)
     }
 
     /// Rotation : `{"epoch": n, "events": […], "sends": [group_key…]}`.

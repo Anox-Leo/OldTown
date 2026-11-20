@@ -35,6 +35,8 @@ for (const page of ['send.html', 'page.css']) {
 }
 copyFileSync(path.join(app, 'src/tokens.css'), path.join(dist, 'tokens.css'));
 copyFileSync(path.join(app, 'manifest.json'), path.join(dist, 'manifest.json'));
-// Les réglages sont la même appli Angular, ouverte sous un autre nom.
+// Les réglages et l'administration sont la même appli Angular, ouverte sous
+// un autre nom.
 copyFileSync(path.join(dist, 'index.html'), path.join(dist, 'options.html'));
+copyFileSync(path.join(dist, 'index.html'), path.join(dist, 'admin.html'));
 console.log(`extension prête : ${path.relative(process.cwd(), dist)}`);
