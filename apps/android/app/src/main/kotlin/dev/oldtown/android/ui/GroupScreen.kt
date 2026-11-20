@@ -41,6 +41,7 @@ import dev.oldtown.android.ui.components.Divider
 import dev.oldtown.android.ui.components.Dot
 import dev.oldtown.android.ui.components.GhostIcon
 import dev.oldtown.android.ui.components.ListRow
+import dev.oldtown.android.ui.components.Mark
 import dev.oldtown.android.ui.components.OtButton
 import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
@@ -324,6 +325,8 @@ fun ShowCodeScreen(onBack: () -> Unit) {
             }
             val inv = invitation
             if (inv != null && joined == null) {
+                // Signe au-dessus du QR, comme l'appairage de l'extension.
+                Mark(32.dp, Modifier.align(Alignment.CenterHorizontally))
                 QrImage(inv.uri, Modifier.padding(horizontal = 24.dp))
                 OtCard {
                     SelectionContainer {

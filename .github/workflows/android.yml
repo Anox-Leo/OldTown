@@ -1,12 +1,14 @@
 name: Android
 
-# Appli Android (étape 3) : seulement quand l'appli ou le cœur Rust change,
-# sous Linux, pour économiser les minutes de CI. Produit l'APK de debug.
+# Appli Android (étape 3) : seulement quand l'appli, son signe (`branding/`,
+# relu par BrandTest) ou le cœur Rust change, sous Linux, pour économiser les
+# minutes de CI. Produit l'APK de debug.
 on:
   push:
     branches: [main]
     paths:
       - "apps/android/**"
+      - "branding/**"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -14,6 +16,7 @@ on:
   pull_request:
     paths:
       - "apps/android/**"
+      - "branding/**"
       - "crates/**"
       - "Cargo.toml"
       - "Cargo.lock"

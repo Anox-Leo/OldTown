@@ -53,7 +53,13 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   `Download/OldTown`, `IS_PENDING` jusqu'à la vérification), `FileTransfers`
   (progression, notification « Transferts »), règles pures `FileRules`
   (téléchargement d'office sous 20 Mo sur réseau non facturé).
-- **UI** : thème de T3 Code (`ui/theme`, sombre et clair), composants
+- **UI** : thème « nuit » (sombre) et « parchemin » (clair) de la charte
+  (`ui/theme`) : `Color.kt` et `Theme.kt` lisent `Tokens.kt`, les
+  ressources XML lisent `res/values*/tokens.xml`, tous deux générés par
+  `tools/design-tokens/gen.mjs` depuis `design/tokens.json` (jamais modifiés à
+  la main, aucune couleur en dur dans un écran hors QR). Signe et logotype :
+  `ui/components/Brand.kt` (`Mark`, `Logo`) et les icônes de `res/drawable`,
+  tracés recopiés de `branding/` et vérifiés par `BrandTest`. Composants
   maison dans `ui/components` (pas de Material Icons : icônes au trait
   d'après Lucide), textes en français. Navigation par une pile d'écrans
   dans `MainActivity`.

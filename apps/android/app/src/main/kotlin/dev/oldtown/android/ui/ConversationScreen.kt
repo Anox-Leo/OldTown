@@ -190,13 +190,14 @@ private fun MessageBubble(item: Received, showSender: Boolean, progress: Transfe
             Column(
                 Modifier
                     .clip(shape)
-                    .background(if (out) c.primary else c.groupedCard)
-                    .then(if (out) Modifier else Modifier.border(1.dp, c.border, shape))
+                    .background(if (out) c.bubbleOut else c.groupedCard)
+                    .border(1.dp, if (out) c.bubbleOut else c.border, shape)
                     .then(if (clickable) Modifier.clickable(onClick = onOpen) else Modifier)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                val fg = if (out) c.onPrimary else c.foreground
+                // Texte normal dans les deux bulles (charte, comme l'extension).
+                val fg = c.foreground
                 val file = item.file
                 if (file != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -235,7 +236,7 @@ private fun MessageBubble(item: Received, showSender: Boolean, progress: Transfe
                         style = MaterialTheme.typography.bodyMedium.copy(
                             textDecoration = if (link) TextDecoration.Underline else null,
                         ),
-                        color = if (link && !out) c.primaryText else fg,
+                        color = if (link) c.primaryText else fg,
                         maxLines = 12,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -265,28 +266,28 @@ private fun UploadBubble(t: Transfer) {
             Column(
                 Modifier
                     .clip(RoundedCornerShape(BUBBLE, BUBBLE, TAIL, BUBBLE))
-                    .background(c.primary)
+                    .background(c.bubbleOut)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(OtIcons.Paperclip, null, tint = c.onPrimary, modifier = Modifier.size(16.dp))
+                    Icon(OtIcons.Paperclip, null, tint = c.foreground, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(t.name, style = MaterialTheme.typography.bodyMedium, color = c.onPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(t.name, style = MaterialTheme.typography.bodyMedium, color = c.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (t.error != null) {
-                    Text(t.error, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = c.onPrimary)
+                    Text(t.error, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = c.foreground)
                 } else {
                     Text(
                         if (t.total > 0) "${t.done * 100 / t.total} %" else "…",
                         style = MaterialTheme.typography.bodySmall,
-                        color = c.onPrimary.copy(alpha = 0.75f),
+                        color = c.foreground.copy(alpha = 0.75f),
                     )
                     LinearProgressIndicator(
                         progress = { if (t.total > 0) t.done.toFloat() / t.total else 0f },
                         modifier = Modifier.fillMaxWidth().height(3.dp),
-                        color = c.onPrimary,
-                        trackColor = c.onPrimary.copy(alpha = 0.3f),
+                        color = c.primary,
+                        trackColor = c.border,
                     )
                 }
             }

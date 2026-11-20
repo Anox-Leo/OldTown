@@ -43,6 +43,7 @@ import dev.oldtown.android.ui.components.Banner
 import dev.oldtown.android.ui.components.BannerKind
 import dev.oldtown.android.ui.components.Divider
 import dev.oldtown.android.ui.components.GhostIcon
+import dev.oldtown.android.ui.components.Logo
 import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
 import dev.oldtown.android.ui.theme.Ot
@@ -97,7 +98,7 @@ fun HomeScreen(hub: HubState, open: (Screen) -> Unit) {
             Modifier.fillMaxWidth().height(56.dp).padding(start = 20.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("OldTown", style = MaterialTheme.typography.titleMedium, color = Ot.colors.foreground)
+            Logo(26.dp)
             Spacer(Modifier.weight(1f))
             GhostIcon(OtIcons.Users, "Groupe", { open(Screen.Group) })
             GhostIcon(OtIcons.Settings, "Réglages", { open(Screen.Settings) })

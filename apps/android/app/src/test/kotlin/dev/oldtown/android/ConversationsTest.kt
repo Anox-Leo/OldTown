@@ -78,14 +78,15 @@ class ConversationsTest {
 
     @Test
     fun sameColorAsTheExtension() {
-        // Valeurs calculées par `avatarColor` de l'extension.
-        assertEquals(0xFFE0803C, avatarColor(""))
-        assertEquals(0xFFE05D5D, avatarColor("dev_a"))
-        assertEquals(0xFFA35CC8, avatarColor("dev_b"))
-        assertEquals(0xFFD6567F, avatarColor("dev_c"))
-        assertEquals(0xFFC99A1E, avatarColor("dev_tel"))
-        assertEquals(0xFF5F7D95, avatarColor("Téléphone"))
-        assertEquals(0xFFE05D5D, avatarColor("01J9ZK3Q4W5E6R7T8Y9U0I1O2P"))
+        // Valeurs calculées par `avatarColor` de l'extension (couleurs accordées
+        // de `design/tokens.json`, mêmes rangs qu'avant les jetons).
+        assertEquals(0xFFC77A1C, avatarColor(""))
+        assertEquals(0xFFC4534F, avatarColor("dev_a"))
+        assertEquals(0xFF9058B0, avatarColor("dev_b"))
+        assertEquals(0xFFBE4F75, avatarColor("dev_c"))
+        assertEquals(0xFFA68A22, avatarColor("dev_tel"))
+        assertEquals(0xFF5A7488, avatarColor("Téléphone"))
+        assertEquals(0xFFC4534F, avatarColor("01J9ZK3Q4W5E6R7T8Y9U0I1O2P"))
     }
 
     @Test

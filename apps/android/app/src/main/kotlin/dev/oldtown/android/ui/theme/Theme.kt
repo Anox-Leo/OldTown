@@ -15,11 +15,11 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import dev.oldtown.android.R
 
-/** DM Sans (police de T3 Code), fonte variable : une graisse par entrée. */
+/** DM Sans (charte, note 0059), fonte variable : une graisse par entrée. */
 private fun dmSans(weight: FontWeight) = Font(
     R.font.dm_sans,
     weight = weight,
@@ -33,28 +33,33 @@ val DmSans = FontFamily(
     dmSans(FontWeight.Bold),
 )
 
-private fun style(size: Int, weight: FontWeight = FontWeight.Normal, line: Int = size + 6) =
-    TextStyle(fontFamily = DmSans, fontWeight = weight, fontSize = size.sp, lineHeight = line.sp)
+private fun style(size: TextUnit, weight: FontWeight = FontWeight.Normal, line: Int = size.value.toInt() + 6) =
+    TextStyle(fontFamily = DmSans, fontWeight = weight, fontSize = size, lineHeight = line.sp)
 
-private val OtTypography = Typography(
-    headlineSmall = style(24, FontWeight.SemiBold, 30),
-    titleLarge = style(20, FontWeight.SemiBold, 26),
-    titleMedium = style(17, FontWeight.Medium, 22),
-    titleSmall = style(15, FontWeight.Medium, 20),
-    bodyLarge = style(16, line = 23),
-    bodyMedium = style(15, line = 21),
-    bodySmall = style(13, line = 18),
-    labelLarge = style(15, FontWeight.Medium, 20),
-    labelMedium = style(13, FontWeight.Medium, 16),
-    labelSmall = style(11, FontWeight.Medium, 14),
-)
+/** Échelle des jetons (`OtTokens.TextSize`), 11 à 24. */
+private val OtTypography = with(OtTokens.TextSize) {
+    Typography(
+        headlineSmall = style(headline, FontWeight.SemiBold, 30),
+        titleLarge = style(large, FontWeight.SemiBold, 26),
+        titleMedium = style(title, FontWeight.Medium, 22),
+        titleSmall = style(body, FontWeight.Medium, 20),
+        // Noms d'appareils et de fichiers en tête : un cran au-dessus du corps,
+        // hors échelle comme avant les jetons.
+        bodyLarge = style(16.sp, line = 23),
+        bodyMedium = style(body, line = 21),
+        bodySmall = style(small, line = 18),
+        labelLarge = style(body, FontWeight.Medium, 20),
+        labelMedium = style(small, FontWeight.Medium, 16),
+        labelSmall = style(label, FontWeight.Medium, 14),
+    )
+}
 
-/** Arrondis : cartes 14 dp, champs et boutons 10 dp, pastilles 999. */
+/** Arrondis des jetons : contrôles 10, cartes 14, feuilles 20, pastilles 999. */
 object OtShapes {
-    val card = RoundedCornerShape(14.dp)
-    val control = RoundedCornerShape(10.dp)
-    val pill = RoundedCornerShape(999.dp)
-    val sheet = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    val card = RoundedCornerShape(OtTokens.Radius.card)
+    val control = RoundedCornerShape(OtTokens.Radius.control)
+    val pill = RoundedCornerShape(OtTokens.Radius.pill)
+    val sheet = RoundedCornerShape(topStart = OtTokens.Radius.sheet, topEnd = OtTokens.Radius.sheet)
 }
 
 /** Police à chasse fixe des empreintes et des codes. */

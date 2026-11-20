@@ -1,5 +1,6 @@
 package dev.oldtown.android.ui
 
+import dev.oldtown.android.ui.theme.OtTokens
 import dev.oldtown.core.Member
 import dev.oldtown.core.Received
 import java.text.Collator
@@ -62,11 +63,8 @@ fun deviceKind(name: String): DeviceKind {
     }
 }
 
-/** Couleurs d'avatar (ARGB), les mêmes que dans l'extension. */
-private val COLORS = longArrayOf(
-    0xFFE05D5D, 0xFFE0803C, 0xFFC99A1E, 0xFF3FA66B, 0xFF22988A,
-    0xFF3B82C4, 0xFF6D6CF0, 0xFFA35CC8, 0xFFD6567F, 0xFF5F7D95,
-)
+/** Couleurs d'avatar (ARGB), générées depuis `design/tokens.json` : les mêmes que dans l'extension. */
+private val COLORS = OtTokens.avatarColors
 
 /**
  * Couleur d'un appareil (ARGB) : tirée de son identifiant par FNV-1a 32 bits

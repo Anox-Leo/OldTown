@@ -27,6 +27,7 @@ import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.Banner
 import dev.oldtown.android.ui.components.BannerKind
 import dev.oldtown.android.ui.components.ButtonKind
+import dev.oldtown.android.ui.components.Logo
 import dev.oldtown.android.ui.components.OtButton
 import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
@@ -86,7 +87,7 @@ fun OnboardingScreen() {
             when (step) {
                 Step.Intro -> {
                     Spacer(Modifier.height(48.dp))
-                    Text("OldTown", style = MaterialTheme.typography.headlineSmall, color = Ot.colors.foreground)
+                    Logo(36.dp)
                     Text(
                         "Textes et liens entre vos appareils, chiffrés de bout en bout. Le relais ne voit jamais le contenu.",
                         style = MaterialTheme.typography.bodyMedium,
