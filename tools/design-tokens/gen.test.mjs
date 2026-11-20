@@ -8,6 +8,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  ANDROID_RES_ROLES,
+  androidColor,
   argb,
   avatars,
   contrast,
@@ -128,9 +130,29 @@ test('mêmes avatars, dans le même ordre, dans toutes les sorties', () => {
   for (const c of expected) assert.ok(files[OUTPUTS.specimen].includes(c));
 });
 
-test('ARGB de Compose', () => {
+test('ARGB de Compose et des ressources Android', () => {
   assert.equal(argb('#0f1120'), '0xFF0F1120');
   assert.equal(argb('#fe9a0052'), '0x52FE9A00');
+  assert.equal(androidColor('#fe9a0052'), '#52FE9A00');
+});
+
+test('ressources Android : mêmes couleurs que Tokens.kt, clair dans values/, sombre dans values-night/', () => {
+  const files = render(load());
+  const colors = (rel) =>
+    Object.fromEntries([...files[rel].matchAll(/<color name="ot_(\w+)">(#[0-9A-F]{8})<\/color>/g)].map((m) => [m[1], m[2]]));
+  const light = colors(OUTPUTS.androidLight);
+  const dark = colors(OUTPUTS.androidDark);
+  assert.deepEqual(Object.keys(light), ANDROID_RES_ROLES.map((n) => n.replace(/-/g, '_')));
+  assert.deepEqual(Object.keys(dark), Object.keys(light));
+  const kt = files[OUTPUTS.kotlin];
+  for (const [theme, res] of [['Light', light], ['Dark', dark]]) {
+    const block = kt.split(`object ${theme} {`)[1].split('}')[0];
+    for (const [name, color] of Object.entries(res)) {
+      const camelName = name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      assert.match(block, new RegExp(`val ${camelName} = Color\\(0x${color.slice(1)}\\)`));
+    }
+  }
+  assert.notEqual(light.screen, dark.screen);
 });
 
 test('mêmes rôles dans les deux thèmes, référence inconnue refusée', () => {

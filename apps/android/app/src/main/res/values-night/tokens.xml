@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fichier généré par tools/design-tokens/gen.mjs depuis design/tokens.json : ne pas modifier. -->
+<resources>
+    <color name="ot_screen">#FF0F1120</color>
+    <color name="ot_tile">#FF232841</color>
+    <color name="ot_mark">#FFD27443</color>
+    <color name="ot_on_avatar">#FFFFFFFF</color>
+</resources>

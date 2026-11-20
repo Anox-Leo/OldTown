@@ -15,6 +15,7 @@ node --test 'tools/design-tokens/*.test.mjs'
 | `apps/extension/src/tokens.css` | Popup, settings and pages: CSS variables, dark by default, light under `prefers-color-scheme: light` |
 | `apps/extension/src/shared/tokens.ts` | Values read from TypeScript: avatar colors, toolbar badge |
 | `apps/android/.../ui/theme/Tokens.kt` | `OtTokens`: same roles, avatars, radii, spacing and type sizes for Compose |
+| `apps/android/.../res/values{,-night}/tokens.xml` | `@color/ot_*`: the few roles Android XML reads (window background, icon tile, splash screen, notification accent) |
 | `design/specimen.html` | Swatches, buttons, rows, bubbles and the contrast table, both themes (open it locally) |
 
 Node 24, no dependency: a hundred tokens do not need a build tool.
