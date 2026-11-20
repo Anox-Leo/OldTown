@@ -9,6 +9,13 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 const MARK_BOX = '18 21.66 92 96.34';
 const LOGO_BOX = '18 21.66 360.82 96.34';
 
+/**
+ * Logotype : capitales à 46 % de la hauteur du signe, ligne de base du nom à
+ * 79 % de la boîte depuis le haut (`charte.mjs`), pour aligner un texte voisin.
+ */
+export const LOGO_CAP_HEIGHT = 0.46;
+export const LOGO_BASELINE = 0.79;
+
 /** Signe complet (24 px et plus, sans tuile). */
 export const MARK_PATH =
   'M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM26 118V80A52 52 0 0 1 64 29.92' +

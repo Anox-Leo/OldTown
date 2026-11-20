@@ -10,8 +10,9 @@ import { FormsModule } from '@angular/forms';
 
 import type { RelayDevice, StateView } from '../shared/api';
 import { OTP_ORIGINS } from '../shared/origins';
+import { type Theme, readTheme, saveTheme } from '../shared/theme';
 import { BackgroundService } from './background.service';
-import { LogoComponent } from './brand';
+import { LOGO_BASELINE, LOGO_CAP_HEIGHT, LogoComponent } from './brand';
 import { GroupComponent } from './group';
 import { connectionStatus } from './status';
 
@@ -21,7 +22,10 @@ import { connectionStatus } from './status';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [FormsModule, GroupComponent, LogoComponent],
   template: `
-    <h1><app-logo [size]="32" /><span class="muted">Réglages</span></h1>
+    <h1>
+      <app-logo [size]="logoSize" [style.top.px]="logoShift" />
+      <span class="muted" [style.font-size.px]="titleSize">Réglages</span>
+    </h1>
     @let s = state();
     @if (s.device; as d) {
       <section class="card">
@@ -90,6 +94,22 @@ import { connectionStatus } from './status';
       </section>
 
       <section class="card">
+        <h2>Apparence</h2>
+        <div class="themes" role="radiogroup" aria-label="Thème">
+          @for (t of themes; track t.value) {
+            <button
+              role="radio"
+              [attr.aria-checked]="theme() === t.value"
+              [class.selected]="theme() === t.value"
+              (click)="setTheme(t.value)"
+            >
+              {{ t.label }}
+            </button>
+          }
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Raccourcis clavier</h2>
         <p class="small muted">
           Alt+Maj+S envoie l'adresse de l'onglet, Alt+Maj+V le presse-papiers, au dernier
@@ -131,12 +151,25 @@ import { connectionStatus } from './status';
       margin: 24px auto;
       padding: 0 16px;
     }
+    /* « Réglages » sur la ligne de base du nom, capitales de même hauteur. */
     h1 {
       display: flex;
-      align-items: center;
-      gap: 14px;
-      font-size: 22px;
-      font-weight: 500;
+      align-items: baseline;
+      gap: 12px;
+      margin: 0 0 20px;
+      font-weight: 600;
+      line-height: 1;
+    }
+    h1 app-logo {
+      position: relative;
+    }
+    .themes {
+      display: flex;
+      gap: 6px;
+    }
+    .themes button.selected {
+      border-color: var(--primary);
+      color: var(--primary-text);
     }
     h2 {
       font-size: 15px;
@@ -169,6 +202,20 @@ export class SettingsComponent {
   /** Accès aux pages HTTPS accordé (remplissage des codes, note 0045). */
   protected readonly otpAccess = signal(false);
   protected serverUrl = '';
+  protected readonly themes: readonly { value: Theme; label: string }[] = [
+    { value: 'system', label: 'Comme le système' },
+    { value: 'dark', label: 'Nuit (sombre)' },
+    { value: 'light', label: 'Parchemin (clair)' },
+  ];
+  protected readonly theme = signal<Theme>(readTheme());
+  /**
+   * En-tête : le logotype a sa ligne de base à `LOGO_BASELINE` de sa hauteur ;
+   * aligné par le bas sur celle du titre, il descend du reste.
+   */
+  protected readonly logoSize = 32;
+  protected readonly logoShift = Math.round((1 - LOGO_BASELINE) * this.logoSize * 10) / 10;
+  /** DM Sans : capitales à 0,7 em, comme celles du nom. */
+  protected readonly titleSize = Math.round((LOGO_CAP_HEIGHT * this.logoSize) / 0.7);
 
   constructor() {
     effect(() => {
@@ -207,6 +254,11 @@ export class SettingsComponent {
   protected async forget(): Promise<void> {
     await this.bg.run({ type: 'forget' });
     this.confirmForget.set(false);
+  }
+
+  protected setTheme(theme: Theme): void {
+    saveTheme(theme);
+    this.theme.set(theme);
   }
 
   protected shortcuts(): Promise<chrome.tabs.Tab> {

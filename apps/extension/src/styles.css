@@ -12,16 +12,6 @@
   font-display: swap;
 }
 
-:root {
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-  }
-}
-
 * {
   box-sizing: border-box;
 }

@@ -46,6 +46,8 @@ l'interface.
   cours (`outgoing.json`, des noms) sont rangés de la même façon.
   En clair dans `chrome.storage.local` : seulement `device` (id, nom, URL),
   `recipient`, `outbox` (enveloppes chiffrées) et `seen` (`msg_id`).
+  Dans le `localStorage` des pages : seulement `theme` (choix d'affichage,
+  `src/shared/theme.ts`, lu avant le premier rendu).
 - **Popup = conversations** (notes 0030 et 0031) : accueil (`home.ts`) en
   liste, « Tous mes appareils » puis un appareil par ligne (plus récent
   d'abord), avatar (type deviné au nom, couleur tirée de l'id :
@@ -118,6 +120,8 @@ l'interface.
   `tools/design-tokens/gen.mjs` : jamais modifiés à la main, et aucune
   couleur en dur ailleurs dans `src/` hors `qr.ts` (QR noir sur blanc ;
   `test/design.test.ts` le vérifie). Signe et logotype : `src/app/brand.ts`
-  (`app-mark`, `app-logo`), tracés repris de `branding/`. Icônes
+  (`app-mark`, `app-logo`), tracés repris de `branding/`. Thème du système, ou
+  « nuit » ou « parchemin » choisi dans les réglages (`data-theme` sur
+  `<html>`, lu par `tokens.css`). Icônes
   `public/icons/` exportées depuis `branding/` (16 et 32 en taille
   optique). DM Sans, OFL, licence dans `third_party/`.

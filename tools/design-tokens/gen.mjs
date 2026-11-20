@@ -166,9 +166,15 @@ function css(tokens) {
   for (const [n, v] of dims(tokens, 'space')) lines.push(`  --space-${n}: ${v}px;`);
   for (const [n, v] of dims(tokens, 'type.size')) lines.push(`  --text-${n}: ${v}px;`);
   for (const n of children(tokens.type.family)) lines.push(`  --font-${n}: ${cssFamily(family(tokens, n))};`);
-  lines.push('}', '', '@media (prefers-color-scheme: light) {', '  :root {');
-  for (const [n, c] of roles(tokens, 'light')) lines.push(`    --${n}: ${c};`);
-  lines.push('  }', '}', '');
+  lines.push('  color-scheme: dark;', '}', '');
+  // Clair : celui du système, sauf choix contraire (`data-theme` sur
+  // `<html>`), ou choisi explicitement.
+  const light = roles(tokens, 'light');
+  lines.push('@media (prefers-color-scheme: light) {', "  :root:not([data-theme='dark']) {");
+  for (const [n, c] of light) lines.push(`    --${n}: ${c};`);
+  lines.push('    color-scheme: light;', '  }', '}', '', ":root[data-theme='light'] {");
+  for (const [n, c] of light) lines.push(`  --${n}: ${c};`);
+  lines.push('  color-scheme: light;', '}', '');
   return lines.join('\n');
 }
 

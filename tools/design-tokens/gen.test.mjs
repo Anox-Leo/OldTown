@@ -139,3 +139,12 @@ test('mêmes rôles dans les deux thèmes, référence inconnue refusée', () =>
   tokens.role.dark.fg = { $value: '{color.nuit.123}' };
   assert.throws(() => render(tokens), /jeton inconnu : color\.nuit\.123/);
 });
+
+test('thème clair : celui du système, ou choisi par data-theme', () => {
+  const css = render(load())[OUTPUTS.css];
+  assert.match(css, /@media \(prefers-color-scheme: light\) \{\n {2}:root:not\(\[data-theme='dark'\]\) \{/);
+  assert.match(css, /^:root\[data-theme='light'\] \{$/m);
+  // Mêmes rôles clairs aux deux endroits.
+  const block = (start) => css.slice(css.indexOf(start)).split('}')[0].split('\n').slice(1).map((l) => l.trim());
+  assert.deepEqual(block(":root:not([data-theme='dark'])"), block(":root[data-theme='light']"));
+});
