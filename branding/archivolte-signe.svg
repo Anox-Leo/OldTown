@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 21.66 92 96.34" role="img" aria-labelledby="t">
+  <title id="t">OldTown</title>
+  <!-- Signe seul, pierre #D27443, boîte serrée. Fonds clairs et sombres. -->
+  <path fill="#D27443" fill-rule="evenodd" d="M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM26 118V80A52 52 0 0 1 64 29.92A52 52 0 0 1 102 80V118zM32 118V80A46 46 0 0 1 64 36.18A46 46 0 0 1 96 80V118zM40 110V86A21 21 0 0 1 50.5 67.81A21 21 0 0 1 61 86V110zM67 110V86A21 21 0 0 1 77.5 67.81A21 21 0 0 1 88 86V110z"/>
+</svg>
