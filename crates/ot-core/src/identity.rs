@@ -1,6 +1,8 @@
 use ed25519_dalek::{Signer, SigningKey};
 use ot_proto::http::{HTTP_NONCE_LEN, http_request_message};
-use ot_proto::{DeviceId, NONCE_LEN, auth_message, b64, pair_redeem_message};
+use ot_proto::{
+    DeviceId, NONCE_LEN, auth_message, b64, invite_redeem_message, pair_redeem_message,
+};
 use sha2::{Digest, Sha256};
 
 /// Paire de clés Ed25519 de l'appareil.
@@ -39,6 +41,11 @@ impl Identity {
     /// Signature de `pair_redeem` : preuve de possession de la clé.
     pub fn sign_pair_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
         self.0.sign(&pair_redeem_message(nonce, token_hash)).to_bytes()
+    }
+
+    /// Signature de `invite_redeem` (étape 10) : même preuve, autre domaine.
+    pub fn sign_invite_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
+        self.0.sign(&invite_redeem_message(nonce, token_hash)).to_bytes()
     }
 
     /// Signature d'une requête HTTP de fichiers (étape 5, note 0026).

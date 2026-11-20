@@ -203,6 +203,43 @@ pub struct DirectoryState {
     /// ne l'a pas atteinte ; ensuite le chaînage par `prev` la garde.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_head: Option<LogHead>,
+    /// Clé du `genesis` des personnes que le relais ne montre plus (lien
+    /// retiré, révocation, réinvitation en cours) : à leur retour avec
+    /// d'autres clés, `KeysChanged` (une personne réinvitée passe par un
+    /// état où le relais la cache).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "keys_b64")]
+    pub forgotten: BTreeMap<UserId, [u8; 32]>,
+}
+
+mod keys_b64 {
+    use std::collections::BTreeMap;
+
+    use ot_proto::{UserId, b64};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+    pub fn serialize<S: Serializer>(
+        v: &BTreeMap<UserId, [u8; 32]>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        v.iter()
+            .map(|(k, key)| (k.clone(), b64::encode(key)))
+            .collect::<BTreeMap<_, _>>()
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<BTreeMap<UserId, [u8; 32]>, D::Error> {
+        let raw = BTreeMap::<UserId, String>::deserialize(d)?;
+        raw.into_iter()
+            .map(|(k, v)| {
+                let bytes = b64::decode(&v).map_err(de::Error::custom)?;
+                let key: [u8; 32] =
+                    bytes.try_into().map_err(|_| de::Error::custom("clé de 32 octets attendue"))?;
+                Ok((k, key))
+            })
+            .collect()
+    }
 }
 
 mod anchor_b64 {
@@ -301,6 +338,35 @@ impl DirectoryState {
             }
         }
         known
+    }
+
+    /// Identifiant de l'admin, une fois sa racine vérifiée.
+    pub fn admin_id(&self) -> Option<&UserId> {
+        self.admin.as_ref().map(|(id, _)| id)
+    }
+
+    /// Certificat (vérifié) et journal de `user`, l'admin compris.
+    pub fn known_person(&self, user: &UserId) -> Option<&KnownPerson> {
+        match &self.admin {
+            Some((id, p)) if id == user => Some(p),
+            _ => self.people.get(user),
+        }
+    }
+
+    /// Ajoute à son journal une entrée que cet appareil vient de signer et
+    /// que le relais a acceptée : elle suit la dernière entrée vérifiée.
+    pub fn extend_own(&mut self, user: &UserId, chain: Chain) {
+        let admin = self.admin.as_ref().is_some_and(|(id, _)| id == user);
+        if admin {
+            for m in &chain.roster.members {
+                self.admin_history.insert(m.device_id.clone(), m.sign_key);
+            }
+        }
+        let person =
+            if admin { self.admin.as_mut().map(|(_, p)| p) } else { self.people.get_mut(user) };
+        if let Some(p) = person {
+            p.chain = Some(chain);
+        }
     }
 
     /// Roster courant vérifié de l'admin.
@@ -407,6 +473,12 @@ impl DirectoryState {
                 continue;
             }
             let same_genesis = old.is_some_and(|o| o.genesis == cert.genesis);
+            if stored.is_none()
+                && self.forgotten.get(&u.id).is_some_and(|k| *k != cert.genesis.sign_key)
+            {
+                events.push(DirectoryEvent::KeysChanged { user: u.id.clone() });
+            }
+            self.forgotten.remove(&u.id);
             let from = if same_genesis { stored.and_then(|p| p.chain.clone()) } else { None };
             if stored.is_some() && !same_genesis {
                 events.push(DirectoryEvent::KeysChanged { user: u.id.clone() });
@@ -464,7 +536,15 @@ impl DirectoryState {
         // révocation) sont oubliées.
         let shown: Vec<&UserId> = users.iter().map(|u| &u.id).collect();
         let before = self.people.len();
-        self.people.retain(|id, _| shown.contains(&id));
+        let gone: Vec<UserId> =
+            self.people.keys().filter(|id| !shown.contains(id)).cloned().collect();
+        for id in gone {
+            if let Some(p) = self.people.remove(&id)
+                && let Ok(cert) = UserCert::read_unverified(&p.cert)
+            {
+                self.forgotten.insert(id, cert.genesis.sign_key);
+            }
+        }
         if self.people.len() != before {
             events.push(DirectoryEvent::Changed);
         }
@@ -472,6 +552,9 @@ impl DirectoryState {
         Applied { people: Some(people), events, again }
     }
 
+    /// Remplacée dans le client par `Secure::next_entry` (§ 4.2, note 0060),
+    /// qui publie aussi mon roster local ; gardée pour ses tests de règles.
+    ///
     /// Entrée suivante du journal de l'admin (note 0056) : même roster,
     /// `version + 1`, `certs` mis à jour par `change`, signée par l'appareil
     /// courant, membre du roster vérifié de l'admin. À publier

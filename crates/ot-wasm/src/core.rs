@@ -6,12 +6,14 @@ use std::sync::Arc;
 
 use ot_core::crypto::{CHUNK_TAG_LEN, chunk_count, chunk_len, sealed_size};
 use ot_core::crypto::{PairingCode, PairingSecret};
+use ot_core::directory::{DirectoryRead, ReadStep};
 use ot_core::files::new_file_meta;
 use ot_core::{
-    BlobId, ClientError, Content, ContentKind, DeviceId, Effect, Event, FileInfo, GroupInfo, Otp,
-    PendingUpload, SecretStore, Secure, StoreKeyring,
+    BlobId, ClientError, Content, ContentKind, DeviceId, Effect, Event, FileInfo, GroupInfo,
+    NextEntry, Origin, Otp, OwnEntry, PendingUpload, Person, Publish, SecretStore, Secure,
+    StoreKeyring, UserId,
 };
-use ot_proto::{Envelope, b64};
+use ot_proto::{Envelope, Frame, SignedBlob, b64};
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 use zeroize::Zeroizing;
@@ -51,6 +53,8 @@ pub enum EventOut {
         created_at: OffsetDateTime,
         kind: &'static str,
         body: String,
+        #[serde(flatten)]
+        origin: OriginOut,
     },
     Rejected {
         msg_id: String,
@@ -75,6 +79,31 @@ pub enum EventOut {
     },
     /// Code à usage unique (note 0045) : `code`, `display`, `sender_name`,
     /// `sender_domain`, `sender_verified`, `expires_at` (secondes Unix).
+    /// Annuaire relu (étape 10) : `people()` a changé.
+    DirectoryChanged,
+    DirectoryRejected {
+        user: String,
+        reason: String,
+    },
+    /// Alerte de sécurité : le relais publie un autre groupe que le mien.
+    DirectoryFork,
+    KeysChanged {
+        user: String,
+    },
+    /// Admin : une personne invitée par cet appareil est certifiée.
+    PersonJoined {
+        user: String,
+        name: String,
+        device_name: String,
+        fingerprint: String,
+    },
+    /// Invité : ma personne est certifiée, mon groupe créé.
+    Joined {
+        user: String,
+    },
+    InviteFailed {
+        reason: String,
+    },
     Otp {
         seq: i64,
         msg_id: String,
@@ -83,7 +112,34 @@ pub enum EventOut {
         created_at: OffsetDateTime,
         #[serde(flatten)]
         otp: Otp,
+        #[serde(flatten)]
+        origin: OriginOut,
+        /// Règle O2 : copier ou remplir d'office seulement si vrai (de ma
+        /// personne ou d'un service).
+        auto_fill: bool,
     },
+}
+
+/// Personne de l'expéditeur et du destinataire (étape 10) ; champs absents
+/// pour un message de mon groupe.
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
+pub struct OriginOut {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_user: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub from_service: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<String>,
+}
+
+impl From<&Origin> for OriginOut {
+    fn from(o: &Origin) -> Self {
+        Self {
+            from_user: o.from_user.as_ref().map(ToString::to_string),
+            from_service: o.from_service,
+            to_user: o.to_user.as_ref().map(ToString::to_string),
+        }
+    }
 }
 
 /// Fichier annoncé, sans clé.
@@ -97,6 +153,8 @@ pub struct FileOut {
     pub name: String,
     pub mime: String,
     pub size: u64,
+    #[serde(flatten)]
+    pub origin: OriginOut,
 }
 
 impl From<FileInfo> for FileOut {
@@ -109,6 +167,7 @@ impl From<FileInfo> for FileOut {
             name: f.name,
             mime: f.mime,
             size: f.size,
+            origin: (&f.origin).into(),
         }
     }
 }
@@ -171,6 +230,7 @@ impl EventOut {
                     ContentKind::Link => "link",
                 },
                 body: m.content.body,
+                origin: (&m.origin).into(),
             },
             Event::Rejected { msg_id, from, reason } => {
                 Self::Rejected { msg_id: msg_id.to_string(), from: from.to_string(), reason }
@@ -182,6 +242,8 @@ impl EventOut {
             Event::KeyringError { message } => Self::KeyringError { message },
             Event::File(f) => Self::File { seq: f.seq, file: f.file.into() },
             Event::Otp(o) => Self::Otp {
+                auto_fill: o.auto_fill(),
+                origin: (&o.origin).into(),
                 seq: o.seq,
                 msg_id: o.msg_id.to_string(),
                 from: o.from.to_string(),
@@ -191,12 +253,17 @@ impl EventOut {
             Event::Connected { .. } | Event::Disconnected { .. } | Event::AuthFailed { .. } => {
                 return None;
             }
-            // Annuaire (étape 10) : lu par le client réseau, pas encore par
-            // l'extension (PR extension).
-            Event::DirectoryChanged
-            | Event::DirectoryRejected { .. }
-            | Event::DirectoryFork
-            | Event::KeysChanged { .. } => return None,
+            Event::DirectoryChanged => Self::DirectoryChanged,
+            Event::DirectoryRejected { user, reason } => {
+                Self::DirectoryRejected { user: user.to_string(), reason }
+            }
+            Event::DirectoryFork => Self::DirectoryFork,
+            Event::KeysChanged { user } => Self::KeysChanged { user: user.to_string() },
+            Event::PersonJoined { user, name, device_name, fingerprint } => {
+                Self::PersonJoined { user: user.to_string(), name, device_name, fingerprint }
+            }
+            Event::Joined { user } => Self::Joined { user: user.to_string() },
+            Event::InviteFailed { reason } => Self::InviteFailed { reason },
         })
     }
 }
@@ -279,10 +346,91 @@ pub enum PendingOut {
     Join,
 }
 
+/// Personne de l'annuaire vérifié, sans clé (étape 10).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PersonOut {
+    pub user: String,
+    pub name: String,
+    /// `admin`, `member` ou `service`.
+    pub role: &'static str,
+    pub muted: bool,
+    pub devices: Vec<PersonDeviceOut>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PersonDeviceOut {
+    pub device_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    pub reachable: bool,
+    pub default: bool,
+    pub up_to_date: bool,
+    pub online: bool,
+}
+
+impl From<Person> for PersonOut {
+    fn from(p: Person) -> Self {
+        Self {
+            user: p.id.to_string(),
+            name: p.name,
+            role: p.role.as_str(),
+            muted: p.muted,
+            devices: p
+                .devices
+                .into_iter()
+                .map(|d| PersonDeviceOut {
+                    device_id: d.id.to_string(),
+                    name: d.name,
+                    kind: d.kind.map(|k| k.as_str()),
+                    reachable: d.reachable,
+                    default: d.default,
+                    up_to_date: d.up_to_date,
+                    online: d.online,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Suite d'une page de l'annuaire : trame à envoyer (page ou tour
+/// suivants), ou fin de la lecture ; effets d'un tour complet.
+#[derive(Debug, Default, Serialize)]
+pub struct DirectoryStep {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Frame>,
+    pub done: bool,
+    #[serde(flatten)]
+    pub out: Output,
+}
+
+/// Ce qu'une entrée de mon journal doit changer, donné par le JavaScript.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PublishIn {
+    IfBehind,
+    Certify { user: UserId, cert: SignedBlob },
+    Revoke { user: UserId },
+}
+
+/// Réponse de `nextEntry` : trame `roster_publish`, ou rien (et la tête du
+/// journal qui engage déjà le changement).
+#[derive(Debug, Serialize)]
+pub struct PublishOut {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<Frame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<ot_core::crypto::directory::LogHead>,
+}
+
 pub struct CoreState {
     vault: Arc<VaultStore>,
     secure: Secure,
     pending: Option<PendingOut>,
+    /// Lecture de l'annuaire en cours.
+    read: Option<DirectoryRead>,
+    /// Entrée envoyée (`roster_publish`), en attente de `roster_published`.
+    publishing: Option<OwnEntry>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -297,7 +445,7 @@ impl CoreState {
         let identity = vault.identity()?.ok_or("identité de l'appareil absente")?;
         let keyring = StoreKeyring::new(vault.clone());
         let (secure, startup) = Secure::load(me, identity, Arc::new(keyring.clone()));
-        let mut core = Self { vault, secure, pending: None };
+        let mut core = Self { vault, secure, pending: None, read: None, publishing: None };
         let mut out = Output::default();
         out.push(startup.into_iter().map(Effect::Emit).collect());
         core.restore(OffsetDateTime::now_utc(), &mut out);
@@ -470,7 +618,8 @@ impl CoreState {
                 .map_err(err)?;
         let meta =
             new_file_meta(blob, name, mime, size, chunk_size, sha256).ok_or("fichier trop gros")?;
-        let pending = PendingUpload { source_id: source_id.to_owned(), to, expires_at, meta };
+        let pending =
+            PendingUpload { source_id: source_id.to_owned(), to, to_user: None, expires_at, meta };
         let out = UploadOut::new(&pending)?;
         self.secure.save_upload(pending, OffsetDateTime::now_utc()).map_err(err)?;
         Ok(out)
@@ -500,7 +649,11 @@ impl CoreState {
     /// noté jusqu'à [`Self::forget_upload`], une fois l'annonce acceptée.
     pub fn seal_file(&self, source_id: &str) -> Result<Envelope, String> {
         let p = self.pending_upload(source_id)?;
-        self.secure.seal_file(&p.meta, p.to).map_err(err)
+        match p.to_user {
+            Some(_) => self.secure.seal_file_to(&p.meta, p.to),
+            None => self.secure.seal_file(&p.meta, p.to),
+        }
+        .map_err(err)
     }
 
     pub fn forget_upload(&self, source_id: &str) -> Result<(), String> {
@@ -545,6 +698,189 @@ impl CoreState {
     pub fn forget_file(&self, blob_id: &str) -> Result<(), String> {
         let blob: BlobId = blob_id.parse().map_err(err)?;
         self.secure.forget_file(&blob).map_err(err)
+    }
+
+    // --- Étape 10 : annuaire, personnes, invitation, journal ---
+
+    /// Commence une lecture de l'annuaire (première trame `directory_get`) ;
+    /// `None` sans ancre. Une lecture en cours est abandonnée.
+    pub fn directory_start(&mut self) -> Option<Frame> {
+        if !self.secure.has_anchor() {
+            return None;
+        }
+        let (read, frame) = DirectoryRead::start(self.secure.directory_known());
+        self.read = Some(read);
+        Some(frame)
+    }
+
+    /// Range une trame `directory` du relais ; un tour complet est vérifié
+    /// et appliqué (ses effets à traiter : événements, envois).
+    pub fn directory_page(&mut self, frame: Frame) -> Result<DirectoryStep, String> {
+        let Frame::Directory { me, admin, users, next } = frame else {
+            return Err("trame directory attendue".into());
+        };
+        let mut read = self.read.take().ok_or("aucune lecture de l'annuaire en cours")?;
+        let mut step = DirectoryStep::default();
+        match read.page(me, admin, users, next).map_err(err)? {
+            ReadStep::Request(frame) => {
+                step.frame = Some(*frame);
+                self.read = Some(read);
+            }
+            ReadStep::Round { me, admin, users } => {
+                let (effects, again) = self.secure.apply_directory(&me, &admin, &users);
+                step.out.push(effects);
+                match again.then(|| read.next_round(self.secure.directory_known())).flatten() {
+                    Some(frame) => {
+                        step.frame = Some(frame);
+                        self.read = Some(read);
+                    }
+                    None => step.done = true,
+                }
+            }
+        }
+        Ok(step)
+    }
+
+    pub fn people(&self) -> Vec<PersonOut> {
+        self.secure.people().into_iter().map(PersonOut::from).collect()
+    }
+
+    /// Trame `device_update` qui déclare `users-v1`, si mon profil ne l'a
+    /// pas encore (seul l'appareil le peut).
+    pub fn features_frame(&self, device_id: &str) -> Result<Option<Frame>, String> {
+        if !self.secure.needs_features() {
+            return Ok(None);
+        }
+        Ok(Some(Frame::DeviceUpdate {
+            device: device_id.parse().map_err(err)?,
+            kind: None,
+            reachable: None,
+            default: None,
+            features: Some(vec![ot_proto::Feature::users_v1()]),
+        }))
+    }
+
+    /// Appareils destinataires d'un envoi à `user` (défauts ou `device`,
+    /// copie à mes appareils), d'après l'annuaire vérifié.
+    pub fn recipients(&self, user: &str, device: Option<&str>) -> Result<Vec<String>, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        let device = device.map(str::parse::<DeviceId>).transpose().map_err(err)?;
+        let to = self.secure.recipients(&user, device.as_ref()).map_err(err)?;
+        Ok(to.iter().map(ToString::to_string).collect())
+    }
+
+    /// Chiffre un texte pour une autre personne (`0x05`).
+    pub fn seal_text_to(
+        &self,
+        text: &str,
+        user: &str,
+        device: Option<&str>,
+    ) -> Result<Envelope, String> {
+        if text.trim().is_empty() {
+            return Err("texte vide".into());
+        }
+        let user: UserId = user.parse().map_err(err)?;
+        let device = device.map(str::parse::<DeviceId>).transpose().map_err(err)?;
+        let content: Content = ot_core::classify(text);
+        self.secure.seal_content_to(&content, &user, device.as_ref()).map_err(err)
+    }
+
+    /// Prochaine entrée de mon journal (`roster_publish`), ou rien à faire.
+    /// À la réponse `roster_published`, appeler [`Self::entry_published`] ;
+    /// sur `conflict`, relire l'annuaire et redemander.
+    pub fn next_entry(&mut self, what: PublishIn) -> Result<PublishOut, String> {
+        let what = match what {
+            PublishIn::IfBehind => Publish::IfBehind,
+            PublishIn::Certify { user, cert } => Publish::Certify(user, cert),
+            PublishIn::Revoke { user } => Publish::Revoke(user),
+        };
+        match self.secure.next_entry(&what).map_err(err)? {
+            NextEntry::Done(head) => Ok(PublishOut { frame: None, head }),
+            NextEntry::Entry(own) => {
+                let frame = Frame::RosterPublish {
+                    user: own.user.clone(),
+                    seq: own.entry.seq,
+                    entry: own.entry.entry.clone(),
+                };
+                let head = Some(own.head());
+                self.publishing = Some(*own);
+                Ok(PublishOut { frame: Some(frame), head })
+            }
+        }
+    }
+
+    /// `roster_published` reçu pour l'entrée en cours : mon journal avance,
+    /// mon groupe adopte sa version (envoi `roster`).
+    pub fn entry_published(&mut self) -> Result<Output, String> {
+        let own = self.publishing.take().ok_or("aucune publication en cours")?;
+        let mut out = Output::default();
+        out.push(self.secure.entry_published(&own));
+        Ok(out)
+    }
+
+    /// Admin : `user_invited` reçu : range l'invitation et rend le code
+    /// `ot2-…` (secret compris, à transmettre à la personne seule).
+    pub fn create_invite(
+        &mut self,
+        user: &str,
+        name: &str,
+        token: &str,
+        expires_at: &str,
+    ) -> Result<String, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        let token =
+            b64::decode_array::<{ ot_core::crypto::TOKEN_LEN }>(token).ok_or("jeton invalide")?;
+        let expires_at =
+            OffsetDateTime::parse(expires_at, &time::format_description::well_known::Rfc3339)
+                .map_err(err)?;
+        let now = OffsetDateTime::now_utc();
+        let code = self.secure.create_invite(user, name, token, expires_at, now).map_err(err)?;
+        Ok(code.encode().to_string())
+    }
+
+    /// Admin : personnes dont la demande d'invitation est arrivée.
+    pub fn invites_to_certify(&self) -> Vec<String> {
+        self.secure.invites_to_certify().iter().map(ToString::to_string).collect()
+    }
+
+    /// Admin : certificat de l'invité (le même à chaque reprise) et s'il est
+    /// déjà accepté par le relais (`user_certify`).
+    pub fn invite_cert(&mut self, user: &str) -> Result<(SignedBlob, bool), String> {
+        let user: UserId = user.parse().map_err(err)?;
+        self.secure.invite_cert(&user, OffsetDateTime::now_utc()).map_err(err)
+    }
+
+    pub fn invite_certified(&mut self, user: &str) -> Result<(), String> {
+        let user: UserId = user.parse().map_err(err)?;
+        self.secure.invite_certified(&user).map_err(err)
+    }
+
+    /// Admin : bienvenue sous `S`, avec la tête qui engage le certificat.
+    pub fn invite_welcome(
+        &self,
+        user: &str,
+        head: ot_core::crypto::directory::LogHead,
+    ) -> Result<Envelope, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        self.secure.invite_welcome(&user, head).map_err(err)
+    }
+
+    /// Admin : bienvenue acceptée par le relais, invitation terminée.
+    pub fn invite_done(&mut self, user: &str) -> Result<Output, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        let mut out = Output::default();
+        out.push(self.secure.invite_done(&user).map_err(err)?);
+        Ok(out)
+    }
+
+    /// Invité : demande à renvoyer à chaque connexion, jusqu'à la bienvenue.
+    pub fn invite_request(&self) -> Option<Result<Envelope, String>> {
+        self.secure.invite_request().map(|r| r.map_err(err))
+    }
+
+    /// Invité : bienvenue reçue, l'annuaire est à relire.
+    pub fn awaits_directory(&self) -> bool {
+        self.secure.awaits_directory()
     }
 
     /// Nouvelle clé de groupe sans les membres `exclude`. Les `group_key` à
@@ -764,5 +1100,33 @@ mod tests {
         let json = serde_json::to_string(&core.info().unwrap()).unwrap();
         assert!(json.contains("\"members\""));
         assert!(!json.contains("\"key\""), "{json}");
+    }
+
+    #[test]
+    fn without_anchor_there_is_no_directory_to_read() {
+        let (vault, id) = extension();
+        let mut core = CoreState::open(vault, &id).unwrap().0;
+        assert!(core.directory_start().is_none());
+        assert!(core.people().is_empty());
+        assert!(core.invite_request().is_none());
+        assert!(core.features_frame(&id).unwrap().is_none());
+        assert!(core.entry_published().is_err());
+    }
+
+    #[test]
+    fn new_events_have_a_stable_json_shape() {
+        let user = UserId::generate();
+        let ev = EventOut::from_event(Event::PersonJoined {
+            user: user.clone(),
+            name: "Bob".into(),
+            device_name: "bob-phone".into(),
+            fingerprint: "ab:cd".into(),
+        })
+        .unwrap();
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "person_joined");
+        assert_eq!(json["user"], user.to_string());
+        let ev = EventOut::from_event(Event::DirectoryFork).unwrap();
+        assert_eq!(serde_json::to_value(&ev).unwrap()["type"], "directory_fork");
     }
 }

@@ -49,7 +49,7 @@ impl From<ClientError> for OtError {
             }
             | ClientError::Pairing(_) => Self::Pairing { message },
             ClientError::NoGroup | ClientError::NotMember(_) => Self::NotInGroup { message },
-            ClientError::Invalid(_) => Self::Invalid { message },
+            ClientError::Invalid(_) | ClientError::NoRecipient(_) => Self::Invalid { message },
             ClientError::Expired => Self::Expired { message },
             ClientError::Transfer(_) => Self::Transfer { message },
             ClientError::Rejected { .. } | ClientError::Crypto(_) => Self::Internal { message },
@@ -134,6 +134,82 @@ pub struct Received {
     /// Envoi pas encore accepté par le relais.
     #[serde(default)]
     pub pending: bool,
+    /// Personne de l'expéditeur (étape 10) ; `None` : la mienne.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub from_user: Option<String>,
+    /// L'expéditeur est un service (codes, alertes).
+    #[serde(default)]
+    #[uniffi(default = false)]
+    pub from_service: bool,
+    /// Personne destinataire : un envoi d'ici, ou la copie d'un envoi d'un
+    /// autre de mes appareils (D43). À ranger dans sa conversation.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub to_user: Option<String>,
+    /// Code à usage unique qui peut être copié ou rempli d'office (règle
+    /// O2) : de ma personne ou d'un service seulement.
+    #[serde(default)]
+    #[uniffi(default = false)]
+    pub auto_fill: bool,
+}
+
+impl Received {
+    /// Champs de l'étape 10, d'après l'origine lue par le cœur.
+    pub(crate) fn with_origin(self, origin: &ot_core::Origin) -> Self {
+        Self {
+            from_user: origin.from_user.as_ref().map(ToString::to_string),
+            from_service: origin.from_service,
+            to_user: origin.to_user.as_ref().map(ToString::to_string),
+            ..self
+        }
+    }
+}
+
+/// Appareil d'une personne de l'annuaire vérifié.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonDevice {
+    pub device_id: String,
+    pub name: String,
+    pub reachable: bool,
+    pub default: bool,
+    /// Sait lire les messages entre personnes (`users-v1`).
+    pub up_to_date: bool,
+    pub online: bool,
+}
+
+/// Personne de l'annuaire vérifié (étape 10), moi compris.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonItem {
+    pub user_id: String,
+    /// Nom signé par l'admin.
+    pub name: String,
+    pub is_admin: bool,
+    pub is_service: bool,
+    pub devices: Vec<PersonDevice>,
+}
+
+impl From<ot_core::Person> for PersonItem {
+    fn from(p: ot_core::Person) -> Self {
+        Self {
+            user_id: p.id.to_string(),
+            name: p.name,
+            is_admin: p.role == ot_core::proto::Role::Admin,
+            is_service: p.role == ot_core::proto::Role::Service,
+            devices: p
+                .devices
+                .into_iter()
+                .map(|d| PersonDevice {
+                    device_id: d.id.to_string(),
+                    name: d.name,
+                    reachable: d.reachable,
+                    default: d.default,
+                    up_to_date: d.up_to_date,
+                    online: d.online,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Événement du client, dans l'ordre d'arrivée.
@@ -162,6 +238,96 @@ pub enum Event {
     JoinFailed { message: String },
     /// Le stockage n'a pas pu lire ou écrire l'état.
     StorageError { message: String },
+    /// Annuaire relu : personnes, appareils ou présence ont changé
+    /// (étape 10) ; à relire par `OtClient::people`.
+    DirectoryChanged,
+    /// Un objet de l'annuaire (certificat, journal) a été refusé : la
+    /// personne reste à son dernier état vérifié, ou disparaît.
+    DirectoryRejected { user_id: String, reason: String },
+    /// Le relais publie pour ma personne un autre groupe que le mien :
+    /// alerte de sécurité.
+    DirectoryFork,
+    /// Une personne a de nouvelles clés (réinvitée) : à dire.
+    KeysChanged { user_id: String },
+    /// Admin : une personne invitée par ce téléphone est certifiée ;
+    /// `fingerprint` est à comparer de vive voix avec son appareil.
+    PersonJoined { user_id: String, name: String, device_name: String, fingerprint: String },
+    /// Invité : ma personne est certifiée, mon groupe est créé.
+    Joined { user_id: String },
+    /// Invitation en échec.
+    InviteFailed { reason: String },
+}
+
+/// Invitation d'une personne, à transmettre à elle seule (le code contient
+/// son secret).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonInvite {
+    pub user_id: String,
+    /// Code `ot2-…`.
+    pub code: String,
+    /// QR ou lien `oldtown://invite?s=…&c=…`.
+    pub uri: String,
+    pub expires_at_ms: i64,
+}
+
+/// Appareil d'une personne, vu par l'admin (`users`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AdminDeviceItem {
+    pub device_id: String,
+    pub name: String,
+    /// `phone`, `laptop`, `desktop`, `browser`, `cli` ; `None` : inconnue.
+    pub kind: Option<String>,
+    pub reachable: bool,
+    pub default: bool,
+    pub up_to_date: bool,
+    pub online: bool,
+    pub last_seen_at_ms: Option<i64>,
+}
+
+/// Personne vue par l'admin (`users`) : ce que dit le relais, non vérifié.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AdminUserItem {
+    pub user_id: String,
+    pub name: String,
+    /// `admin`, `member` ou `service`.
+    pub role: String,
+    /// `pending`, `active` ou `revoked`.
+    pub state: String,
+    pub devices: Vec<AdminDeviceItem>,
+    /// Personnes vers qui elle peut écrire.
+    pub links: Vec<String>,
+    /// Services qu'elle a coupés.
+    pub muted: Vec<String>,
+}
+
+impl From<ot_core::proto::AdminUser> for AdminUserItem {
+    fn from(u: ot_core::proto::AdminUser) -> Self {
+        Self {
+            user_id: u.id.to_string(),
+            name: u.name,
+            role: u.role.as_str().to_owned(),
+            state: u.state.as_str().to_owned(),
+            devices: u
+                .devices
+                .into_iter()
+                .map(|d| AdminDeviceItem {
+                    device_id: d.id.to_string(),
+                    name: d.name,
+                    kind: d.kind.map(|k| k.as_str().to_owned()),
+                    reachable: d.reachable,
+                    default: d.default,
+                    up_to_date: d
+                        .features
+                        .iter()
+                        .any(|f| f.as_str() == ot_core::proto::FEATURE_USERS_V1),
+                    online: d.online,
+                    last_seen_at_ms: d.last_seen_at,
+                })
+                .collect(),
+            links: u.links.iter().map(ToString::to_string).collect(),
+            muted: u.muted.iter().map(ToString::to_string).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -240,6 +406,9 @@ pub enum QrKind {
     Join { server_url: String, code: String },
     /// Parrainer un appareil (`ot pair join --qr`), signature vérifiée.
     Sponsor { name: String, device_id: String },
+    /// Rejoindre l'OldTown de quelqu'un (invitation d'une personne,
+    /// étape 10) : à passer à `join_invite`.
+    Invite { server_url: String, code: String },
     /// QR OldTown mal formé.
     Invalid { reason: String },
     /// Autre chose.

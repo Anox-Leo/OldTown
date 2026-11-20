@@ -269,6 +269,7 @@ fun SponsorScreen(onBack: () -> Unit) {
                                     scanned = text to kind.name
                                 }
                                 is QrKind.Join -> error = "Ce QR sert à rejoindre un groupe, pas à y ajouter un appareil."
+                                is QrKind.Invite -> error = "Ce QR est une invitation : il se scanne sur l'appareil de la personne invitée."
                                 is QrKind.Invalid -> error = kind.reason
                                 QrKind.Unknown -> error = "Ce n'est pas un QR OldTown."
                             }

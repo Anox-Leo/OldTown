@@ -16,7 +16,7 @@ use bytes::Bytes;
 use hyper::Method;
 use ot_crypto::{CHUNK_TAG_LEN, FILE_CHUNK_SIZE, FileCipher, chunk_count, chunk_len, sealed_size};
 use ot_proto::http::{BLOBS_PATH, BlobCreated, BlobStatus, CreateBlob, HttpError};
-use ot_proto::{BlobId, DeviceId};
+use ot_proto::{BlobId, DeviceId, UserId};
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::task::JoinSet;
@@ -91,14 +91,18 @@ impl Default for TransferConfig {
 }
 
 /// Fichier à envoyer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OutgoingFile {
     /// Identifie la source pour reprendre un dépôt interrompu (chemin, URI).
     pub source_id: String,
     pub name: String,
     pub mime: String,
-    /// Destinataires (membres du roster) ; vide : tous les autres.
+    /// Destinataires (membres du roster) ; vide : tous les autres. Avec
+    /// `to_user` : au plus un appareil de cette personne (vide : ses
+    /// appareils par défaut).
     pub to: Vec<DeviceId>,
+    /// Envoi à une autre personne (étape 10), en `0x05`.
+    pub to_user: Option<UserId>,
 }
 
 /// Dernier progrès d'un transfert, partagé par ses tâches.

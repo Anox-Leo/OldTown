@@ -19,8 +19,8 @@ mod types;
 pub use client::OtClient;
 pub use files::{FileItem, FileSink, FileSource, TransferListener};
 pub use local::{
-    clear_history, device_state, forget_device, group_snapshot, history, join, set_file_uri,
-    set_server_url,
+    clear_history, device_state, forget_device, group_snapshot, history, join, join_invite,
+    set_file_uri, set_server_url,
 };
 pub use types::*;
 
@@ -76,6 +76,13 @@ pub fn core_version() -> String {
 pub fn classify_qr(text: String) -> QrKind {
     if let Ok(uri) = ot_core::PairUri::parse(&text) {
         return QrKind::Join { server_url: uri.server_url, code: uri.code };
+    }
+    match ot_core::InviteUri::parse(&text) {
+        Ok(uri) => return QrKind::Invite { server_url: uri.server_url, code: uri.code },
+        Err(e) if text.trim().starts_with(ot_core::INVITE_URI_PREFIX) => {
+            return QrKind::Invalid { reason: e.to_string() };
+        }
+        Err(_) => {}
     }
     match ot_core::PairingOffer::parse(&text) {
         Ok(offer) => QrKind::Sponsor { name: offer.name, device_id: offer.device_id.to_string() },

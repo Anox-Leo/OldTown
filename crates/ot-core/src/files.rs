@@ -8,11 +8,12 @@ use ot_crypto::{
     Body, CHUNK_TAG_LEN, FILE_NONCE_LEN, FileCipher, FileKey, chunk_count, sanitize_file_name,
 };
 use ot_proto::http::{HEADER_DEVICE, HEADER_NONCE, HEADER_SIGNATURE, HEADER_TIME, HTTP_NONCE_LEN};
-use ot_proto::{BlobId, DeviceId, Ulid, b64};
+use ot_proto::{BlobId, DeviceId, Ulid, UserId, b64};
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 
 use crate::Identity;
+use crate::types::Origin;
 
 /// Durée pendant laquelle une offre reçue reste téléchargeable de notre côté
 /// (le message vit 7 jours sur le relais, le fichier 48 h).
@@ -33,6 +34,8 @@ pub struct FileInfo {
     pub mime: String,
     /// Taille en clair, en octets.
     pub size: u64,
+    /// Personne de l'expéditeur, copie d'un envoi (étape 10).
+    pub origin: Origin,
 }
 
 /// Fichier reçu (message `file`), avec le `seq` de sa livraison.
@@ -66,6 +69,8 @@ pub struct StoredFile {
     pub nonce: [u8; FILE_NONCE_LEN],
     #[serde(with = "b64::array")]
     pub sha256: [u8; 32],
+    #[serde(default, skip_serializing_if = "Origin::is_mine")]
+    pub origin: Origin,
 }
 
 impl StoredFile {
@@ -78,6 +83,7 @@ impl StoredFile {
             name: self.name.clone(),
             mime: self.mime.clone(),
             size: self.size,
+            origin: self.origin.clone(),
         }
     }
 
@@ -131,7 +137,12 @@ impl FileMeta {
 pub struct PendingUpload {
     /// Identifiant de la source donné par l'appli (chemin, URI).
     pub source_id: String,
+    /// Appareils destinataires, ceux à qui le blob est ouvert.
     pub to: Vec<DeviceId>,
+    /// Envoi à une autre personne (étape 10) : `to` est la résolution de
+    /// cette cible, copie à mes appareils comprise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<UserId>,
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
     pub meta: FileMeta,
@@ -144,6 +155,7 @@ pub(crate) fn stored_from_body(
     created_at: OffsetDateTime,
     now: OffsetDateTime,
     body: Body,
+    origin: Origin,
 ) -> Option<StoredFile> {
     let Body::File { blob_id, name, mime, size, chunk_size, chunks, key, nonce, sha256 } = body
     else {
@@ -163,6 +175,7 @@ pub(crate) fn stored_from_body(
         key,
         nonce,
         sha256,
+        origin,
     })
 }
 
@@ -265,6 +278,7 @@ mod tests {
             key: FileKey::from_bytes([1; 32]),
             nonce: [2; FILE_NONCE_LEN],
             sha256: [3; 32],
+            origin: Origin::default(),
         }
     }
 

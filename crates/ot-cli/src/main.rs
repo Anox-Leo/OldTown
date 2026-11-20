@@ -332,6 +332,7 @@ async fn send_file(home: &Home, path: &std::path::Path, to: Vec<String>) -> Resu
         name: name.clone(),
         mime: guess_mime(path).to_owned(),
         to: recipients,
+        to_user: None,
     };
 
     let (client, mut events) = start(home)?;
@@ -450,6 +451,11 @@ fn print_event(
             eprintln!("⚠ le relais publie pour cet appareil un autre groupe que le sien")
         }
         Event::KeysChanged { user } => eprintln!("⚠ {user} a de nouvelles clés"),
+        Event::PersonJoined { name, device_name, fingerprint, .. } => {
+            eprintln!("« {name} » a rejoint OldTown ({device_name}, empreinte {fingerprint})")
+        }
+        Event::Joined { user } => eprintln!("invitation acceptée : personne {user} certifiée"),
+        Event::InviteFailed { reason } => eprintln!("⚠ invitation : {reason}"),
         Event::Message(m) => {
             print_message(m, name_of(group, &m.from), json, offset)?;
             return Ok(true);

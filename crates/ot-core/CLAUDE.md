@@ -60,6 +60,30 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   référence du relais (`pair_create`, `directory_get`, `admin_init`) sont
   rendus à la plus ancienne demande en attente (`Pending`) : le relais
   répond dans l'ordre.
+- Envois entre personnes (étape 10, `0x05`) : `Secure::recipients` résout
+  une personne d'après l'annuaire vérifié seulement (appareils par défaut
+  joignables et à jour, sinon tous les joignables et à jour, plus la copie
+  à mes appareils hors CLI) ; les clés viennent des rosters vérifiés, jamais
+  des profils. `Client::send_to`/`seal_to` relisent l'annuaire s'il date de
+  plus de 60 s (`Command::Fresh`). Un `0x05` d'un expéditeur inconnu va en
+  quarantaine, réessayée après chaque lecture. `Origin` dit qui écrit et à
+  qui ; `ReceivedOtp::auto_fill` porte la règle O2. Le client déclare
+  `users-v1` (`device_update`) quand son profil ne l'a pas.
+- Invitation et administration (étape 10) : l'état vit dans le `Keyring`
+  (`invites.json` côté admin, `pending_invite.json` côté invité, avec le
+  secret `S`) ; une demande d'invitation est vérifiée et rangée avant
+  l'acquittement, la suite (certificat gardé, `user_certify`, entrée qui
+  l'engage, bienvenue) est menée en tâche de fond par le client
+  (`Flow`, `people.rs`) et reprend après une coupure. L'invité ne crée son
+  groupe qu'une fois son certificat confirmé par l'annuaire (tête
+  `admin_head` atteinte). Une seule voie publie mon journal :
+  `Secure::next_entry(Publish)` (roster local plus récent, certificat engagé
+  ou retiré), sous un verrou, en relisant sur `conflict` ; seul un membre du
+  roster publié (ou le `genesis`, entrée 1) signe, et mon groupe adopte la
+  version publiée. Le relais ne prévient pas la session qui change quelque
+  chose : le client relit l'annuaire lui-même. Les trames d'administration
+  passent par `Client::call` (réponse ou refus, `Pending::Call`), coupées par
+  une perte de connexion, jamais rejouées.
 - Jamais de contenu, de clé ni de jeton dans les logs `tracing`.
 - Tests : unitaires dans le crate ; les scénarios avec un vrai relais vivent
   dans `crates/ot-server/tests/` (relais en processus).

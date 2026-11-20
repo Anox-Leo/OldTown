@@ -18,9 +18,12 @@ pub mod files;
 #[cfg(feature = "net")]
 mod http;
 mod identity;
+pub mod invite;
 mod keyring;
 #[cfg(feature = "net")]
 mod pairing;
+#[cfg(feature = "net")]
+mod people;
 pub mod roster;
 mod secure;
 #[cfg(feature = "net")]
@@ -36,24 +39,32 @@ pub use dedup::Dedup;
 pub use directory::{DeviceProfile, Person};
 pub use files::{FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile};
 pub use identity::Identity;
+pub use invite::{InviteRedeemed, PersonInvitation, save_pending_invite};
 pub use keyring::{
     EpochEntry, GroupKeys, Keyring, KeyringError, MAX_QUARANTINE, MemoryKeyring, MemoryStore,
     Quarantined, RETIRED_KEY_LIFETIME, SecretStore, StoreKeyring, names,
 };
 pub use ot_crypto::{
-    self as crypto, ExchangeKeyPair, OFFER_PREFIX, Otp, PairingOffer, Roster, valid_device_name,
+    self as crypto, ExchangeKeyPair, InviteCode, OFFER_PREFIX, Otp, PairingOffer, Roster,
+    valid_device_name,
 };
 pub use ot_proto::{
-    self as proto, BlobId, Content, ContentKind, DeviceId, DeviceInfo, ErrorCode, Ulid,
+    self as proto, BlobId, Content, ContentKind, DeviceId, DeviceInfo, ErrorCode, Role, Ulid,
+    UserId,
 };
 #[cfg(feature = "net")]
-pub use pairing::{Redeemed, redeem_pairing};
+pub use pairing::{Redeemed, redeem_invite, redeem_pairing};
+#[cfg(feature = "net")]
+pub use people::DeviceSettings;
 pub use secure::{
-    Effect, GroupError, GroupInfo, MemberInfo, Secure, ensure_exchange_key, group_info, init_group,
+    DIRECTORY_MAX_AGE, Effect, GroupError, GroupInfo, MemberInfo, NextEntry, OwnEntry, Publish,
+    Secure, ensure_exchange_key, group_info, init_group,
 };
 #[cfg(feature = "net")]
 pub use tls::TlsRoots;
 #[cfg(feature = "net")]
 pub use transfer::{ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig};
-pub use types::{Accepted, ClientError, Event, PairingInvitation, Received, ReceivedOtp};
-pub use uri::{PAIR_URI_PREFIX, PairUri, classify};
+pub use types::{
+    Accepted, ClientError, Event, Origin, PairingInvitation, Received, ReceivedOtp, Target,
+};
+pub use uri::{INVITE_URI_PREFIX, InviteUri, PAIR_URI_PREFIX, PairUri, classify};

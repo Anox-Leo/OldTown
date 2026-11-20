@@ -4,9 +4,45 @@
 
 use ot_crypto::Otp;
 use ot_proto::{Content, DeviceId, ErrorCode, Ulid, UserId};
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::files::ReceivedFile;
+
+/// Qui a écrit un message reçu, et à qui (étape 10). Tout est vide pour un
+/// message de mon groupe.
+/// Rangé avec les offres de fichiers (`files.json`) : champs absents des
+/// fichiers d'avant l'étape 10 lus à vide.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Origin {
+    /// Personne de l'expéditeur ; `None` : ma personne.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_user: Option<UserId>,
+    /// L'expéditeur est une personne de service (codes, alertes).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub from_service: bool,
+    /// Copie d'un de mes envois (D43) : la personne à qui il était adressé.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<UserId>,
+}
+
+impl Origin {
+    /// Message de mon groupe : rien à dire.
+    pub fn is_mine(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Cible d'un envoi (étape 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// Mes appareils, sous la clé de groupe ; vide : tous les autres.
+    MyDevices(Vec<DeviceId>),
+    /// Une autre personne, en `0x05` : un appareil précis, ou ses appareils
+    /// par défaut (D42) ; une copie part vers mes appareils (D43).
+    Person { user: UserId, device: Option<DeviceId> },
+}
 
 /// Message reçu, déchiffré, d'un membre du roster dont la signature est
 /// vérifiée, et pas encore vu.
@@ -19,6 +55,7 @@ pub struct Received {
     pub to: Vec<DeviceId>,
     pub created_at: OffsetDateTime,
     pub content: Content,
+    pub origin: Origin,
 }
 
 /// Code à usage unique reçu (note 0045), d'un membre du roster dont la
@@ -31,6 +68,16 @@ pub struct ReceivedOtp {
     pub to: Vec<DeviceId>,
     pub created_at: OffsetDateTime,
     pub otp: Otp,
+    pub origin: Origin,
+}
+
+impl ReceivedOtp {
+    /// Règle O2 (note 0052) : un code n'est copié ou rempli d'office que
+    /// s'il vient de ma personne ou d'un service. D'une autre personne, il
+    /// est montré, jamais utilisé seul.
+    pub fn auto_fill(&self) -> bool {
+        self.origin.from_user.is_none() || self.origin.from_service
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +138,23 @@ pub enum Event {
     KeysChanged {
         user: UserId,
     },
+    /// Admin : une personne invitée par cet appareil est certifiée et a reçu
+    /// sa bienvenue. `fingerprint` : empreinte courte de la clé de son
+    /// appareil, à comparer de vive voix.
+    PersonJoined {
+        user: UserId,
+        name: String,
+        device_name: String,
+        fingerprint: String,
+    },
+    /// Invité : ma personne est certifiée, mon groupe est créé.
+    Joined {
+        user: UserId,
+    },
+    /// Invitation en échec (bienvenue invalide, certification refusée…).
+    InviteFailed {
+        reason: String,
+    },
 }
 
 /// Code d'appairage à transmettre au nouvel appareil.
@@ -121,6 +185,10 @@ pub enum ClientError {
     NoGroup,
     #[error("{0} n'est pas membre du groupe")]
     NotMember(DeviceId),
+    /// Envoi à une personne : personne inconnue de l'annuaire vérifié, ou
+    /// aucun appareil joignable et à jour (D42).
+    #[error("aucun destinataire : {0}")]
+    NoRecipient(String),
     #[error("chiffrement : {0}")]
     Crypto(String),
     #[error("appairage : {0}")]
