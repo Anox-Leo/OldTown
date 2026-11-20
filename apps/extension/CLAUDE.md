@@ -54,7 +54,8 @@ l'interface.
   `src/shared/theme.ts`, lu avant le premier rendu).
 - **Popup = conversations** (notes 0030 et 0031) : accueil (`home.ts`) en
   liste, « Tous mes appareils » puis un appareil par ligne (plus récent
-  d'abord), avatar (type deviné au nom, couleur tirée de l'id :
+  d'abord), avatar (type déclaré au relais, note 0068 : l'extension
+  déclare `browser` ; sans type, pictogramme neutre ; couleur tirée de l'id :
   `devices.ts`) et dernier message ; un clic ouvre la conversation
   (`chat.ts`, canal ouvert = `recipient`) : flèche de retour, présence
   d'après `devices` (toutes les 15 s), bulles envoyées à droite et reçues à

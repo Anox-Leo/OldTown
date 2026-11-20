@@ -786,19 +786,14 @@ impl CoreState {
         self.secure.people().into_iter().map(PersonOut::from).collect()
     }
 
-    /// Trame `device_update` qui déclare `users-v1`, si mon profil ne l'a
-    /// pas encore (seul l'appareil le peut).
-    pub fn features_frame(&self, device_id: &str) -> Result<Option<Frame>, String> {
-        if !self.secure.needs_features() {
-            return Ok(None);
-        }
-        Ok(Some(Frame::DeviceUpdate {
-            device: device_id.parse().map_err(err)?,
-            kind: None,
-            reachable: None,
-            default: None,
-            features: Some(vec![ot_proto::Feature::users_v1()]),
-        }))
+    /// Trame `device_update` qui déclare `users-v1` et `kind`, s'ils
+    /// manquent à mon profil (seul l'appareil déclare ses capacités).
+    pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<Frame>, String> {
+        let kind = kind
+            .map(|k| serde_json::from_value::<ot_proto::DeviceKind>(serde_json::Value::String(k)))
+            .transpose()
+            .map_err(err)?;
+        Ok(self.secure.declaration(kind))
     }
 
     /// Appareils destinataires d'un envoi à `user` (défauts ou `device`,
@@ -1270,7 +1265,7 @@ mod tests {
         assert!(core.directory_start().is_none());
         assert!(core.people().is_empty());
         assert!(core.invite_request().is_none());
-        assert!(core.features_frame(&id).unwrap().is_none());
+        assert!(core.declaration_frame(Some("browser".into())).unwrap().is_none());
         assert!(core.entry_published().is_err());
     }
 

@@ -153,8 +153,9 @@ pub enum DeviceKind {
     Browser,
     /// Ligne de commande : jamais joignable ni par défaut.
     Cli,
-    /// Catégorie ajoutée par une version plus récente : traitée comme
-    /// `laptop` par les clients, jamais enregistrée par le relais.
+    /// Catégorie ajoutée par une version plus récente : affichée comme un
+    /// appareil sans catégorie par les clients, jamais enregistrée par le
+    /// relais.
     #[serde(other)]
     Unknown,
 }

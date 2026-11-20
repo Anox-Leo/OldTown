@@ -51,8 +51,8 @@ pub use ot_crypto::{
     valid_device_name,
 };
 pub use ot_proto::{
-    self as proto, BlobId, Content, ContentKind, DeviceId, DeviceInfo, ErrorCode, Role, Ulid,
-    UserId,
+    self as proto, BlobId, Content, ContentKind, DeviceId, DeviceInfo, DeviceKind, ErrorCode, Role,
+    Ulid, UserId,
 };
 #[cfg(feature = "net")]
 pub use pairing::{Redeemed, redeem_invite, redeem_pairing};

@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use ot_crypto::{Otp, PairingCode, PairingOffer};
 use ot_proto::{
-    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Feature, Frame, MAX_FRAME_BYTES,
+    BlobId, Content, DeviceId, DeviceInfo, DeviceKind, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES,
     SignedBlob, Ulid, UserId, WS_PATH,
 };
 use time::OffsetDateTime;
@@ -56,6 +56,10 @@ pub struct ClientConfig {
     pub idle_timeout: Duration,
     /// Réglages des transferts de fichiers (étape 5).
     pub transfer: TransferConfig,
+    /// Catégorie que cet appareil déclare au relais quand son profil n'en a
+    /// pas (note 0068) ; `None` : aucune (CLI, qu'elle ne rend pas
+    /// injoignable d'office).
+    pub kind: Option<DeviceKind>,
 }
 
 impl ClientConfig {
@@ -75,6 +79,7 @@ impl ClientConfig {
             tls: TlsRoots::default(),
             idle_timeout: IDLE_TIMEOUT,
             transfer: TransferConfig::default(),
+            kind: None,
         }
     }
 
@@ -757,8 +762,8 @@ struct Worker {
     /// Demandes qui attendent la fin de la lecture *suivante* (commencée
     /// après elles).
     waiting_next: Vec<Job>,
-    /// `users-v1` déjà déclaré par ce client (`device_update`).
-    features_sent: bool,
+    /// Capacités et catégorie déjà déclarées par ce client (`device_update`).
+    declared: bool,
     handle: Handle,
     /// Déroulés de fond en cours.
     flows: Vec<Flow>,
@@ -792,7 +797,7 @@ impl Worker {
             registrations: Vec::new(),
             waiting: Vec::new(),
             waiting_next: Vec::new(),
-            features_sent: false,
+            declared: false,
             handle,
             flows: Vec::new(),
             failed: Vec::new(),
@@ -1222,7 +1227,7 @@ impl Worker {
         // Une connexion neuve relance aussi les déroulés en échec, et
         // redéclare les capacités si le profil ne les a pas.
         self.failed.clear();
-        self.features_sent = false;
+        self.declared = false;
         // Invité : la demande repart à chaque connexion jusqu'à la bienvenue.
         match self.secure.invite_request() {
             Some(Ok(env)) => {
@@ -1665,17 +1670,15 @@ impl Worker {
                 Ok(ReadStep::Round { me, admin, users }) => {
                     let (effects, again) = self.secure.apply_directory(&me, &admin, &users);
                     let mut frames = self.effects(effects).await;
-                    if !self.features_sent && self.secure.needs_features() {
+                    let declaration = if self.declared {
+                        None
+                    } else {
+                        self.secure.declaration(self.config.kind)
+                    };
+                    if let Some(frame) = declaration {
                         // Seul l'appareil déclare ses capacités : il sait
                         // ouvrir `0x05`, les autres peuvent lui écrire.
-                        self.features_sent = true;
-                        let frame = Frame::DeviceUpdate {
-                            device: self.config.device_id.clone(),
-                            kind: None,
-                            reachable: None,
-                            default: None,
-                            features: Some(vec![Feature::users_v1()]),
-                        };
+                        self.declared = true;
                         let reference = call_reference(&frame);
                         let pending =
                             Pending::Call { frame: frame.clone(), reference, reply: None };

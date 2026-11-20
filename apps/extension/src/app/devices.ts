@@ -9,26 +9,15 @@ import {
 } from '../shared/api';
 import { AVATAR_COLORS } from '../shared/tokens';
 
-export type DeviceKind = 'phone' | 'laptop' | 'desktop' | 'browser' | 'cli' | 'group' | 'person';
+export type DeviceKind =
+  'phone' | 'laptop' | 'desktop' | 'browser' | 'cli' | 'unknown' | 'group' | 'person';
 
 export const ALL_NAME = 'Tous mes appareils';
 
-const BROWSER =
-  /\b(chrome|chromium|brave|firefox|edge|safari|opera|vivaldi|navigateur|browser|extension)\b/;
-const PHONE = /\b(telephone|phone|smartphone|mobile|android|pixel|iphone|galaxy|ipad|tablette)\b/;
-const DESKTOP = /\b(pc|desktop|fixe|tour|tower|windows|imac|mini|studio)\b/;
-
 export function deviceKind(
-  name: string,
   kind?: PersonDeviceView['kind'],
 ): Exclude<DeviceKind, 'group' | 'person'> {
-  if (kind === 'unknown') return 'laptop';
-  if (kind) return kind;
-  const n = name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-  if (BROWSER.test(n)) return 'browser';
-  if (PHONE.test(n)) return 'phone';
-  if (DESKTOP.test(n)) return 'desktop';
-  return 'laptop';
+  return kind ?? 'unknown';
 }
 
 export function avatarColor(id: string): string {
@@ -89,7 +78,7 @@ export function conversations(
     .map((m): Conversation => ({
       id: m.device_id,
       name: m.name,
-      kind: deviceKind(m.name, profile.get(m.device_id)?.kind),
+      kind: deviceKind(profile.get(m.device_id)?.kind),
       color: avatarColor(m.device_id),
       last: last.get(m.device_id),
     }))
@@ -138,7 +127,7 @@ export function personConversations(
       return {
         id,
         name: d.name,
-        kind: deviceKind(d.name, d.kind),
+        kind: deviceKind(d.kind),
         color: avatarColor(d.device_id),
         last: latest(mine.filter((i) => inChannel(i, id, me))),
         note: notes.filter(Boolean).join(' · ') || undefined,
