@@ -46,6 +46,7 @@ function render(state?: Partial<StateView>) {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
       ...state,
     });
@@ -122,6 +123,22 @@ describe('App (popup)', () => {
     expect(el.querySelector('textarea')).toBeNull();
   });
 
+  it('éléments reçus perdus : signalés sur l’accueil', () => {
+    const ready = (lostItems: number) =>
+      render({
+        phase: 'ready',
+        connection: 'online',
+        device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
+        group: { epoch: 1, key_fingerprint: 'ab', roster_version: 1, members: [] },
+        lostItems,
+      });
+    expect(ready(0).querySelector('[role="alert"]')).toBeNull();
+    TestBed.resetTestingModule();
+    const el = ready(2);
+    expect(el.textContent).toContain("2 éléments reçus n'ont pas pu être enregistrés");
+    expect(el.querySelector('[role="alert"] button')?.textContent?.trim()).toBe('OK');
+  });
+
   it('conversation : envoyés à droite, reçus à gauche, un canal par appareil', () => {
     const bg = new FakeBackground();
     const members = ['dev_me', 'dev_tel'].map((id) => ({
@@ -142,6 +159,7 @@ describe('App (popup)', () => {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: { epoch: 1, key_fingerprint: '', roster_version: 1, members },
@@ -230,6 +248,7 @@ describe('App (popup)', () => {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
@@ -293,6 +312,7 @@ describe('App (popup)', () => {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
     });
     const file = (name: string, cached?: boolean) => ({
@@ -345,6 +365,7 @@ describe('App (popup)', () => {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
@@ -401,6 +422,7 @@ describe('App (popup)', () => {
       people: [],
       admin: false,
       alerts: [],
+      lostItems: 0,
       opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: {
@@ -470,6 +492,7 @@ describe('App (popup)', () => {
       me: 'usr_me',
       admin: true,
       alerts: [],
+      lostItems: 0,
       opened: {},
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
       group: { epoch: 1, key_fingerprint: '', roster_version: 1, members },

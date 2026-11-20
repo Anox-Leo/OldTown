@@ -112,6 +112,7 @@ export interface Timing {
   handshakeTimeout: number;
   backoffInitial: number;
   backoffMax: number;
+  eventRetry: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -120,7 +121,10 @@ export const DEFAULT_TIMING: Timing = {
   handshakeTimeout: 10_000,
   backoffInitial: 500,
   backoffMax: 25_000,
+  eventRetry: 200,
 };
+
+const EVENT_ATTEMPTS = 3;
 
 export const SEEN_CAPACITY = 1000;
 
@@ -133,6 +137,7 @@ export interface ClientDeps {
   persistVault(): Promise<void>;
   storage: ClientStorage;
   onEvent(event: ClientEvent): void | Promise<void>;
+  onEventLost?(event: ClientEvent): void;
   afterDeliver?(): void;
   authRetryDelay?(): number | null;
   webSocket?(url: string): WebSocket;
@@ -272,10 +277,20 @@ export class RelayClient {
   }
 
   private async emit(event: ClientEvent): Promise<void> {
-    try {
-      await this.deps.onEvent(event);
-    } catch (e) {
-      this.log(`événement ${event.type} non traité`, e);
+    const item = event.type === 'message' || event.type === 'file' || event.type === 'otp';
+    const attempts = item ? EVENT_ATTEMPTS : 1;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.deps.onEvent(event);
+        return;
+      } catch (e) {
+        if (attempt >= attempts) {
+          this.log(`événement ${event.type} non traité`, e);
+          if (item) this.deps.onEventLost?.(event);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, this.timing.eventRetry * 5 ** (attempt - 1)));
+      }
     }
   }
 

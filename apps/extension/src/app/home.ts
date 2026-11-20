@@ -72,6 +72,19 @@ const PRESENCE_EVERY_MS = 15_000;
             réglages.
           </div>
         }
+        @if (s.lostItems) {
+          <div class="banner danger row" role="alert">
+            <span class="grow">
+              @if (s.lostItems === 1) {
+                Un élément reçu n'a pas pu être enregistré : demandez-le à nouveau.
+              } @else {
+                {{ s.lostItems }} éléments reçus n'ont pas pu être enregistrés : demandez-les à
+                nouveau.
+              }
+            </span>
+            <button class="small" (click)="dismissLost()">OK</button>
+          </div>
+        }
         @if (bg.error(); as error) {
           <div class="banner danger" role="alert">{{ error }}</div>
         }
@@ -283,6 +296,10 @@ export class HomeComponent {
       const timer = setInterval(() => void this.loadPresence(), PRESENCE_EVERY_MS);
       onCleanup(() => clearInterval(timer));
     });
+  }
+
+  protected dismissLost(): void {
+    void this.bg.run({ type: 'dismiss-lost' });
   }
 
   private async loadPresence(): Promise<void> {

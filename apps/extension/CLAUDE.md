@@ -45,8 +45,9 @@ l'interface.
   du coffre est rangé (`persistVault`) avant l'acquittement du message qui
   l'a changé. L'historique (contenu en clair), les envois de fichiers en
   cours (`outgoing.json`, des noms) et la dernière ouverture des
-  conversations des personnes (`opened.json`, non-lus) sont rangés de la
-  même façon.
+  conversations des personnes (`opened.json`, non-lus), ainsi que le
+  compte des éléments reçus perdus (`lost.json`), sont rangés de la même
+  façon.
   En clair dans `chrome.storage.local` : seulement `device` (id, nom, URL),
   `recipient`, `outbox` (enveloppes chiffrées) et `seen` (`msg_id`).
   Dans le `localStorage` des pages : seulement `theme` (choix d'affichage,
@@ -78,6 +79,10 @@ l'interface.
   Appareils `cli` hors des conversations (« Ligne de commande » repliée
   dans les réglages). Page `admin.html` (admin seulement) : inviter,
   personnes, grille du réseau (une case par paire, les deux sens), services.
+- **Élément reçu perdu** (note 0067) : il est acquitté quoi qu'il arrive,
+  comme dans `ot-core`. Un échec de son traitement (stockage) est réessayé
+  trois fois, puis compté (`lostItems`) et signalé dans la popup jusqu'à
+  « OK ».
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
   navigateur au premier plan et élément récent → lien ouvert dans un onglet,
   texte → popup (`action.openPopup`) ; sinon notification. Raccourcis

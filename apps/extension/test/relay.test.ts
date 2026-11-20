@@ -96,6 +96,46 @@ describe('extension contre ot-server', () => {
     expect(channelOf(item, engine.state().device?.id)).toBe('');
   });
 
+  it('réessaie un élément que le stockage refuse, puis signale sa perte', async () => {
+    const set = chrome.kv.set.bind(chrome.kv);
+    let refusals = 2;
+    const spy = vi.spyOn(chrome.kv, 'set').mockImplementation(async (items) => {
+      if ('secret:history.json' in items && refusals-- > 0) throw new Error('quota dépassé');
+      return set(items);
+    });
+    try {
+      await phone.run('send', 'rangé au troisième essai');
+      await eventually(
+        'rangé malgré deux refus',
+        async () =>
+          (await engine.history()).some((i) => i.body === 'rangé au troisième essai') || undefined,
+      );
+      expect(engine.state().lostItems).toBe(0);
+
+      refusals = Infinity;
+      await phone.run('send', 'jamais rangé');
+      await eventually('perte signalée', () => engine.state().lostItems === 1 || undefined);
+      expect((await engine.history()).some((i) => i.body === 'jamais rangé')).toBe(false);
+      await eventually('perte rangée', () => chrome.kv.items.has('secret:lost.json') || undefined);
+      engine.close();
+      engine = await open(chrome);
+      expect(engine.state().lostItems).toBe(1);
+
+      refusals = 0;
+      await phone.run('send', 'la session continue');
+      await eventually(
+        'reçu après la perte',
+        async () =>
+          (await engine.history()).some((i) => i.body === 'la session continue') || undefined,
+      );
+      await engine.dismissLostItems();
+      expect(engine.state().lostItems).toBe(0);
+      expect(chrome.kv.items.has('secret:lost.json')).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('reçoit un code relayé par ot otp-bridge (note 0045)', async () => {
     const socket = path.join(relay.dir, 'otp-relay.sock');
     const expires = new Date(Date.now() + 10 * 60_000);

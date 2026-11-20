@@ -52,6 +52,7 @@ const OUTBOX = 'outbox';
 const SEEN = 'seen';
 const OUTGOING = 'outgoing.json';
 const OPENED = 'opened.json';
+const LOST = 'lost.json';
 const MAX_ALERTS = 20;
 const REDEEM_TIMEOUT = 10_000;
 export { AUTO_CACHE_MAX };
@@ -139,6 +140,7 @@ export class Engine {
   private writes: Promise<void> = Promise.resolve();
   private readonly people: People;
   private alerts: DirectoryAlert[] = [];
+  private lostItems = 0;
   private opened: Record<string, string> = {};
   private inviteError?: string;
   private readonly waiters = new Map<string, { resolve(): void; reject(e: Error): void }>();
@@ -176,6 +178,7 @@ export class Engine {
     try {
       for (const [name, value] of await this.secrets.loadAll()) {
         if (name === OPENED) this.opened = parseOpened(value);
+        else if (name === LOST) this.lostItems = parseCount(value);
         else if (name !== HISTORY && name !== OUTGOING) this.vault.load(name, value);
         value.fill(0);
       }
@@ -267,6 +270,7 @@ export class Engine {
       admin: me?.role === 'admin',
       rootMissing: this.people.rootMissing,
       alerts: this.alerts,
+      lostItems: this.lostItems,
       opened: this.opened,
       inviteError: this.inviteError,
     };
@@ -361,6 +365,23 @@ export class Engine {
     });
   }
 
+  dismissLostItems(): Promise<void> {
+    return this.setLostItems(0);
+  }
+
+  private async setLostItems(count: number): Promise<void> {
+    this.lostItems = count;
+    this.changed();
+    const bytes = new TextEncoder().encode(JSON.stringify(count));
+    try {
+      await this.serialWrite(() =>
+        count ? this.secrets.put(LOST, bytes) : this.secrets.delete(LOST),
+      );
+    } catch (err) {
+      this.log('compte des éléments perdus non rangé', err);
+    }
+  }
+
   private startClient(): void {
     const device = this.device;
     const core = this.core;
@@ -375,6 +396,7 @@ export class Engine {
       persistVault: () => this.persistVault(),
       storage: new KvClientStorage(this.deps.kv),
       onEvent: (e) => this.onClientEvent(e),
+      onEventLost: () => void this.setLostItems(this.lostItems + 1),
       afterDeliver: () => this.people.afterDeliver(),
       authRetryDelay: () => this.authRetryDelay(),
       webSocket: this.deps.webSocket,
@@ -611,6 +633,7 @@ export class Engine {
     this.people.stop();
     this.alerts = [];
     this.opened = {};
+    this.lostItems = 0;
     this.inviteError = undefined;
   }
 
@@ -1232,6 +1255,15 @@ function origin(e: {
   if (e.from_service) o.fromService = true;
   if (e.to_user) o.toUser = e.to_user;
   return o;
+}
+
+function parseCount(bytes: Uint8Array): number {
+  try {
+    const v = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function parseOpened(bytes: Uint8Array): Record<string, string> {
