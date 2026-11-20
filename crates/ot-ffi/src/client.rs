@@ -4,15 +4,18 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use ot_core::{BlobId, Client, ClientConfig, Dedup, DeviceId, Events, OutgoingFile, StoreKeyring};
+use ot_core::{
+    BlobId, Client, ClientConfig, Dedup, DeviceId, Events, OutgoingFile, StoreKeyring, Target,
+    UserId,
+};
 use tokio::sync::mpsc;
 
 use crate::files::{FileItem, FileSink, FileSource, Listener, Sink, Source, TransferListener};
 use crate::local::{Local, PendingJoin};
 use crate::types::millis;
 use crate::{
-    DeviceState, Event, Group, Invitation, OtError, RUNTIME, Received, RelayDevice, SecretStore,
-    Sponsored, on_runtime,
+    AdminUserItem, DeviceState, Event, Group, Invitation, OtError, PersonInvite, PersonItem,
+    RUNTIME, Received, RelayDevice, SecretStore, Sponsored, on_runtime,
 };
 
 /// Client du relais : se connecte et se reconnecte seul tant qu'il existe.
@@ -80,33 +83,160 @@ impl OtClient {
     /// marqué accepté à l'accusé du relais, ou retiré si l'envoi échoue
     /// (note 0033) ; chaque étape est signalée (`Event::Sent`, `Unsent`).
     pub async fn send_text(&self, text: String, to: Vec<String>) -> Result<String, OtError> {
-        let (client, outbox) = (self.client.clone(), self.outbox());
+        let target = parse_ids(&to).map(Target::MyDevices);
+        self.send_text_target(text, target).await
+    }
+
+    /// Envoie un texte à une autre personne (étape 10) : à `device`, un de
+    /// ses appareils, ou à ses appareils par défaut ; une copie part vers
+    /// mes autres appareils. Même historique que [`OtClient::send_text`],
+    /// l'élément porte `to_user`.
+    pub async fn send_text_to_user(
+        &self,
+        text: String,
+        user: String,
+        device: Option<String>,
+    ) -> Result<String, OtError> {
+        let target = parse_person(&user, device.as_deref())
+            .map(|(user, device)| Target::Person { user, device });
+        self.send_text_target(text, target).await
+    }
+
+    /// Envoie un fichier à une autre personne (étape 10), comme
+    /// [`OtClient::send_file`] : à `device` ou à ses appareils par défaut,
+    /// copie à mes autres appareils.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_file_to_user(
+        &self,
+        source: Arc<dyn FileSource>,
+        source_id: String,
+        name: String,
+        mime: String,
+        user: String,
+        device: Option<String>,
+        listener: Arc<dyn TransferListener>,
+    ) -> Result<String, OtError> {
+        let (user, device) = parse_person(&user, device.as_deref())?;
+        let file = OutgoingFile {
+            source_id,
+            name,
+            mime,
+            to: device.into_iter().collect(),
+            to_user: Some(user),
+        };
+        self.send_outgoing_file(file, source, listener).await
+    }
+
+    /// Admin : publie le certificat racine (première fois), ou adopte celui
+    /// d'un autre appareil de l'admin. Sans effet s'il l'est déjà ; à
+    /// appeler au lancement par les applis de l'admin. Renvoie la personne
+    /// de l'admin.
+    pub async fn admin_init(&self) -> Result<String, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.admin_init().await?.to_string()) }).await
+    }
+
+    /// Admin : invite une personne, liée dans les deux sens à `links`. La
+    /// certification se fait d'office à l'arrivée de sa demande
+    /// (`Event::PersonJoined`), par ce téléphone.
+    pub async fn invite(&self, name: String, links: Vec<String>) -> Result<PersonInvite, OtError> {
+        let client = self.client.clone();
         on_runtime(async move {
-            let to = parse_ids(&to)?;
-            if text.trim().is_empty() {
-                return Err(OtError::Invalid { message: "texte vide".into() });
-            }
-            let content = ot_core::classify(&text);
-            let env = client.seal(&content, to).await?;
-            let msg_id = env.msg_id.to_string();
-            let item = outbox.item(
-                msg_id.clone(),
-                millis(env.created_at),
-                content.kind.into(),
-                content.body,
-                &env.to,
-            );
-            outbox.add(Received { pending: true, ..item }).await;
-            match client.send_envelope(env).await {
-                Ok(_) => {
-                    outbox.accepted(&msg_id).await;
-                    Ok(msg_id)
-                }
-                Err(e) => {
-                    outbox.failed(&msg_id).await;
-                    Err(e.into())
-                }
-            }
+            let links = parse_users(&links)?;
+            Ok(person_invite(client.invite(&name, links).await?))
+        })
+        .await
+    }
+
+    /// Admin : nouvelle invitation pour une personne qui a perdu ses
+    /// appareils.
+    pub async fn reinvite(&self, user: String) -> Result<PersonInvite, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let user = parse_user(&user)?;
+            Ok(person_invite(client.reinvite(&user).await?))
+        })
+        .await
+    }
+
+    /// Admin : toutes les personnes, telles que le relais les connaît.
+    pub async fn users(&self) -> Result<Vec<AdminUserItem>, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            Ok(client.users().await?.into_iter().map(AdminUserItem::from).collect())
+        })
+        .await
+    }
+
+    /// Admin : pose ou retire un lien.
+    pub async fn link_set(&self, from: String, to: String, allowed: bool) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            Ok(client.link_set(&parse_user(&from)?, &parse_user(&to)?, allowed).await?)
+        })
+        .await
+    }
+
+    /// Admin : révoque une personne.
+    pub async fn revoke_user(&self, user: String) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.revoke_user(&parse_user(&user)?).await?) }).await
+    }
+
+    /// Admin : renomme une personne (son certificat est re-signé).
+    pub async fn rename_user(&self, user: String, name: String) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.rename_user(&parse_user(&user)?, &name).await?) }).await
+    }
+
+    /// Règle un appareil de ma personne (l'admin : de tous) ; `None` :
+    /// inchangé. `kind` : `phone`, `laptop`, `desktop`, `browser`, `cli`.
+    pub async fn update_device(
+        &self,
+        device: String,
+        kind: Option<String>,
+        reachable: Option<bool>,
+        default: Option<bool>,
+    ) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let device = parse_device(&device)?;
+            let kind = kind
+                .map(|k| {
+                    k.parse::<ot_core::proto::DeviceKind>().map_err(|()| OtError::Invalid {
+                        message: format!("nature inconnue : {k}"),
+                    })
+                })
+                .transpose()?;
+            let settings = ot_core::DeviceSettings { kind, reachable, default };
+            Ok(client.update_device(&device, settings).await?)
+        })
+        .await
+    }
+
+    /// Retire un appareil : de mon groupe, nouvelle clé sans lui puis
+    /// révocation ; d'une autre personne (admin), révocation.
+    pub async fn remove_device(&self, device: String) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            let device = parse_device(&device)?;
+            Ok(client.remove_device(&device).await?)
+        })
+        .await
+    }
+
+    /// Coupe ou rouvre un service lié à ma personne.
+    pub async fn mute_service(&self, service: String, muted: bool) -> Result<(), OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.mute_service(&parse_user(&service)?, muted).await?) })
+            .await
+    }
+
+    /// Personnes de l'annuaire vérifié, moi compris (vide sans annuaire).
+    pub async fn people(&self) -> Result<Vec<PersonItem>, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move {
+            Ok(client.directory().await?.into_iter().map(PersonItem::from).collect())
         })
         .await
     }
@@ -124,27 +254,8 @@ impl OtClient {
         to: Vec<String>,
         listener: Arc<dyn TransferListener>,
     ) -> Result<String, OtError> {
-        let (client, outbox) = (self.client.clone(), self.outbox());
-        on_runtime(async move {
-            let to = parse_ids(&to)?;
-            let file = OutgoingFile { source_id, name, mime, to: to.clone() };
-            let (accepted, info) = client
-                .send_file_info(file, Arc::new(Source(source)), Arc::new(Listener(listener)))
-                .await?;
-            // Rangé une fois déposé et annoncé : pendant le dépôt, la
-            // progression suffit (comme l'extension, note 0030).
-            let msg_id = accepted.msg_id.to_string();
-            let item = outbox.item(
-                msg_id.clone(),
-                millis(info.created_at),
-                crate::ContentKind::File,
-                info.name.clone(),
-                &to,
-            );
-            outbox.add(Received { file: Some(FileItem::from_info(&info)), ..item }).await;
-            Ok(msg_id)
-        })
-        .await
+        let file = OutgoingFile { source_id, name, mime, to: parse_ids(&to)?, to_user: None };
+        self.send_outgoing_file(file, source, listener).await
     }
 
     /// Abandonne l'envoi en cours de cette source (libère la place sur le
@@ -258,6 +369,77 @@ impl OtClient {
 }
 
 impl OtClient {
+    /// Envoi d'un texte : rangé dans l'historique avant l'envoi (`pending`),
+    /// marqué accepté à l'accusé du relais, retiré si l'envoi échoue.
+    async fn send_text_target(
+        &self,
+        text: String,
+        target: Result<Target, OtError>,
+    ) -> Result<String, OtError> {
+        let (client, outbox) = (self.client.clone(), self.outbox());
+        on_runtime(async move {
+            let target = target?;
+            if text.trim().is_empty() {
+                return Err(OtError::Invalid { message: "texte vide".into() });
+            }
+            let to_user = match &target {
+                Target::Person { user, .. } => Some(user.to_string()),
+                Target::MyDevices(_) => None,
+            };
+            let content = ot_core::classify(&text);
+            let env = client.seal_to(target, &content).await?;
+            let msg_id = env.msg_id.to_string();
+            let item = outbox.item(
+                msg_id.clone(),
+                millis(env.created_at),
+                content.kind.into(),
+                content.body,
+                &env.to,
+            );
+            outbox.add(Received { pending: true, to_user, ..item }).await;
+            match client.send_envelope(env).await {
+                Ok(_) => {
+                    outbox.accepted(&msg_id).await;
+                    Ok(msg_id)
+                }
+                Err(e) => {
+                    outbox.failed(&msg_id).await;
+                    Err(e.into())
+                }
+            }
+        })
+        .await
+    }
+
+    /// Envoi d'un fichier : rangé une fois déposé et annoncé (pendant le
+    /// dépôt, la progression suffit, comme l'extension, note 0030).
+    async fn send_outgoing_file(
+        &self,
+        file: OutgoingFile,
+        source: Arc<dyn FileSource>,
+        listener: Arc<dyn TransferListener>,
+    ) -> Result<String, OtError> {
+        let (client, outbox) = (self.client.clone(), self.outbox());
+        on_runtime(async move {
+            let to = file.to.clone();
+            let (accepted, info) = client
+                .send_file_info(file, Arc::new(Source(source)), Arc::new(Listener(listener)))
+                .await?;
+            let msg_id = accepted.msg_id.to_string();
+            let item = outbox.item(
+                msg_id.clone(),
+                millis(info.created_at),
+                crate::ContentKind::File,
+                info.name.clone(),
+                &to,
+            );
+            let item = Received { file: Some(FileItem::from_info(&info)), ..item };
+            outbox.add(item.with_origin(&info.origin)).await;
+            Ok(msg_id)
+        })
+        .await
+    }
+
     fn outbox(&self) -> Outbox {
         Outbox {
             local: self.local.clone(),
@@ -297,6 +479,10 @@ impl Outbox {
             to: to.iter().map(DeviceId::to_string).collect(),
             outgoing: true,
             pending: false,
+            from_user: None,
+            from_service: false,
+            to_user: None,
+            auto_fill: false,
         }
     }
 
@@ -335,6 +521,37 @@ fn parse_ids(ids: &[String]) -> Result<Vec<DeviceId>, OtError> {
     ids.iter()
         .map(|id| id.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() }))
         .collect()
+}
+
+fn person_invite(i: ot_core::PersonInvitation) -> PersonInvite {
+    PersonInvite {
+        user_id: i.user.to_string(),
+        expires_at_ms: millis(i.expires_at),
+        code: i.code,
+        uri: i.uri,
+    }
+}
+
+fn parse_device(device: &str) -> Result<DeviceId, OtError> {
+    device.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() })
+}
+
+fn parse_user(user: &str) -> Result<UserId, OtError> {
+    user.parse::<UserId>().map_err(|e| OtError::Invalid { message: e.to_string() })
+}
+
+fn parse_users(users: &[String]) -> Result<Vec<UserId>, OtError> {
+    users.iter().map(|u| parse_user(u)).collect()
+}
+
+/// Personne et appareil donnés par Kotlin.
+fn parse_person(user: &str, device: Option<&str>) -> Result<(UserId, Option<DeviceId>), OtError> {
+    let user = user.parse::<UserId>().map_err(|e| OtError::Invalid { message: e.to_string() })?;
+    let device = device
+        .map(str::parse::<DeviceId>)
+        .transpose()
+        .map_err(|e| OtError::Invalid { message: e.to_string() })?;
+    Ok((user, device))
 }
 
 /// Noms des membres, pour afficher l'expéditeur.
@@ -404,11 +621,26 @@ impl Forwarder {
                 Event::PairingCompleted { device_id: device_id.to_string(), name }
             }
             E::KeyringError { message } => Event::StorageError { message },
-            // Annuaire (étape 10) : pas encore exposé à l'appli (PR Android).
-            E::DirectoryChanged
-            | E::DirectoryRejected { .. }
-            | E::DirectoryFork
-            | E::KeysChanged { .. } => return out,
+            E::DirectoryChanged => {
+                // Noms des appareils des autres personnes, pour l'expéditeur.
+                if let Ok(people) = self.client.directory().await {
+                    let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+                    for d in people.iter().flat_map(|p| &p.devices) {
+                        names.entry(d.id.clone()).or_insert_with(|| d.name.clone());
+                    }
+                }
+                Event::DirectoryChanged
+            }
+            E::DirectoryRejected { user, reason } => {
+                Event::DirectoryRejected { user_id: user.to_string(), reason }
+            }
+            E::DirectoryFork => Event::DirectoryFork,
+            E::KeysChanged { user } => Event::KeysChanged { user_id: user.to_string() },
+            E::PersonJoined { user, name, device_name, fingerprint } => {
+                Event::PersonJoined { user_id: user.to_string(), name, device_name, fingerprint }
+            }
+            E::Joined { user } => Event::Joined { user_id: user.to_string() },
+            E::InviteFailed { reason } => Event::InviteFailed { reason },
             E::Message(m) => {
                 let received = Received {
                     msg_id: m.msg_id.to_string(),
@@ -422,13 +654,19 @@ impl Forwarder {
                     to: m.to.iter().map(DeviceId::to_string).collect(),
                     outgoing: false,
                     pending: false,
-                };
+                    from_user: None,
+                    from_service: false,
+                    to_user: None,
+                    auto_fill: false,
+                }
+                .with_origin(&m.origin);
                 self.remember(m.msg_id, &received, &mut out);
                 Event::Message { received }
             }
             // Code à usage unique (note 0045) : l'appli ne le remplit nulle
             // part ; elle le montre comme un texte, le code seul, à copier.
             E::Otp(o) => {
+                let auto_fill = o.auto_fill();
                 let received = Received {
                     msg_id: o.msg_id.to_string(),
                     from_name: self.name_of(&o.from),
@@ -441,7 +679,12 @@ impl Forwarder {
                     to: o.to.iter().map(DeviceId::to_string).collect(),
                     outgoing: false,
                     pending: false,
-                };
+                    from_user: None,
+                    from_service: false,
+                    to_user: None,
+                    auto_fill,
+                }
+                .with_origin(&o.origin);
                 self.remember(o.msg_id, &received, &mut out);
                 Event::Message { received }
             }
@@ -460,7 +703,12 @@ impl Forwarder {
                     to,
                     outgoing: false,
                     pending: false,
-                };
+                    from_user: None,
+                    from_service: false,
+                    to_user: None,
+                    auto_fill: false,
+                }
+                .with_origin(&f.origin);
                 self.remember(f.msg_id, &received, &mut out);
                 Event::Message { received }
             }

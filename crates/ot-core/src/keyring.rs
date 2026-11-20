@@ -10,6 +10,7 @@ use ot_proto::{DeviceId, Envelope, b64};
 
 use crate::directory::DirectoryState;
 use crate::files::{PendingUpload, StoredFile};
+use crate::invite::{InviteRecord, PendingInvite};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
@@ -51,6 +52,14 @@ pub trait Keyring: Send + Sync {
     /// vérifiée par personne. Vide sans ancre (installation à une personne).
     fn load_directory(&self) -> Result<DirectoryState, KeyringError>;
     fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError>;
+    /// Invitations créées par cet appareil de l'admin, avec leur secret `S`
+    /// (étape 10).
+    fn load_invites(&self) -> Result<Vec<InviteRecord>, KeyringError>;
+    fn save_invites(&self, invites: &[InviteRecord]) -> Result<(), KeyringError>;
+    /// Invitation rachetée par cet appareil, jusqu'à son entrée dans
+    /// l'annuaire (étape 10) ; `None` l'efface.
+    fn load_pending_invite(&self) -> Result<Option<PendingInvite>, KeyringError>;
+    fn save_pending_invite(&self, pending: Option<&PendingInvite>) -> Result<(), KeyringError>;
 }
 
 /// Octets nommés, rangés à l'abri par l'appli. Les noms sont courts, en ASCII
@@ -80,6 +89,10 @@ pub mod names {
     pub const UPLOADS: &str = "uploads.json";
     /// Annuaire vérifié, en JSON (étape 10).
     pub const DIRECTORY: &str = "directory.json";
+    /// Invitations créées (admin), avec leur secret, en JSON (étape 10).
+    pub const INVITES: &str = "invites.json";
+    /// Invitation rachetée (invité), avec son secret, en JSON (étape 10).
+    pub const PENDING_INVITE: &str = "pending_invite.json";
 }
 
 /// [`Keyring`] rangé dans un [`SecretStore`]. Le format des valeurs est celui
@@ -105,6 +118,8 @@ impl StoreKeyring {
             names::FILES,
             names::UPLOADS,
             names::DIRECTORY,
+            names::INVITES,
+            names::PENDING_INVITE,
         ] {
             self.store.delete(name)?;
         }
@@ -192,6 +207,28 @@ impl Keyring for StoreKeyring {
 
     fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError> {
         self.write_json(names::DIRECTORY, state)
+    }
+
+    fn load_invites(&self) -> Result<Vec<InviteRecord>, KeyringError> {
+        Ok(self.read_json(names::INVITES)?.unwrap_or_default())
+    }
+
+    fn save_invites(&self, invites: &[InviteRecord]) -> Result<(), KeyringError> {
+        if invites.is_empty() {
+            return self.store.delete(names::INVITES);
+        }
+        self.write_json(names::INVITES, invites)
+    }
+
+    fn load_pending_invite(&self) -> Result<Option<PendingInvite>, KeyringError> {
+        self.read_json(names::PENDING_INVITE)
+    }
+
+    fn save_pending_invite(&self, pending: Option<&PendingInvite>) -> Result<(), KeyringError> {
+        match pending {
+            Some(p) => self.write_json(names::PENDING_INVITE, p),
+            None => self.store.delete(names::PENDING_INVITE),
+        }
     }
 }
 
@@ -341,6 +378,8 @@ struct MemoryState {
     files: Vec<StoredFile>,
     uploads: Vec<PendingUpload>,
     directory: DirectoryState,
+    invites: Vec<InviteRecord>,
+    pending_invite: Option<PendingInvite>,
 }
 
 impl MemoryKeyring {
@@ -401,6 +440,20 @@ impl Keyring for MemoryKeyring {
     }
     fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError> {
         self.lock().directory = state.clone();
+        Ok(())
+    }
+    fn load_invites(&self) -> Result<Vec<InviteRecord>, KeyringError> {
+        Ok(self.lock().invites.clone())
+    }
+    fn save_invites(&self, invites: &[InviteRecord]) -> Result<(), KeyringError> {
+        self.lock().invites = invites.to_vec();
+        Ok(())
+    }
+    fn load_pending_invite(&self) -> Result<Option<PendingInvite>, KeyringError> {
+        Ok(self.lock().pending_invite.clone())
+    }
+    fn save_pending_invite(&self, pending: Option<&PendingInvite>) -> Result<(), KeyringError> {
+        self.lock().pending_invite = pending.cloned();
         Ok(())
     }
 }

@@ -169,6 +169,15 @@ class RelayService : LifecycleService() {
                 is Event.JoinFailed -> RelayHub.notify(Notice.JoinFailed(event.message))
                 is Event.Rejected -> Log.w(TAG, "message de ${event.fromName} rejeté : ${event.reason}")
                 is Event.StorageError -> RelayHub.notify(Notice.Problem(event.message))
+                // Étape 10 : annuaire, personnes et invitations, montrés par la
+                // PR Android (T13 à T15) ; journalisés en attendant.
+                is Event.DirectoryChanged -> Unit
+                is Event.DirectoryRejected -> Log.w(TAG, "annuaire : ${event.userId} refusé : ${event.reason}")
+                is Event.DirectoryFork -> RelayHub.notify(Notice.Problem("le relais publie un autre groupe que le mien"))
+                is Event.KeysChanged -> Log.w(TAG, "${event.userId} a de nouvelles clés")
+                is Event.PersonJoined -> Log.i(TAG, "${event.name} a rejoint OldTown (${event.deviceName})")
+                is Event.Joined -> Log.i(TAG, "invitation acceptée")
+                is Event.InviteFailed -> RelayHub.notify(Notice.Problem(event.reason))
             }
             render()
         }

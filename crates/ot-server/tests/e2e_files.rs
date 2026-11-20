@@ -79,6 +79,7 @@ fn outgoing(to: &TestDevice) -> OutgoingFile {
         name: "vidéo de vacances.mp4".into(),
         mime: "video/mp4".into(),
         to: vec![to.id.clone()],
+        to_user: None,
     }
 }
 

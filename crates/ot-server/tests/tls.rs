@@ -79,6 +79,7 @@ async fn file_over_https() {
         name: "photo.jpg".into(),
         mime: "image/jpeg".into(),
         to: vec![],
+        to_user: None,
     };
     let none = std::sync::Arc::new(|_: u64, _: u64| {});
     within(ca_client.send_file(file, MemSource::new(data.clone()), none.clone())).await.unwrap();

@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use ot_crypto::{Otp, PairingCode, PairingOffer};
 use ot_proto::{
-    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Frame, MAX_FRAME_BYTES, SignedBlob,
-    Ulid, UserId, WS_PATH,
+    BlobId, Content, DeviceId, DeviceInfo, Envelope, ErrorCode, Feature, Frame, MAX_FRAME_BYTES,
+    SignedBlob, Ulid, UserId, WS_PATH,
 };
 use time::OffsetDateTime;
 use tokio::net::TcpStream;
@@ -19,13 +19,13 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::directory::{DirectoryRead, Person, ReadStep};
 use crate::files::{FileInfo, FileMeta, PendingUpload, new_file_meta};
 use crate::keyring::Keyring;
-use crate::secure::{Effect, GroupInfo, Secure};
+use crate::secure::{Effect, GroupInfo, Publish, Secure};
 use crate::tls::{self, TlsRoots};
 use crate::transfer::{
     ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig, Transfers, blocking,
     hash_source,
 };
-use crate::types::{Accepted, ClientError, Event, PairingInvitation};
+use crate::types::{Accepted, ClientError, Event, Origin, PairingInvitation, Target};
 use crate::{Dedup, Identity};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -132,6 +132,25 @@ impl Backoff {
 
 type Reply<T> = oneshot::Sender<Result<T, ClientError>>;
 
+/// Travail à faire dans la tâche du client, avec le cœur de groupe. `Sync`
+/// parce qu'il peut attendre dans le `Worker` (fin de lecture de l'annuaire).
+type Job = Box<dyn FnOnce(&mut Secure) + Send + Sync>;
+
+/// Travail qui rend des effets (événements, envois) à appliquer.
+type EffectsJob = Box<dyn FnOnce(&mut Secure) -> Result<Vec<Effect>, ClientError> + Send>;
+
+/// Déroulé mené en tâche de fond par le client (étape 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Flow {
+    /// Certifier un invité dont la demande est arrivée.
+    Certify(UserId),
+    /// Publier mon roster local, plus récent que mon journal.
+    Publish,
+}
+
+/// Délai avant de relancer un déroulé en échec (hors reconnexion).
+const FLOW_RETRY: Duration = Duration::from_secs(60);
+
 /// Rotation : époque adoptée et accusés d'envoi des `group_key`.
 type Rotation = (u32, Vec<oneshot::Receiver<Result<Accepted, ClientError>>>);
 
@@ -150,15 +169,29 @@ enum Command {
     Group(oneshot::Sender<Option<GroupInfo>>),
     PairOffer(String, Reply<String>),
     Sponsor(Box<PairingOffer>, Reply<Accepted>),
-    /// Annonce d'un fichier déposé (corps `file`).
-    SendFile(Box<FileMeta>, Vec<DeviceId>, Reply<Accepted>),
+    /// Annonce d'un fichier déposé (corps `file`) ; avec une personne, en
+    /// `0x05` aux appareils déjà résolus.
+    SendFile(Box<FileMeta>, Vec<DeviceId>, Option<UserId>, Reply<Accepted>),
     /// Accès à l'état des fichiers (offres, dépôts en cours) : toutes les
     /// écritures passent par la tâche du client, une à la fois.
     WithSecure(Box<dyn FnOnce(&mut Secure) + Send>),
+    /// Comme `WithSecure`, après une relecture de l'annuaire s'il date de
+    /// plus de 60 s (envoi à une personne, § 4.3).
+    Fresh(Job),
     /// Personnes vérifiées de l'annuaire.
     Directory(oneshot::Sender<Vec<Person>>),
     /// Relire l'annuaire maintenant.
     RefreshDirectory,
+    /// Après la fin de la prochaine lecture complète de l'annuaire (relue
+    /// au besoin), ou tout de suite sans ancre.
+    AfterRead(Job),
+    /// Trame dont la réponse ou le refus revient à l'appelant (étape 10 :
+    /// administration, journal, profils).
+    Call(Frame, Reply<Frame>),
+    /// Effets du cœur à appliquer (événements, envois).
+    Effects(EffectsJob, Reply<()>),
+    /// Un déroulé de fond est terminé (`true` : réussi).
+    FlowDone(Flow, bool),
     /// Admin : publier le certificat racine (`admin_init`).
     AdminInit(Reply<UserId>),
     Reconnect,
@@ -169,8 +202,33 @@ enum Command {
 #[derive(Clone)]
 pub struct Client {
     device_id: DeviceId,
+    pub(crate) server_url: String,
     cmd: mpsc::UnboundedSender<Command>,
     transfers: Transfers,
+    /// Une publication de mon journal à la fois (même `seq`).
+    pub(crate) publish_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// De quoi refaire un [`Client`] dans la tâche du client, sans la tenir en
+/// vie (elle s'arrête quand le dernier handle tombe).
+struct Handle {
+    device_id: DeviceId,
+    server_url: String,
+    cmd: mpsc::WeakUnboundedSender<Command>,
+    transfers: Transfers,
+    publish_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Handle {
+    fn client(&self) -> Option<Client> {
+        Some(Client {
+            device_id: self.device_id.clone(),
+            server_url: self.server_url.clone(),
+            cmd: self.cmd.upgrade()?,
+            transfers: self.transfers.clone(),
+            publish_lock: self.publish_lock.clone(),
+        })
+    }
 }
 
 /// Flux des événements du client.
@@ -194,8 +252,21 @@ impl Client {
             config.identity.clone(),
             config.transfer.clone(),
         );
-        let client = Self { device_id: config.device_id.clone(), cmd: cmd_tx, transfers };
-        tokio::spawn(Worker::new(config, cmd_rx, ev_tx).run());
+        let client = Self {
+            device_id: config.device_id.clone(),
+            server_url: config.server_url.clone(),
+            cmd: cmd_tx,
+            transfers,
+            publish_lock: Arc::new(tokio::sync::Mutex::new(())),
+        };
+        let handle = Handle {
+            device_id: client.device_id.clone(),
+            server_url: client.server_url.clone(),
+            cmd: client.cmd.downgrade(),
+            transfers: client.transfers.clone(),
+            publish_lock: client.publish_lock.clone(),
+        };
+        tokio::spawn(Worker::new(config, cmd_rx, ev_tx, handle).run());
         (client, Events(ev_rx))
     }
 
@@ -247,8 +318,87 @@ impl Client {
         self.request(|tx| Command::Send(env, tx)).await
     }
 
+    /// Chiffre un contenu pour une cible (étape 10) sans l'envoyer : mes
+    /// appareils sous la clé de groupe, comme [`Client::seal`], ou une autre
+    /// personne en `0x05` (ses appareils par défaut ou un appareil précis,
+    /// copie à mes appareils), l'annuaire relu s'il date de plus de 60 s.
+    pub async fn seal_to(
+        &self,
+        target: Target,
+        content: &Content,
+    ) -> Result<Envelope, ClientError> {
+        match target {
+            Target::MyDevices(to) => self.seal(content, to).await,
+            Target::Person { user, device } => {
+                let content = content.clone();
+                self.with_fresh(move |s| s.seal_content_to(&content, &user, device.as_ref())).await
+            }
+        }
+    }
+
+    /// Chiffre et envoie un contenu à une cible (voir [`Client::seal_to`]).
+    pub async fn send_to(
+        &self,
+        target: Target,
+        content: &Content,
+    ) -> Result<Accepted, ClientError> {
+        let env = self.seal_to(target, content).await?;
+        self.send_envelope(env).await
+    }
+
+    /// Envoie un code à usage unique à des personnes, en un seul message
+    /// `0x05` (pont d'un service, `ot otp-bridge --to-user`).
+    pub async fn send_otp_to(&self, users: &[UserId], otp: &Otp) -> Result<Accepted, ClientError> {
+        let (users, otp) = (users.to_vec(), otp.clone());
+        let env = self.with_fresh(move |s| s.seal_otp_to(&otp, &users)).await?;
+        self.send_envelope(env).await
+    }
+
+    /// Exécute `f` après la fin de la prochaine lecture complète de
+    /// l'annuaire (tout de suite sans ancre).
+    pub(crate) async fn after_read<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Secure) -> Result<T, ClientError> + Send + Sync + 'static,
+    ) -> Result<T, ClientError> {
+        let (tx, rx) = oneshot::channel();
+        let run = Box::new(move |s: &mut Secure| {
+            let _ = tx.send(f(s));
+        });
+        self.cmd.send(Command::AfterRead(run)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)?
+    }
+
+    /// Exécute `f` dans la tâche du client et applique les effets rendus
+    /// (événements émis, messages mis en file).
+    pub(crate) async fn with_effects(
+        &self,
+        f: impl FnOnce(&mut Secure) -> Result<Vec<Effect>, ClientError> + Send + 'static,
+    ) -> Result<(), ClientError> {
+        self.request(|tx| Command::Effects(Box::new(f), tx)).await
+    }
+
+    /// Envoie une trame et attend sa réponse (ou son refus, `Rejected`).
+    /// Coupée par une perte de connexion : `Connection`.
+    pub(crate) async fn call(&self, frame: Frame) -> Result<Frame, ClientError> {
+        self.request(|tx| Command::Call(frame, tx)).await
+    }
+
+    /// Exécute `f` dans la tâche du client, avec un annuaire de moins de
+    /// 60 s s'il y a une ancre (relu sinon, en ligne).
+    pub(crate) async fn with_fresh<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Secure) -> Result<T, ClientError> + Send + Sync + 'static,
+    ) -> Result<T, ClientError> {
+        let (tx, rx) = oneshot::channel();
+        let run = Box::new(move |s: &mut Secure| {
+            let _ = tx.send(f(s));
+        });
+        self.cmd.send(Command::Fresh(run)).map_err(|_| ClientError::Closed)?;
+        rx.await.map_err(|_| ClientError::Closed)?
+    }
+
     /// Exécute `f` dans la tâche du client, avec le cœur de groupe.
-    async fn with_secure<T: Send + 'static>(
+    pub(crate) async fn with_secure<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Secure) -> Result<T, ClientError> + Send + 'static,
     ) -> Result<T, ClientError> {
@@ -284,12 +434,23 @@ impl Client {
         let t = &self.transfers;
         let size = source.size();
         let now = OffsetDateTime::now_utc();
-        // Sans groupe, inutile de déposer quoi que ce soit.
-        self.with_secure(|s| s.info().map(|_| ()).ok_or(ClientError::NoGroup)).await?;
+        let to = match file.to_user.clone() {
+            // Une autre personne : les appareils résolus maintenant, ceux à
+            // qui le blob sera ouvert.
+            Some(user) => {
+                let device = file.to.first().cloned();
+                self.with_fresh(move |s| s.recipients(&user, device.as_ref())).await?
+            }
+            None => {
+                // Sans groupe, inutile de déposer quoi que ce soit.
+                self.with_secure(|s| s.info().map(|_| ()).ok_or(ClientError::NoGroup)).await?;
+                file.to.clone()
+            }
+        };
         let sid = file.source_id.clone();
         let mut pending = self.with_secure(move |s| s.upload(&sid, size, now)).await?;
         let mut missing = None;
-        if let Some(p) = pending.take_if(|p| p.to == file.to) {
+        if let Some(p) = pending.take_if(|p| p.to == to && p.to_user == file.to_user) {
             match t.status(&p.meta.blob_id).await {
                 Ok(st) => {
                     tracing::info!(blob = %p.meta.blob_id, missing = st.missing.len(), "reprise du dépôt");
@@ -304,7 +465,7 @@ impl Client {
             Some(p) => p,
             None => {
                 let sha256 = hash_source(source.clone(), t.config.chunk_size).await?;
-                let (created, _) = t.create(size, &file.to).await?;
+                let (created, _) = t.create(size, &to).await?;
                 let meta = new_file_meta(
                     created.blob_id,
                     &file.name,
@@ -316,7 +477,8 @@ impl Client {
                 .ok_or_else(|| ClientError::Invalid("fichier trop gros".into()))?;
                 let p = PendingUpload {
                     source_id: file.source_id.clone(),
-                    to: file.to.clone(),
+                    to,
+                    to_user: file.to_user.clone(),
                     expires_at: created.expires_at,
                     meta,
                 };
@@ -328,7 +490,8 @@ impl Client {
         let missing = missing.unwrap_or_else(|| (0..pending.meta.chunks).collect());
         t.upload(&pending.meta, missing, source, progress).await?;
         let (meta, to) = (Box::new(pending.meta.clone()), pending.to.clone());
-        let accepted = self.request(|tx| Command::SendFile(meta, to, tx)).await?;
+        let to_user = pending.to_user.clone();
+        let accepted = self.request(|tx| Command::SendFile(meta, to, to_user, tx)).await?;
         let sid = pending.source_id;
         self.with_secure(move |s| s.forget_upload(&sid)).await?;
         tracing::info!(blob = %pending.meta.blob_id, "fichier envoyé");
@@ -340,6 +503,7 @@ impl Client {
             name: pending.meta.name.clone(),
             mime: pending.meta.mime.clone(),
             size: pending.meta.size,
+            origin: Origin { to_user: pending.to_user, ..Origin::default() },
         };
         Ok((accepted, info))
     }
@@ -578,6 +742,19 @@ struct Worker {
     read_again: bool,
     /// Enregistrements par QR inversé en attente de réponse.
     registrations: Vec<Registration>,
+    /// Demandes qui attendent la fin de la lecture de l'annuaire.
+    waiting: Vec<Job>,
+    /// Demandes qui attendent la fin de la lecture *suivante* (commencée
+    /// après elles).
+    waiting_next: Vec<Job>,
+    /// `users-v1` déjà déclaré par ce client (`device_update`).
+    features_sent: bool,
+    handle: Handle,
+    /// Déroulés de fond en cours.
+    flows: Vec<Flow>,
+    /// Déroulés en échec, et quand : relancés après `FLOW_RETRY`, ou à la
+    /// prochaine connexion.
+    failed: Vec<(Flow, Instant)>,
 }
 
 impl Worker {
@@ -585,6 +762,7 @@ impl Worker {
         mut config: ClientConfig,
         cmd: mpsc::UnboundedReceiver<Command>,
         events: mpsc::Sender<Event>,
+        handle: Handle,
     ) -> Self {
         let dedup = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, std::mem::take(&mut config.seen));
         let (secure, startup) =
@@ -602,6 +780,12 @@ impl Worker {
             read: None,
             read_again: false,
             registrations: Vec::new(),
+            waiting: Vec::new(),
+            waiting_next: Vec::new(),
+            features_sent: false,
+            handle,
+            flows: Vec::new(),
+            failed: Vec::new(),
         }
     }
 
@@ -699,7 +883,10 @@ impl Worker {
                 self.registrations.push(registration);
                 Next::Frames(vec![frame])
             }
-            Command::SendFile(meta, to, tx) => match self.secure.seal_file(&meta, to) {
+            Command::SendFile(meta, to, to_user, tx) => match match to_user {
+                Some(_) => self.secure.seal_file_to(&meta, to),
+                None => self.secure.seal_file(&meta, to),
+            } {
                 Ok(env) => self.queue(env, Some(tx)),
                 Err(e) => {
                     let _ = tx.send(Err(e));
@@ -710,11 +897,71 @@ impl Worker {
                 f(&mut self.secure);
                 Next::Frames(Vec::new())
             }
+            Command::Fresh(f) => {
+                // Sans ancre, rien à relire ; pendant `admin_init`, la lecture
+                // vérifiée n'a pas commencé : l'annuaire connu suffit.
+                let now = OffsetDateTime::now_utc();
+                if !self.secure.has_anchor()
+                    || self.secure.directory_fresh(now)
+                    || matches!(self.read, Some(Reading::AdminInit(_)))
+                {
+                    f(&mut self.secure);
+                    return Next::Frames(Vec::new());
+                }
+                self.waiting.push(f);
+                if self.read.is_some() {
+                    Next::Frames(Vec::new())
+                } else {
+                    Next::Frames(self.start_read())
+                }
+            }
             Command::Directory(tx) => {
                 let _ = tx.send(self.secure.people());
                 Next::Frames(Vec::new())
             }
             Command::RefreshDirectory => Next::Frames(self.start_read()),
+            Command::AfterRead(f) => {
+                if !self.secure.has_anchor() || matches!(self.read, Some(Reading::AdminInit(_))) {
+                    f(&mut self.secure);
+                    return Next::Frames(Vec::new());
+                }
+                if self.read.is_some() {
+                    // La lecture en cours a pu commencer trop tôt.
+                    self.waiting_next.push(f);
+                    self.read_again = true;
+                    return Next::Frames(Vec::new());
+                }
+                self.waiting_next.push(f);
+                Next::Frames(self.start_read())
+            }
+            Command::Call(frame, reply) => {
+                let reference = call_reference(&frame);
+                self.unref.push_back(Pending::Call {
+                    frame: frame.clone(),
+                    reference,
+                    reply: Some(reply),
+                });
+                Next::Frames(vec![frame])
+            }
+            Command::Effects(f, reply) => match f(&mut self.secure) {
+                Ok(effects) => {
+                    let frames = self.effects(effects).await;
+                    let _ = reply.send(Ok(()));
+                    Next::Frames(frames)
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e));
+                    Next::Frames(Vec::new())
+                }
+            },
+            Command::FlowDone(flow, ok) => {
+                self.flows.retain(|f| f != &flow);
+                self.failed.retain(|(f, _)| f != &flow);
+                if !ok {
+                    self.failed.push((flow, Instant::now()));
+                }
+                Next::Frames(self.drive())
+            }
             Command::AdminInit(reply) => {
                 let busy = matches!(self.read, Some(Reading::AdminInit(_)))
                     || self.unref.iter().any(|p| matches!(p, Pending::AdminInit { .. }));
@@ -755,7 +1002,42 @@ impl Worker {
                 }
             }
         }
+        frames.extend(self.drive());
         frames
+    }
+
+    /// Lance les déroulés de fond dus (étape 10) : certifier les invités
+    /// dont la demande est arrivée, publier mon roster s'il est plus récent
+    /// que mon journal ; invité, relire l'annuaire après la bienvenue.
+    fn drive(&mut self) -> Vec<Frame> {
+        let mut due: Vec<Flow> =
+            self.secure.invites_to_certify().into_iter().map(Flow::Certify).collect();
+        if self.secure.needs_publish() {
+            due.push(Flow::Publish);
+        }
+        let now = Instant::now();
+        self.failed.retain(|(_, at)| now.duration_since(*at) < FLOW_RETRY);
+        for flow in due {
+            if self.flows.contains(&flow) || self.failed.iter().any(|(f, _)| f == &flow) {
+                continue;
+            }
+            let Some(client) = self.handle.client() else { break };
+            self.flows.push(flow.clone());
+            tokio::spawn(async move {
+                let res = match &flow {
+                    Flow::Certify(user) => client.certify_invite(user.clone()).await,
+                    Flow::Publish => client.publish(Publish::IfBehind).await.map(|_| ()),
+                };
+                if let Err(e) = &res {
+                    tracing::warn!(?flow, error = %e, "déroulé de fond en échec, à reprendre");
+                }
+                let _ = client.cmd.send(Command::FlowDone(flow, res.is_ok()));
+            });
+        }
+        if self.secure.awaits_directory() && self.read.is_none() {
+            return self.start_read();
+        }
+        Vec::new()
     }
 
     async fn run(mut self) {
@@ -768,7 +1050,9 @@ impl Worker {
                 Ok((ws, pending)) => {
                     attempt = 0;
                     self.emit(Event::Connected { pending }).await;
-                    self.session(ws).await
+                    let end = self.session(ws).await;
+                    self.fail_calls();
+                    end
                 }
                 Err(end) => end,
             };
@@ -845,11 +1129,19 @@ impl Worker {
                     let _ = reply.send(Err(ClientError::Closed));
                 }
                 Pending::Directory => {}
+                Pending::Call { reply, .. } => {
+                    if let Some(tx) = reply {
+                        let _ = tx.send(Err(ClientError::Closed));
+                    }
+                }
             }
         }
         if let Some(Reading::AdminInit(reply)) = self.read.take() {
             let _ = reply.send(Err(ClientError::Closed));
         }
+        // Leurs réponses tombent avec elles : `Closed`.
+        self.waiting.clear();
+        self.waiting_next.clear();
         for r in self.registrations.drain(..) {
             let _ = r.reply.send(Err(ClientError::Closed));
         }
@@ -915,6 +1207,19 @@ impl Worker {
         self.unref.retain(|p| !matches!(p, Pending::Directory));
         resume.extend(self.unref.iter().map(Pending::frame));
         resume.extend(self.registrations.iter().map(Registration::frame));
+        // Une connexion neuve relance aussi les déroulés en échec, et
+        // redéclare les capacités si le profil ne les a pas.
+        self.failed.clear();
+        self.features_sent = false;
+        // Invité : la demande repart à chaque connexion jusqu'à la bienvenue.
+        match self.secure.invite_request() {
+            Some(Ok(env)) => {
+                self.outbox.push(Outgoing { env: env.clone(), reply: None });
+                resume.push(Frame::Send { env });
+            }
+            Some(Err(e)) => tracing::warn!(error = %e, "demande d'invitation impossible"),
+            None => {}
+        }
         match &self.read {
             Some(Reading::AdminInit(_)) => {
                 self.unref.push_back(Pending::Directory);
@@ -1058,6 +1363,28 @@ impl Worker {
             Frame::Error { code: ErrorCode::AuthFailed, message, .. } => {
                 return Err(End::AuthFailed(message));
             }
+            reply @ (Frame::UserInvited { .. }
+            | Frame::UserCertified { .. }
+            | Frame::RosterPublished { .. }
+            | Frame::DeviceUpdated { .. }
+            | Frame::DeviceRevoked { .. }
+            | Frame::ServiceMuted { .. }
+            | Frame::UserRevoked { .. }
+            | Frame::UserRenamed { .. }
+            | Frame::LinkUpdated { .. }
+            | Frame::Users { .. }) => match self.take_pending(|p| p.answered_by(&reply)) {
+                Some(Pending::Call { reply: Some(tx), .. }) => {
+                    let _ = tx.send(Ok(reply));
+                }
+                // Capacités déclarées : le relais ne prévient pas la session
+                // qui change son propre profil.
+                Some(_) => {
+                    for frame in self.start_read() {
+                        send_frame(ws, &frame).await?;
+                    }
+                }
+                None => tracing::debug!(t = reply.type_name(), "réponse sans demande ignorée"),
+            },
             Frame::Error { code, message, reference }
                 if reference.as_deref().is_some_and(|r| {
                     self.registrations.iter().any(|reg| reg.offer.device_id.as_str() == r)
@@ -1076,6 +1403,23 @@ impl Worker {
                     .as_deref()
                     .and_then(|r| self.outbox.iter().position(|o| o.env.msg_id.to_string() == r));
                 let err = ClientError::Rejected { code, message: message.clone() };
+                let call = match (pos, reference.as_deref()) {
+                    (None, Some(r)) => self.take_pending(|p| p.reference() == Some(r)),
+                    _ => None,
+                };
+                if let Some(Pending::Call { frame, reply, .. }) = call {
+                    match reply {
+                        Some(tx) => {
+                            let _ = tx.send(Err(err));
+                        }
+                        None => tracing::warn!(?code, message, t = frame.type_name(), "refusé"),
+                    }
+                    return Ok(());
+                }
+                if pos.is_none() && reference.is_some() {
+                    tracing::warn!(?code, message, "refus d'une demande inconnue");
+                    return Ok(());
+                }
                 match pos.map(|i| self.outbox.remove(i)) {
                     Some(Outgoing { reply: Some(tx), .. }) => {
                         let _ = tx.send(Err(err));
@@ -1091,12 +1435,20 @@ impl Worker {
                         Some(Pending::AdminInit { reply, .. }) => {
                             let _ = reply.send(Err(err));
                         }
+                        Some(Pending::Call { frame, reply, .. }) => match reply {
+                            Some(tx) => {
+                                let _ = tx.send(Err(err));
+                            }
+                            None => tracing::warn!(?code, message, t = frame.type_name(), "refusé"),
+                        },
                         Some(Pending::Directory) => {
                             tracing::warn!(?code, message, "lecture de l'annuaire refusée");
                             if let Some(Reading::AdminInit(reply)) = self.read.take() {
                                 let _ = reply.send(Err(err));
                             }
                             self.read_again = false;
+                            // Les envois en attente partent sur l'annuaire connu.
+                            self.flush_waiting();
                         }
                         None => tracing::warn!(?code, message, "erreur du serveur"),
                     },
@@ -1119,6 +1471,30 @@ enum Pending {
         entry: SignedBlob,
         reply: Reply<UserId>,
     },
+    /// Trame d'administration, de journal ou de profil (étape 10). Le
+    /// relais la refuse avec `reference`, ou sans référence (`forbidden`).
+    Call {
+        frame: Frame,
+        reference: Option<String>,
+        /// `None` : personne n'attend la réponse.
+        reply: Option<Reply<Frame>>,
+    },
+}
+
+/// Référence d'un refus de `frame` par le relais (`session/people.rs`).
+fn call_reference(frame: &Frame) -> Option<String> {
+    match frame {
+        Frame::UserReinvite { user }
+        | Frame::UserCertify { user, .. }
+        | Frame::UserRevoke { user }
+        | Frame::UserRename { user, .. } => Some(user.to_string()),
+        Frame::RosterPublish { seq, .. } => Some(seq.to_string()),
+        Frame::DeviceUpdate { device, .. } | Frame::DeviceRevoke { device } => {
+            Some(device.to_string())
+        }
+        Frame::ServiceMute { service, .. } => Some(service.to_string()),
+        _ => None,
+    }
 }
 
 impl Pending {
@@ -1131,6 +1507,40 @@ impl Pending {
                 Frame::AdminInit { cert: cert.clone(), entry: entry.clone() }
             }
             Self::Directory => Frame::DirectoryGet { known: Default::default(), after: None },
+            Self::Call { frame, .. } => frame.clone(),
+        }
+    }
+
+    fn reference(&self) -> Option<&str> {
+        match self {
+            Self::Call { reference, .. } => reference.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// `reply` est la réponse de cette demande.
+    fn answered_by(&self, reply: &Frame) -> bool {
+        let Self::Call { frame, .. } = self else { return false };
+        match (frame, reply) {
+            (Frame::UserInvite { .. }, Frame::UserInvited { .. })
+            | (Frame::UsersGet, Frame::Users { .. }) => true,
+            (Frame::UserReinvite { user: a }, Frame::UserInvited { user: b, .. })
+            | (Frame::UserCertify { user: a, .. }, Frame::UserCertified { user: b })
+            | (Frame::UserRevoke { user: a }, Frame::UserRevoked { user: b })
+            | (Frame::UserRename { user: a, .. }, Frame::UserRenamed { user: b }) => a == b,
+            (
+                Frame::RosterPublish { user: a, seq: x, .. },
+                Frame::RosterPublished { user: b, seq: y },
+            ) => a == b && x == y,
+            (Frame::DeviceUpdate { device: a, .. }, Frame::DeviceUpdated { device: b })
+            | (Frame::DeviceRevoke { device: a }, Frame::DeviceRevoked { device: b }) => a == b,
+            (Frame::ServiceMute { service: a, .. }, Frame::ServiceMuted { service: b, .. }) => {
+                a == b
+            }
+            (Frame::LinkSet { from: a, to: x, .. }, Frame::LinkUpdated { from: b, to: y, .. }) => {
+                a == b && x == y
+            }
+            _ => false,
         }
     }
 }
@@ -1161,6 +1571,7 @@ impl Worker {
             return Vec::new();
         }
         let (read, frame) = DirectoryRead::start(self.secure.directory_known());
+        self.waiting.append(&mut self.waiting_next);
         self.read = Some(Reading::Verify(read));
         self.unref.push_back(Pending::Directory);
         vec![frame]
@@ -1230,6 +1641,23 @@ impl Worker {
                 Ok(ReadStep::Round { me, admin, users }) => {
                     let (effects, again) = self.secure.apply_directory(&me, &admin, &users);
                     let mut frames = self.effects(effects).await;
+                    if !self.features_sent && self.secure.needs_features() {
+                        // Seul l'appareil déclare ses capacités : il sait
+                        // ouvrir `0x05`, les autres peuvent lui écrire.
+                        self.features_sent = true;
+                        let frame = Frame::DeviceUpdate {
+                            device: self.config.device_id.clone(),
+                            kind: None,
+                            reachable: None,
+                            default: None,
+                            features: Some(vec![Feature::users_v1()]),
+                        };
+                        let reference = call_reference(&frame);
+                        let pending =
+                            Pending::Call { frame: frame.clone(), reference, reply: None };
+                        self.unref.push_back(pending);
+                        frames.push(frame);
+                    }
                     match again.then(|| read.next_round(self.secure.directory_known())).flatten() {
                         Some(frame) => {
                             self.read = Some(Reading::Verify(read));
@@ -1244,10 +1672,39 @@ impl Worker {
         }
     }
 
-    /// Fin d'une lecture : une autre si l'annuaire a changé entre-temps.
+    /// Fin d'une lecture : les demandes en attente passent, puis une autre
+    /// lecture si l'annuaire a changé entre-temps.
     fn after_read(&mut self) -> Vec<Frame> {
         self.read = None;
+        self.flush_waiting();
         if std::mem::take(&mut self.read_again) { self.start_read() } else { Vec::new() }
+    }
+}
+
+impl Worker {
+    /// Exécute les demandes qui attendaient l'annuaire.
+    fn flush_waiting(&mut self) {
+        for f in std::mem::take(&mut self.waiting) {
+            f(&mut self.secure);
+        }
+    }
+
+    /// Fin de session : les trames d'administration envoyées n'auront pas de
+    /// réponse (elles ne sont pas rejouées, `user_invite` n'est pas
+    /// idempotente) ; celles posées hors ligne partiront à la connexion.
+    fn fail_calls(&mut self) {
+        let mut kept = VecDeque::new();
+        for p in self.unref.drain(..) {
+            match p {
+                Pending::Call { reply, .. } => {
+                    if let Some(tx) = reply {
+                        let _ = tx.send(Err(ClientError::Connection("connexion perdue".into())));
+                    }
+                }
+                other => kept.push_back(other),
+            }
+        }
+        self.unref = kept;
     }
 }
 

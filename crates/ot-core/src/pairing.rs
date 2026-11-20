@@ -1,9 +1,11 @@
 //! Appairage côté nouvel appareil, première moitié : s'enregistrer auprès du
-//! relais avec le jeton du code (`pair_redeem`). La suite (demande chiffrée
-//! au parrain, réponse) passe par le [`crate::Client`] une fois authentifié.
+//! relais avec le jeton du code (`pair_redeem`, ou `invite_redeem` pour le
+//! premier appareil d'une personne invitée, étape 10). La suite (demande
+//! chiffrée au parrain ou à l'admin, réponse) passe par le
+//! [`crate::Client`] une fois authentifié.
 
 use futures_util::{SinkExt, StreamExt};
-use ot_crypto::{PairingCode, token_hash};
+use ot_crypto::{InviteCode, PairingCode, token_hash};
 use ot_proto::{DeviceId, ErrorCode, Frame};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
@@ -11,6 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::ClientError;
 use crate::Identity;
 use crate::client::{HANDSHAKE_TIMEOUT, Ws, ws_url};
+use crate::invite::InviteRedeemed;
 use crate::tls::{self, TlsRoots};
 
 /// Appareil enregistré par le relais.
@@ -31,41 +34,86 @@ pub async fn redeem_pairing(
     code: &str,
 ) -> Result<Redeemed, ClientError> {
     let code = PairingCode::parse(code).map_err(|e| ClientError::Pairing(e.to_string()))?;
+    let token = code.token;
+    let answer = |frame| match frame {
+        Frame::PairRedeemed { device_id, sponsor } => Some(Redeemed { device_id, sponsor }),
+        _ => None,
+    };
+    let redeem = |nonce: &[u8; ot_proto::NONCE_LEN]| Frame::PairRedeem {
+        token,
+        name: name.to_owned(),
+        public_key: identity.public_key(),
+        sig: identity.sign_pair_redeem(nonce, &token_hash(&token)),
+    };
+    redeem_with(server_url, tls, redeem, answer).await
+}
+
+/// Premier appareil d'une personne invitée (étape 10) : s'enregistre dans
+/// sa personne avec le jeton du code `ot2-…`. Le secret `S` et l'ancre ne
+/// quittent pas l'appareil ; à ranger ensuite par
+/// [`crate::save_pending_invite`] avant de démarrer le client.
+pub async fn redeem_invite(
+    server_url: &str,
+    tls: &TlsRoots,
+    identity: &Identity,
+    name: &str,
+    code: &InviteCode,
+) -> Result<InviteRedeemed, ClientError> {
+    let token = code.token;
+    let answer = |frame| match frame {
+        Frame::InviteRedeemed { user, device, inviter } => {
+            Some(InviteRedeemed { user, device_id: device, inviter })
+        }
+        _ => None,
+    };
+    let redeem = |nonce: &[u8; ot_proto::NONCE_LEN]| Frame::InviteRedeem {
+        token,
+        name: name.to_owned(),
+        public_key: identity.public_key(),
+        sig: identity.sign_invite_redeem(nonce, &token_hash(&token)),
+    };
+    redeem_with(server_url, tls, redeem, answer).await
+}
+
+/// Connexion, défi, trame de rachat signée, réponse ; le relais ferme
+/// ensuite.
+async fn redeem_with<T>(
+    server_url: &str,
+    tls: &TlsRoots,
+    redeem: impl Fn(&[u8; ot_proto::NONCE_LEN]) -> Frame,
+    answer: impl Fn(Frame) -> Option<T>,
+) -> Result<T, ClientError> {
     let url = ws_url(server_url);
     let mut ws = match timeout(HANDSHAKE_TIMEOUT, tls::connect(&url, tls, None)).await {
         Ok(Ok(ok)) => ok,
         Ok(Err(e)) => return Err(ClientError::Connection(format!("{url} : {e}"))),
         Err(_) => return Err(ClientError::Connection(format!("{url} : délai dépassé"))),
     };
-    let res = timeout(HANDSHAKE_TIMEOUT, exchange(&mut ws, identity, name, &code))
+    let res = timeout(HANDSHAKE_TIMEOUT, exchange(&mut ws, redeem, answer))
         .await
         .unwrap_or_else(|_| Err(ClientError::Connection("pas de réponse du relais".into())));
     let _ = ws.close(None).await;
     res
 }
 
-async fn exchange(
+async fn exchange<T>(
     ws: &mut Ws,
-    identity: &Identity,
-    name: &str,
-    code: &PairingCode,
-) -> Result<Redeemed, ClientError> {
+    redeem: impl Fn(&[u8; ot_proto::NONCE_LEN]) -> Frame,
+    answer: impl Fn(Frame) -> Option<T>,
+) -> Result<T, ClientError> {
     loop {
         match recv(ws).await? {
             Frame::Challenge { nonce } => {
-                let sig = identity.sign_pair_redeem(&nonce, &token_hash(&code.token));
-                let frame = Frame::PairRedeem {
-                    token: code.token,
-                    name: name.to_owned(),
-                    public_key: identity.public_key(),
-                    sig,
-                };
+                let frame = redeem(&nonce);
                 ws.send(Message::text(frame.to_json()))
                     .await
                     .map_err(|e| ClientError::Connection(e.to_string()))?;
             }
-            Frame::PairRedeemed { device_id, sponsor } => {
-                return Ok(Redeemed { device_id, sponsor });
+            frame @ (Frame::PairRedeemed { .. } | Frame::InviteRedeemed { .. }) => {
+                if let Some(done) = answer(frame) {
+                    return Ok(done);
+                }
+                tracing::debug!("réponse de rachat inattendue ignorée");
             }
             Frame::Error { code, message, .. } => {
                 return Err(match code {

@@ -140,6 +140,11 @@ fun OnboardingScreen() {
                         onResult = { text ->
                             when (val kind = classifyQr(text)) {
                                 is QrKind.Join -> submit(kind.serverUrl, kind.code)
+                                // Rejoindre par invitation : écran de T14 (PR Android).
+                                is QrKind.Invite -> {
+                                    error = "Les invitations arrivent dans une prochaine version de l'appli."
+                                    step = Step.Intro
+                                }
                                 is QrKind.Sponsor -> {
                                     error = "Ce QR sert à ajouter un appareil au groupe : il se scanne depuis un téléphone déjà appairé."
                                     step = Step.Intro

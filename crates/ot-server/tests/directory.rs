@@ -133,7 +133,15 @@ async fn a_long_admin_log_is_read_in_several_rounds_and_followed() {
     let (mut raw, _) = Raw::login(&server, a1).await;
     let entry = admin_entry(&admin, a1, last + 1, prev, 0);
     raw.send(&Frame::RosterPublish { user: admin.clone(), seq: last + 1, entry }).await;
-    assert!(matches!(raw.recv().await, Some(Frame::RosterPublished { .. })));
+    // Des `directory_changed` (profils déclarés par les clients) peuvent
+    // passer avant la réponse.
+    let reply = loop {
+        match raw.recv().await {
+            Some(Frame::DirectoryChanged) => continue,
+            other => break other,
+        }
+    };
+    assert!(matches!(reply, Some(Frame::RosterPublished { .. })), "{reply:?}");
     within(async {
         while admin_seq(a2) != Some(last + 1) {
             wait_for(&mut e2, |e| matches!(e, Event::DirectoryChanged)).await;

@@ -4,7 +4,8 @@
 use std::sync::{Arc, Mutex};
 
 use ot_core::{
-    DeviceId, Identity, KeyringError, PairUri, StoreKeyring, TlsRoots, Ulid, valid_device_name,
+    DeviceId, Identity, InviteCode, InviteUri, KeyringError, PairUri, StoreKeyring, TlsRoots, Ulid,
+    valid_device_name,
 };
 use ot_proto::b64;
 use serde::de::DeserializeOwned;
@@ -290,6 +291,53 @@ pub async fn join(
             sponsor: redeemed.sponsor,
             name,
         })?;
+        Ok(device)
+    })
+    .await
+}
+
+/// Premier appareil d'une personne invitée (étape 10) : rachète le jeton
+/// du code `ot2-…` auprès du relais et range l'invitation (son secret
+/// compris) ; [`crate::OtClient`] envoie la demande à l'admin à chaque
+/// connexion jusqu'à sa réponse. La fin arrive par `Event::Joined`.
+#[uniffi::export]
+pub async fn join_invite(
+    store: Arc<dyn SecretStore>,
+    server_url: String,
+    code: String,
+    name: String,
+) -> Result<DeviceState, OtError> {
+    on_runtime(async move {
+        let local = Local::new(store);
+        if local.device()?.is_some() {
+            return Err(OtError::Invalid {
+                message: "ce téléphone est déjà enregistré : l'oublier d'abord".into(),
+            });
+        }
+        let name = name.trim().to_owned();
+        if !valid_device_name(&name) {
+            return Err(OtError::Invalid {
+                message: "nom invalide : 1 à 64 caractères imprimables".into(),
+            });
+        }
+        let server_url = check_server_url(&server_url)?;
+        // Valide le code avant tout contact avec le relais.
+        let uri = InviteUri::parse(&InviteUri { server_url, code }.encode())?;
+        let code = InviteCode::parse(&uri.code)
+            .map_err(|e| OtError::Pairing { message: e.to_string() })?;
+        let identity = Identity::generate();
+        let redeemed =
+            ot_core::redeem_invite(&uri.server_url, &TlsRoots::default(), &identity, &name, &code)
+                .await?;
+        local.forget()?;
+        local.save_identity(&identity)?;
+        ot_core::save_pending_invite(&local.keyring(), &code, &redeemed, &name)?;
+        let device = DeviceState {
+            device_id: redeemed.device_id.to_string(),
+            name,
+            server_url: uri.server_url,
+        };
+        local.save_device(&device)?;
         Ok(device)
     })
     .await

@@ -317,6 +317,7 @@ async fn files_both_ways() {
         name: "scan.pdf".into(),
         mime: "application/pdf".into(),
         to: vec![],
+        to_user: None,
     };
     let none = Arc::new(|_: u64, _: u64| {});
     within(pc.send_file(pc_file, Arc::new(crate::files::Source(source)), none)).await.unwrap();
@@ -379,6 +380,21 @@ fn qr_helpers() {
     assert_eq!(classify_qr("https://example.org".into()), QrKind::Unknown);
     assert!(matches!(classify_qr("oldtown://sponsor?o=AAAA".into()), QrKind::Invalid { .. }));
     assert!(matches!(classify_qr("oldtown://pair?s=x&c=y".into()), QrKind::Invalid { .. }));
+    assert!(matches!(classify_qr("oldtown://invite?s=x&c=y".into()), QrKind::Invalid { .. }));
+    let code = ot_core::InviteCode {
+        token: [1; 10],
+        secret: ot_core::crypto::PairingSecret::generate(),
+        anchor: [2; 16],
+    };
+    let uri = ot_core::InviteUri {
+        server_url: "wss://relais:7878".into(),
+        code: code.encode().to_string(),
+    }
+    .encode();
+    assert_eq!(
+        classify_qr(uri),
+        QrKind::Invite { server_url: "wss://relais:7878".into(), code: code.encode().to_string() }
+    );
     let qr = qr_code("oldtown://pair?s=wss://relais&c=ot1-…".into()).unwrap();
     assert_eq!(qr.modules.len(), (qr.size * qr.size) as usize);
     assert!(qr.modules.iter().any(|&m| m) && qr.modules.iter().any(|&m| !m));
@@ -401,6 +417,10 @@ fn history_keeps_the_last_hundred() {
             to: vec![],
             outgoing: i % 2 == 0,
             pending: i == 108,
+            from_user: None,
+            from_service: false,
+            to_user: None,
+            auto_fill: false,
         };
         local.push_history(item).unwrap();
     }
