@@ -6,8 +6,17 @@ WebAssembly pour l'extension Chrome (note 0023). Exposé par `wasm-bindgen` :
 changements, signature des requêtes HTTP `signHttp`), `Core`
 (`ot_core::Secure` : sceller, ouvrir, roster, quarantaine, appairage,
 rotation ; fichiers : `upload`, `startUpload`, `sealChunk`, `sealFile`,
-`openChunk`, `checkFile`…), `Hasher` (SHA-256 en flux), `fileGeometry`,
-`decodeFrame`, `parseJoin`, `qrCode`.
+`openChunk`, `checkFile`…, `startUpload` vers une personne avec `toUser` ;
+étape 10 : annuaire, envoi `0x05`, journal, invitation, et pour l'admin
+`adminInitStart`/`adminRoot`/`adoptAdminRoot`, `certifiedBy`/`recertify`,
+`servicesToRepublish`/`nextServiceEntry`/`serviceEntryPublished`), `Hasher`
+(SHA-256 en flux), `fileGeometry`, `decodeFrame`, `parseJoin`,
+`parseInvite`, `qrCode`.
+
+- Les déroulés en plusieurs trames (publication, `admin_init`) gardent
+  leur objet signé en mémoire jusqu'à la réponse du relais : perdu à
+  l'arrêt du service worker, il se refait à la lecture suivante (un
+  certificat racine déjà publié est adopté).
 
 - Aucune clé ne sort d'ici, sauf par `Vault::take_changes` pour être
   chiffrée et rangée aussitôt par le service worker.
