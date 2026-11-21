@@ -1,6 +1,7 @@
 package dev.oldtown.android.ui
 
 import android.content.ClipboardManager
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -65,17 +66,13 @@ import dev.oldtown.core.Received
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 
-/** Ce que l'en-tête et la zone d'envoi disent du canal. */
 private data class Header(
     val name: String,
     val kind: DeviceKind,
     val color: Long,
     val initials: String = "",
-    /** Présence lue dans l'annuaire (autre personne) ; `null` : demandée au relais. */
     val online: Boolean? = null,
-    /** On n'écrit pas à un service (D41). */
     val readOnly: Boolean = false,
-    /** Appareil d'une personne qui ne lira rien. */
     val outdated: Boolean = false,
 )
 
@@ -113,24 +110,14 @@ private fun headerOf(hub: HubState, channel: String): Header = when (val t = par
     }
 }
 
-/** Nom de l'appareil expéditeur : celui de l'annuaire pour une autre personne, sinon celui du roster. */
 private fun senderName(hub: HubState, item: Received): String {
     if (item.fromUser == null) return item.fromName
     return hub.people.firstOrNull { it.userId == item.fromUser }?.devices?.firstOrNull { it.deviceId == item.fromId }?.name
         ?: item.fromName
 }
 
-/** Distance du balayage vers la droite qui ramène à la liste. */
 private val SWIPE_BACK = 96.dp
 
-/**
- * Conversation d'un canal (note 0033, comme l'extension, notes 0030, 0031 et
- * 0065) : « Tous », un appareil du groupe, une autre personne ou un de ses
- * appareils. Les envois d'ici sont à droite, les reçus à gauche, avec le nom
- * de l'appareil quand il n'est pas dit par l'en-tête ; la zone d'envoi, en
- * bas, envoie dans ce canal (pas à un service). Un balayage vers la droite
- * ramène à la liste. Toucher une bulle ouvre la feuille de l'élément.
- */
 @Composable
 fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -141,22 +128,19 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
     val target = parseChannel(channel)
     val device = (target as? ChannelTarget.Mine)?.device?.takeIf { it != ALL_CHANNEL }
     val person = (target as? ChannelTarget.Person)?.takeIf { it.device == null }
-    // Du plus récent au plus ancien : la liste est inversée, le plus récent en bas.
     val visible = remember(hub.history, me, channel) {
         hub.history.filter { inChannel(it, channel, me) }.sortedByDescending { it.createdAtMs }
     }
     val uploads = hub.transfers.filter { it.upload && it.channel == channel }
     var selected by remember { mutableStateOf<Received?>(null) }
     val list = rememberLazyListState()
-    // Le dernier élément en vue à chaque nouvel élément ou envoi de fichier.
     LaunchedEffect(visible.firstOrNull()?.msgId, uploads.size) { list.scrollToItem(0) }
-    // Conversation d'une personne à l'écran : ses éléments sont lus.
     LaunchedEffect(channel, visible.firstOrNull()?.msgId) {
         if (target is ChannelTarget.Person) {
             try {
                 RelayHub.markOpened(context, target.user)
-            } catch (_: OtException) {
-                // Stockage illisible : les non-lus restent affichés.
+            } catch (e: OtException) {
+                Log.w("OldTown", "non-lus non rangés : ${e.message}")
             }
         }
     }
@@ -205,7 +189,6 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
             state = list,
             reverseLayout = true,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            // Ancrée en bas, même quand les bulles ne remplissent pas l'écran.
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
         ) {
             items(uploads, key = { "up:" + it.id }) { UploadBubble(it) }
@@ -254,7 +237,6 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
     selected?.let { ItemSheet(it, onDismiss = { selected = null }) }
 }
 
-/** Sous le nom : « en ligne » ou « hors ligne » ; pour « Tous », combien sont en ligne. */
 private fun subtitle(presence: Map<String, Boolean>?, member: String?, others: List<String>): Pair<Boolean, String>? {
     if (presence == null) return null
     if (member != null) {
@@ -290,7 +272,6 @@ private fun MessageBubble(item: Received, sender: String?, progress: Transfer?, 
             } else {
                 RoundedCornerShape(BUBBLE, BUBBLE, BUBBLE, TAIL)
             }
-            // Un fichier envoyé d'ici n'a pas de copie à ouvrir : rien au toucher.
             val clickable = !(out && item.file != null)
             Column(
                 Modifier
@@ -301,7 +282,6 @@ private fun MessageBubble(item: Received, sender: String?, progress: Transfer?, 
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                // Texte normal dans les deux bulles (charte, comme l'extension).
                 val fg = c.foreground
                 val file = item.file
                 if (file != null) {
@@ -357,7 +337,6 @@ private fun MessageBubble(item: Received, sender: String?, progress: Transfer?, 
     }
 }
 
-/** Fichier en cours d'envoi dans ce canal : sa progression, en bas. */
 @Composable
 private fun UploadBubble(t: Transfer) {
     val c = Ot.colors
@@ -400,11 +379,6 @@ private fun UploadBubble(t: Transfer) {
     }
 }
 
-/**
- * Zone d'envoi : trombone (sélecteur d'Android, envoi par le service),
- * champ de texte, « Coller », envoi. Suit le clavier : l'écran entier est
- * déjà rétréci par `safeDrawingPadding` (insets du clavier compris).
- */
 @Composable
 private fun Composer(hub: HubState, channel: String, name: String) {
     val context = LocalContext.current
@@ -447,8 +421,6 @@ private fun Composer(hub: HubState, channel: String, name: String) {
                 clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.let { text += it.toString() }
             }, tint = Ot.colors.muted)
             Spacer(Modifier.width(4.dp))
-            // Le champ se vide dès l'appui : pas de double envoi, et l'envoi
-            // suivant n'attend pas l'accusé du précédent (hors ligne).
             val canSend = text.isNotBlank() && ready
             Box(
                 Modifier
@@ -460,7 +432,6 @@ private fun Composer(hub: HubState, channel: String, name: String) {
                         text = ""
                         notice = if (hub.connection is Connection.Connected) null else "Hors ligne : envoi au retour de la connexion."
                         scope.launch {
-                            // L'élément arrive dans la liste par le service (« envoi… »).
                             val failure = try {
                                 RelayHub.send(context, body, channel)
                                 null

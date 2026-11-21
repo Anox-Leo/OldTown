@@ -11,7 +11,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Étape 3, T7 et étape 5, T5 : la feuille de partage reçoit un `ACTION_SEND`. */
 @RunWith(AndroidJUnit4::class)
 class ShareActivityTest {
     @get:Rule val compose = createEmptyComposeRule()
@@ -34,14 +33,12 @@ class ShareActivityTest {
     @Test
     fun imageWithoutStreamIsNothingToSend() {
         ActivityScenario.launch<ShareActivity>(share("image/png", null)).use {
-            // La première composition peut ne pas être faite : on attend le texte.
             compose.waitUntil(TIMEOUT) { compose.onAllNodesWithTextSubstring("Rien à envoyer").isNotEmpty() }
         }
     }
 
     @Test
     fun sharedImageIsListedWithItsSize() {
-        // Une image rangée par l'appli elle-même dans Téléchargements, partagée par son URI.
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "partage-test.png")
             put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")

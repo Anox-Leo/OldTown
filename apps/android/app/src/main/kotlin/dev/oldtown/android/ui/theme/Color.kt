@@ -4,12 +4,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-/**
- * Palette des écrans : les rôles du système de design (`Tokens.kt`, généré
- * depuis `design/tokens.json`), sombre « nuit » et clair « parchemin ».
- * Aucune valeur ici : les noms des champs sont ceux des écrans, les jetons
- * gardent ceux de l'extension.
- */
 @Immutable
 data class OtColors(
     val screen: Color,
@@ -24,7 +18,6 @@ data class OtColors(
     val primary: Color,
     val onPrimary: Color,
     val primaryText: Color,
-    /** Bulle envoyée, sous le texte normal ([foreground]). */
     val bubbleOut: Color,
     val success: Color,
     val warning: Color,
@@ -34,11 +27,8 @@ data class OtColors(
     val dangerBorder: Color,
     val dangerForeground: Color,
     val backdrop: Color,
-    /** Tuile de l'icône, sous le signe (« Tous mes appareils »). */
     val tile: Color,
-    /** Le signe, toujours en pierre. */
     val mark: Color,
-    /** Pictogramme posé sur la couleur d'un avatar. */
     val onAvatar: Color,
     val isDark: Boolean,
 )

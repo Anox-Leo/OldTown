@@ -15,16 +15,6 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * Stockage des secrets du cœur Rust (étape 3, T4) : chaque valeur est
- * chiffrée en AES-256-GCM par une clé non exportable du Keystore Android,
- * puis rangée dans `noBackupFilesDir/secrets/<nom>.bin` (hors sauvegardes).
- *
- * Format d'un fichier : `version (1) ‖ IV (12) ‖ chiffré ‖ tag (16)` ; le nom
- * est la donnée associée, si bien qu'un fichier renommé ne se déchiffre pas.
- * Le Keystore ne garde pas les clés Ed25519/X25519 elles-mêmes : le cœur doit
- * pouvoir s'en servir.
- */
 class KeystoreSecretStore(
     private val dir: File,
     private val alias: String = DEFAULT_ALIAS,
@@ -49,7 +39,6 @@ class KeystoreSecretStore(
             cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
             cipher.doFinal(data, 1 + IV_LEN, data.size - 1 - IV_LEN)
         } catch (e: GeneralSecurityException) {
-            // Clé du Keystore perdue (restauration, réinitialisation) ou fichier altéré.
             throw StoreException.Failed("$name ne se déchiffre pas : ${e.javaClass.simpleName}")
         }
     }
@@ -81,7 +70,6 @@ class KeystoreSecretStore(
             } catch (e: IOException) {
                 throw StoreException.Failed("écriture de $name : ${e.message}")
             } finally {
-                // Le clair ne traîne pas en mémoire plus que nécessaire.
                 value.fill(0)
             }
         }
@@ -111,7 +99,6 @@ class KeystoreSecretStore(
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setRandomizedEncryptionRequired(true)
-            // Utilisable téléphone verrouillé : le service reçoit la nuit.
             .setUserAuthenticationRequired(false)
             .build()
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE).run {
@@ -120,7 +107,6 @@ class KeystoreSecretStore(
         }
     }
 
-    /** Efface la clé du Keystore (tests). */
     fun deleteKey() {
         synchronized(lock) {
             KeyStore.getInstance(KEYSTORE).apply { load(null) }.deleteEntry(alias)
@@ -138,7 +124,6 @@ class KeystoreSecretStore(
 
         @Volatile private var instance: KeystoreSecretStore? = null
 
-        /** Stockage de l'appli, partagé par tout le processus. */
         fun get(context: Context): KeystoreSecretStore =
             instance ?: synchronized(this) {
                 instance ?: KeystoreSecretStore(File(context.noBackupFilesDir, "secrets"))

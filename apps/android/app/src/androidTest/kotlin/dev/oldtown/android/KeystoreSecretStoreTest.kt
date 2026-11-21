@@ -14,7 +14,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Étape 3, T4 : secrets chiffrés par une clé du Keystore. */
 @RunWith(AndroidJUnit4::class)
 class KeystoreSecretStoreTest {
     private lateinit var dir: File
@@ -38,13 +37,12 @@ class KeystoreSecretStoreTest {
         val secret = "graine-ed25519".toByteArray()
         store.put("device.key", secret.copyOf())
         assertArrayEquals(secret, store.get("device.key"))
-        // Rien en clair sur le disque.
         val raw = File(dir, "device.key.bin").readBytes()
         assertFalse(String(raw, Charsets.ISO_8859_1).contains("graine"))
 
         store.delete("device.key")
         assertNull(store.get("device.key"))
-        store.delete("device.key") // sans effet
+        store.delete("device.key")
         assertNull(store.get("absent.json"))
     }
 

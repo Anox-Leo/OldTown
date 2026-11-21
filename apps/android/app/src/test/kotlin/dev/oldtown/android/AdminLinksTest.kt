@@ -8,7 +8,6 @@ import dev.oldtown.core.AdminUserItem
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Mêmes cas que la grille du réseau de `people.spec.ts` (D41), plus le choix des interrupteurs. */
 class AdminLinksTest {
     private fun user(id: String, links: List<String>, role: String = "member", state: String = "active") =
         AdminUserItem(userId = id, name = id, role = role, state = state, devices = emptyList(), links = links, muted = emptyList())

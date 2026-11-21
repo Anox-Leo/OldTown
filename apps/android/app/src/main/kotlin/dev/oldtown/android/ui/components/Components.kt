@@ -52,7 +52,6 @@ import dev.oldtown.android.ui.theme.Mono
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.android.ui.theme.OtShapes
 
-/** Barre du haut : retour éventuel, titre, actions à droite. */
 @Composable
 fun TopBar(
     title: String,
@@ -80,7 +79,6 @@ fun TopBar(
     }
 }
 
-/** Bouton icône sans fond, 40 dp. */
 @Composable
 fun GhostIcon(
     icon: ImageVector,
@@ -101,7 +99,6 @@ fun GhostIcon(
     }
 }
 
-/** Carte : fond à peine plus clair que l'écran, bordure fine. */
 @Composable
 fun OtCard(
     modifier: Modifier = Modifier,
@@ -118,7 +115,6 @@ fun OtCard(
     }
 }
 
-/** Petit titre de section, discret. */
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -148,7 +144,6 @@ fun OtButton(
         ButtonKind.Danger -> Triple(c.danger, c.dangerForeground, c.dangerBorder)
     }
     val active = enabled && !loading
-    // Bouton désactivé : couleurs atténuées, sans modificateur `alpha`.
     val dim = if (enabled) 1f else 0.4f
     val bgColor = bg.copy(alpha = bg.alpha * dim)
     val fgColor = fg.copy(alpha = fg.alpha * dim)
@@ -174,7 +169,6 @@ fun OtButton(
     }
 }
 
-/** Ligne de liste : icône, titre, sous-titre, élément à droite. */
 @Composable
 fun ListRow(
     title: String,
@@ -220,7 +214,6 @@ fun ListRow(
 @Composable
 fun Divider() = HorizontalDivider(color = Ot.colors.border, thickness = 1.dp)
 
-/** Interrupteur aux couleurs de la charte. */
 @Composable
 fun OtSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val c = Ot.colors
@@ -240,7 +233,6 @@ fun OtSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: 
     )
 }
 
-/** Pictogramme d'une catégorie d'appareil, pour son avatar (note 0068). */
 fun DeviceKind.icon(): ImageVector = when (this) {
     DeviceKind.PHONE -> OtIcons.Phone
     DeviceKind.LAPTOP -> OtIcons.Laptop
@@ -251,12 +243,6 @@ fun DeviceKind.icon(): ImageVector = when (this) {
     DeviceKind.GROUP, DeviceKind.PERSON -> OtIcons.Users
 }
 
-/**
- * Avatar rond d'un appareil (note 0031) : pictogramme blanc de sa catégorie
- * sur sa couleur ([dev.oldtown.android.ui.avatarColor]), point vert s'il est
- * en ligne ; une personne : ses initiales ; « Tous mes appareils » : le signe
- * sur la tuile de l'icône, comme l'extension.
- */
 @Composable
 fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false, initials: String = "") {
     val group = kind == DeviceKind.GROUP
@@ -296,13 +282,11 @@ fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = fa
     }
 }
 
-/** Pastille de couleur (état de connexion, présence). */
 @Composable
 fun Dot(color: Color, size: Int = 8) {
     Box(Modifier.size(size.dp).clip(CircleShape).background(color))
 }
 
-/** Pastille d'état : point coloré et libellé. */
 @Composable
 fun StatusPill(label: String, color: Color, pulsing: Boolean = false) {
     val alpha by animateFloatAsState(if (pulsing) 0.5f else 1f, label = "status")
@@ -321,7 +305,6 @@ fun StatusPill(label: String, color: Color, pulsing: Boolean = false) {
 
 enum class BannerKind { Info, Warning, Danger }
 
-/** Bandeau d'information ou d'alerte, avec une action facultative. */
 @Composable
 fun Banner(
     text: String,
@@ -361,7 +344,6 @@ fun Banner(
     }
 }
 
-/** Champ de saisie à la manière de T3 Code : fond d'entrée, bordure fine. */
 @Composable
 fun OtTextField(
     value: String,

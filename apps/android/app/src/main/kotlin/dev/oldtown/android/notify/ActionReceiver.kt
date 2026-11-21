@@ -10,7 +10,6 @@ import dev.oldtown.core.OtException
 import dev.oldtown.core.history
 import kotlinx.coroutines.launch
 
-/** Action « Copier » d'une notification : écrit l'élément dans le presse-papiers. */
 class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_COPY) return

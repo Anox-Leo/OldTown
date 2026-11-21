@@ -12,14 +12,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Étape 5, T5 : téléchargement d'office et actions d'un fichier reçu. */
 class FileRulesTest {
     @Test
     fun autoDownloadOnlySmallFilesOnUnmeteredNetworks() {
         assertTrue(shouldAutoDownload(1_000u, unmetered = true))
         assertTrue(shouldAutoDownload(AUTO_DOWNLOAD_MAX.toULong(), unmetered = true))
         assertFalse(shouldAutoDownload(AUTO_DOWNLOAD_MAX.toULong() + 1u, unmetered = true))
-        // En 4G : jamais d'office, même petit.
         assertFalse(shouldAutoDownload(1_000u, unmetered = false))
     }
 

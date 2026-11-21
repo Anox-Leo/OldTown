@@ -64,7 +64,6 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** Membres du groupe, empreintes, ajout et exclusion d'un appareil. */
 @Composable
 fun GroupScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
     val context = LocalContext.current
@@ -197,16 +196,11 @@ fun GroupScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
     }
 }
 
-/**
- * Parrainage par QR inversé (note 0013) : on scanne le QR affiché par
- * `ot pair join --qr` sur le nouvel appareil, on confirme, et le téléphone
- * le fait enregistrer puis lui envoie le groupe.
- */
 @Composable
 fun SponsorScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var scanned by remember { mutableStateOf<Pair<String, String>?>(null) } // (qr, nom)
+    var scanned by remember { mutableStateOf<Pair<String, String>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var done by remember { mutableStateOf<String?>(null) }
@@ -289,10 +283,6 @@ fun SponsorScreen(onBack: () -> Unit) {
     }
 }
 
-/**
- * Code d'appairage créé par le téléphone, en QR et en texte, pour un appareil
- * qui rejoint avec `ot pair join` (ou un autre téléphone).
- */
 @Composable
 fun ShowCodeScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -327,7 +317,6 @@ fun ShowCodeScreen(onBack: () -> Unit) {
             }
             val inv = invitation
             if (inv != null && joined == null) {
-                // Signe au-dessus du QR, comme l'appairage de l'extension.
                 Mark(32.dp, Modifier.align(Alignment.CenterHorizontally))
                 QrImage(inv.uri, Modifier.padding(horizontal = 24.dp))
                 OtCard {

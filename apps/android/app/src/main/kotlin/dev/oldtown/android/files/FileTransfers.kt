@@ -20,15 +20,9 @@ import dev.oldtown.core.Received
 import dev.oldtown.core.TransferListener
 import java.io.IOException
 
-/**
- * Transferts de fichiers (étape 5), lancés par le service (note 0027) :
- * envoi d'URI partagées, téléchargement dans `Download/OldTown`. La
- * progression va dans [RelayHub] (écran) et dans une notification.
- */
 object FileTransfers {
     private const val TAG = "OldTown"
 
-    /** Réseau par défaut non facturé à l'usage (Wi-Fi, Ethernet). */
     fun isUnmetered(context: Context): Boolean {
         val cm = context.getSystemService(ConnectivityManager::class.java)
         val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
@@ -46,11 +40,6 @@ object FileTransfers {
         }
     }
 
-    /**
-     * Fichiers choisis dans le sélecteur d'Android : leur accès en lecture
-     * est gardé au-delà d'un redémarrage, pour qu'un envoi interrompu puisse
-     * reprendre. Rendu une fois l'envoi fini ([release]).
-     */
     fun keepAccess(context: Context, uris: List<Uri>) {
         for (uri in uris) {
             runCatching {
@@ -68,10 +57,6 @@ object FileTransfers {
         }
     }
 
-    /**
-     * Envoie une URI partagée dans un canal (un de mes appareils, `""` : tous,
-     * ou une personne) ; relancer la même URI reprend l'envoi.
-     */
     suspend fun send(context: Context, client: OtClient, uri: Uri, channel: String) {
         val id = uri.toString()
         var name = uri.lastPathSegment ?: "fichier"
@@ -95,15 +80,10 @@ object FileTransfers {
         } catch (e: IOException) {
             failed(context, Transfer(id, name, upload = true, 0, 0, channel = channel), e.message)
         } catch (e: SecurityException) {
-            // Accès à l'URI retiré (appli tuée, partage expiré) : il faut repartager.
             failed(context, Transfer(id, name, upload = true, 0, 0, channel = channel), "fichier plus accessible : le partager de nouveau")
         }
     }
 
-    /**
-     * Télécharge le fichier de l'élément `msgId` dans `Download/OldTown`.
-     * Renvoie l'élément mis à jour (URI enregistrée), `null` en cas d'échec.
-     */
     suspend fun download(context: Context, client: OtClient, item: Received): Received? {
         val file = item.file ?: return null
         if (file.savedUri != null) return item
@@ -133,13 +113,11 @@ object FileTransfers {
         Notifications.transferFailed(context, t)
     }
 
-    /** « Ouvrir » un fichier enregistré, avec la lecture accordée à l'appli choisie. */
     fun openIntent(savedUri: String, mime: String): Intent =
         Intent(Intent.ACTION_VIEW)
             .setDataAndType(savedUri.toUri(), mime)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    /** « Partager » un fichier enregistré. */
     fun shareIntent(savedUri: String, mime: String): Intent {
         val uri = savedUri.toUri()
         val send = Intent(Intent.ACTION_SEND)
