@@ -28,13 +28,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * Service de premier plan `specialUse` (note 0016) : tient l'unique
- * connexion de l'appareil au relais, de l'ouverture de l'appli ou du
- * démarrage du téléphone jusqu'à l'oubli de l'appareil. Fait aussi les
- * transferts de fichiers (note 0027) : il garde l'accès aux URI partagées et
- * survit à la fermeture des écrans.
- */
 class RelayService : LifecycleService() {
     private var client: OtClient? = null
     private var loop: Job? = null
@@ -46,8 +39,6 @@ class RelayService : LifecycleService() {
             this,
             Notifications.CONNECTION_ID,
             Notifications.connection(this, Connection.Connecting, waitingSponsor = false),
-            // `specialUse` existe depuis Android 14 ; Android 13 (le téléphone
-            // visé par minSdk 33) n'exige pas de type.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             } else {
@@ -85,11 +76,6 @@ class RelayService : LifecycleService() {
         for (uri in uris) FileTransfers.send(this, c, uri, channel)
     }
 
-    /**
-     * Télécharge le fichier d'un élément ; notifie l'enregistrement si
-     * l'appli n'est pas au premier plan, ou si l'utilisateur l'a demandé
-     * depuis une notification.
-     */
     private suspend fun download(msgId: String, userAsked: Boolean) {
         val c = try {
             RelayHub.client(this)
@@ -106,7 +92,6 @@ class RelayService : LifecycleService() {
         }
     }
 
-    /** Fichier annoncé : téléchargé d'office (petit, réseau non facturé), sinon proposé. */
     private fun onFile(item: Received) {
         val file = item.file ?: return
         if (shouldAutoDownload(file.size, FileTransfers.isUnmetered(this))) {
@@ -159,7 +144,6 @@ class RelayService : LifecycleService() {
                         Notifications.showMessage(this, event.received)
                     }
                 }
-                // Envoi rangé, accepté ou en échec (note 0033) : jamais notifié.
                 is Event.Sent -> RelayHub.upsert(event.item)
                 is Event.Unsent -> RelayHub.remove(event.msgId)
                 is Event.GroupChanged -> {
@@ -171,7 +155,6 @@ class RelayService : LifecycleService() {
                 is Event.JoinFailed -> RelayHub.notify(Notice.JoinFailed(event.message))
                 is Event.Rejected -> Log.w(TAG, "message de ${event.fromName} rejeté : ${event.reason}")
                 is Event.StorageError -> RelayHub.notify(Notice.Problem(event.message))
-                // Étape 10 : annuaire, personnes et invitations.
                 is Event.DirectoryChanged -> refreshPeople(started)
                 is Event.DirectoryRejected -> {
                     Log.w(TAG, "annuaire : objet de ${event.userId} refusé : ${event.reason}")
@@ -205,10 +188,6 @@ class RelayService : LifecycleService() {
         }
     }
 
-    /**
-     * Relit les personnes de l'annuaire, puis les raccourcis Direct Share ;
-     * à part, pour ne pas retenir les événements suivants.
-     */
     private fun refreshPeople(client: OtClient) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -221,11 +200,6 @@ class RelayService : LifecycleService() {
         }
     }
 
-    /**
-     * Racine de l'annuaire (D51) : adoptée d'office si un autre appareil de
-     * l'admin l'a publiée ; sinon, sur un appareil de l'admin, « Publier
-     * l'annuaire » est proposé dans les réglages.
-     */
     private fun checkRoot(client: OtClient) {
         if (RelayHub.state.value.group == null) return
         lifecycleScope.launch(Dispatchers.IO) {
@@ -241,7 +215,6 @@ class RelayService : LifecycleService() {
         }
     }
 
-    /** Met à jour la notification permanente. */
     private fun render() {
         val state = RelayHub.state.value
         Notifications.updateConnection(
@@ -257,7 +230,6 @@ class RelayService : LifecycleService() {
         val c = client ?: return
         client = null
         RelayHub.detach()
-        // Fermeture propre (acquittements envoyés) sans bloquer le thread principal.
         OldTownApp.scope.launch {
             withTimeoutOrNull(SHUTDOWN_TIMEOUT_MS) { c.shutdown() }
             c.close()

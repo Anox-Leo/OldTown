@@ -19,26 +19,19 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Étape 3, T5 : démarrage et arrêt du service. Le relais est volontairement
- * injoignable : le client tourne, échoue à se connecter et réessaie.
- */
 @RunWith(AndroidJUnit4::class)
 class RelayServiceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val store = RelayHub.store(context)
 
-    /** Vrai seulement si le téléphone n'était pas appairé : rien à protéger. */
     private var ownsStore = false
 
-    /** Ces tests créent puis oublient un faux appareil : jamais sur un téléphone appairé. */
     @Before
     fun noRealDevice() {
         assumeNoRealDevice(context)
         ownsStore = true
     }
 
-    /** JUnit 4 passe ici même si l'hypothèse a sauté le test : ne rien effacer alors. */
     @After
     fun tearDown() {
         if (!ownsStore) return
@@ -48,7 +41,6 @@ class RelayServiceTest {
 
     @Test
     fun startsReconnectsAndStops() = runBlocking {
-        // Appareil fictif, relais sur un port fermé.
         store.put(
             "device.json",
             """{"device_id":"dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5","name":"test","server_url":"ws://127.0.0.1:9"}"""
@@ -74,7 +66,6 @@ class RelayServiceTest {
         forgetDevice(store)
         RelayHub.reload(context)
         ContextCompat.startForegroundService(context, Intent(context, RelayService::class.java))
-        // Sans appareil, pas de client : la connexion reste arrêtée.
         kotlinx.coroutines.delay(1_000)
         assertEquals(Connection.Stopped, RelayHub.state.value.connection)
     }

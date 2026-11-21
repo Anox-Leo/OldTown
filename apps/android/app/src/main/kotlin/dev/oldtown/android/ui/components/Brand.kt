@@ -14,34 +14,24 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.oldtown.android.ui.theme.Ot
 
-// Signe « archivolte » et logotype d'OldTown, repris tels quels de `branding/`
-// (`archivolte-signe.svg`, `archivolte-petit.svg`, `logotype-mono.svg`), comme
-// `brand.ts` de l'extension ; `BrandTest` le vérifie. Le signe est toujours en
-// pierre (`mark`), le nom dans la couleur du texte.
-
-/** Boîte serrée du signe et du logotype, sur la grille de 128. */
 private const val BOX_X = 18f
 private const val BOX_Y = 21.66f
 private const val MARK_W = 92f
 private const val LOGO_W = 360.82f
 private const val BOX_H = 96.34f
 
-/** Sous cette hauteur, la taille optique (charte, § 3). */
 private val OPTICAL_BELOW = 24.dp
 
-/** Signe complet (24 dp et plus). */
 const val MARK_PATH =
     "M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM26 118V80A52 52 0 0 1 64 29.92" +
         "A52 52 0 0 1 102 80V118zM32 118V80A46 46 0 0 1 64 36.18A46 46 0 0 1 96 80V118zM40 110V86" +
         "A21 21 0 0 1 50.5 67.81A21 21 0 0 1 61 86V110zM67 110V86A21 21 0 0 1 77.5 67.81" +
         "A21 21 0 0 1 88 86V110z"
 
-/** Taille optique (sous 24 dp) : archivolte épaissie, noyau plein. */
 const val MARK_SMALL_PATH =
     "M18 118V80A60 60 0 0 1 64 21.66A60 60 0 0 1 110 80V118zM32 118V80A46 46 0 0 1 64 36.18" +
         "A46 46 0 0 1 96 80V118zM40 118V80A38 38 0 0 1 64 44.67A38 38 0 0 1 88 80V118z"
 
-/** « OldTown » en DM Sans demi-gras, vectorisé. */
 const val WORDMARK_PATH =
     "M158.46 98.53Q151.81 98.53 146.84 95.65Q141.87 92.77 139.09 87.61" +
         "Q136.3 82.45 136.3 75.61Q136.3 68.84 139.09 63.68Q141.87 58.52 146.84 55.6" +
@@ -80,10 +70,6 @@ const val WORDMARK_PATH =
         "Q369.06 76.5 367.32 74.25Q365.58 72 361.97 72Q359.69 72 357.86 73.14" +
         "Q356.02 74.28 354.98 76.37Q353.93 78.46 353.93 81.5L353.93 97.77Z"
 
-/**
- * Tracés à la grille de 128, ramenés à l'origine de leur boîte : le signe en
- * pair-impair (`fill-rule="evenodd"` des SVG), le nom en non nul.
- */
 private fun vector(name: String, width: Float, height: Dp, mark: String, markColor: Color, word: Color?): ImageVector =
     ImageVector.Builder(name, height * (width / BOX_H), height, width, BOX_H).apply {
         addGroup(translationX = -BOX_X, translationY = -BOX_Y)
@@ -92,7 +78,6 @@ private fun vector(name: String, width: Float, height: Dp, mark: String, markCol
         clearGroup()
     }.build()
 
-/** Le signe seul, décoratif ; taille optique sous 24 dp de haut. */
 @Composable
 fun Mark(height: Dp, modifier: Modifier = Modifier, color: Color = Ot.colors.mark) {
     val path = if (height < OPTICAL_BELOW) MARK_SMALL_PATH else MARK_PATH
@@ -100,7 +85,6 @@ fun Mark(height: Dp, modifier: Modifier = Modifier, color: Color = Ot.colors.mar
     Image(image, contentDescription = null, modifier = modifier.size(height * (MARK_W / BOX_H), height))
 }
 
-/** Signe et nom : en-tête de l'accueil, premier écran. */
 @Composable
 fun Logo(height: Dp, modifier: Modifier = Modifier) {
     val c = Ot.colors

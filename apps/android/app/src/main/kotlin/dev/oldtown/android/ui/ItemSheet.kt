@@ -49,11 +49,6 @@ internal fun openFile(context: Context, uri: String, mime: String) {
     runCatching { context.startActivity(FileTransfers.openIntent(uri, mime)) }
 }
 
-/**
- * Feuille d'un élément : texte entier (sélectionnable) et ses actions, ou
- * fichier et ses actions. Un envoi d'ici est signé « Vous » ; un fichier
- * envoyé d'ici n'a pas d'action (ce téléphone n'en garde pas de copie).
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ItemSheet(item: Received, onDismiss: () -> Unit) {

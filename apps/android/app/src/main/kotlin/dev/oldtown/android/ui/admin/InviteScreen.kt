@@ -59,12 +59,6 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/**
- * Inviter une personne (T15, comme `admin.html`) : son nom, les personnes
- * avec qui elle sera liée (moi par défaut), puis le QR, le lien et le code
- * à lui transmettre à elle seule. Ce téléphone la certifie à l'arrivée de sa
- * demande (`PersonJoined`, avec l'empreinte à comparer de vive voix).
- */
 @Composable
 fun InviteScreen(hub: HubState, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -134,11 +128,6 @@ fun InviteScreen(hub: HubState, onBack: () -> Unit) {
     }
 }
 
-/**
- * Invitation créée (ou refaite) : QR à scanner, lien à envoyer (un SMS
- * ouvre l'appli), code ; puis l'arrivée de la personne et l'empreinte de son
- * appareil, à comparer de vive voix.
- */
 @Composable
 fun ColumnScope.InvitationCard(invite: PersonInvite, name: String) {
     val context = LocalContext.current

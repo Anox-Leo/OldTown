@@ -52,7 +52,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Réglages et état (étape 3, T10), personnes et services (étape 10). */
 @Composable
 fun SettingsScreen(hub: HubState, onBack: () -> Unit, onForgotten: () -> Unit, open: (Screen) -> Unit = {}) {
     val context = LocalContext.current

@@ -13,12 +13,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Étape 3, T6 : choix des actions d'une notification selon le `kind`. */
 class MessageActionsTest {
     @Test
     fun textGetsCopyAndShare() {
         assertEquals(listOf(COPY, SHARE), actionsFor(ContentKind.TEXT, "code 4821"))
-        // Un texte qui ressemble à un lien reste un texte : pas d'« Ouvrir ».
         assertEquals(listOf(COPY, SHARE), actionsFor(ContentKind.TEXT, "https://example.org"))
     }
 

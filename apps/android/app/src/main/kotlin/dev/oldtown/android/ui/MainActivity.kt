@@ -60,11 +60,6 @@ class MainActivity : ComponentActivity() {
         openFrom(intent)
     }
 
-    /**
-     * Notification d'un message : sa conversation (le canal seul passe par
-     * l'`Intent`). Lien `oldtown://invite?…` reçu (SMS, courriel) : l'écran
-     * « J'ai reçu une invitation ».
-     */
     private fun openFrom(intent: Intent) {
         intent.getStringExtra(EXTRA_CHANNEL)?.let { openChannel.value = it }
         val data = intent.data
@@ -74,17 +69,13 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        /** Canal à ouvrir (note 0033), mis par une notification. */
         const val EXTRA_CHANNEL = "dev.oldtown.android.extra.CHANNEL"
 
-        /** Conversation demandée par une notification, prise en charge par l'écran. */
         internal val openChannel = MutableStateFlow<String?>(null)
 
-        /** Lien d'invitation ouvert, pris en charge par le premier lancement. */
         internal val openInvite = MutableStateFlow<String?>(null)
     }
 
-    // Écran visible : les messages reçus vont dans la liste, sans notification (T8b).
     override fun onStart() {
         super.onStart()
         Foreground.mainVisible = true
@@ -97,20 +88,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Écrans au-dessus de l'accueil, dans l'ordre de la pile. */
 sealed interface Screen {
     data object Group : Screen
     data object Settings : Screen
     data object Sponsor : Screen
     data object ShowCode : Screen
-    /** Conversation d'un canal : `""` pour « Tous », un appareil, ou `user:…`. */
     data class Conversation(val channel: String) : Screen
-    /** Mes appareils : catégorie, par défaut, joignable, retirer (étape 10). */
     data object MyDevices : Screen
-    /** Administration (admin) : personnes, services. */
     data object Admin : Screen
     data object Invite : Screen
-    /** Une personne vue par l'admin : liens, renommer, réinviter, révoquer. */
     data class Person(val userId: String) : Screen
     data object AddService : Screen
 }
@@ -121,7 +107,6 @@ private fun App() {
     val hub by RelayHub.state.collectAsStateWithLifecycle()
     val stack = remember { mutableStateListOf<Screen>() }
     var notice by remember { mutableStateOf<Notice?>(null) }
-    // Personne choisie dans la barre latérale ; `null` : mes appareils.
     var person by rememberSaveable { mutableStateOf<String?>(null) }
     val invite by MainActivity.openInvite.collectAsStateWithLifecycle()
 
@@ -130,7 +115,6 @@ private fun App() {
         RelayHub.ensureStarted(context)
     }
     LaunchedEffect(Unit) { RelayHub.notices.collect { notice = it } }
-    // Notification touchée : sa conversation, par-dessus l'accueil.
     LaunchedEffect(Unit) {
         MainActivity.openChannel.collect { channel ->
             if (channel == null) return@collect
@@ -142,12 +126,10 @@ private fun App() {
     }
     LaunchedEffect(notice) {
         if (notice != null) {
-            // L'empreinte d'une personne arrivée se lit : plus longtemps.
             delay(if (notice is Notice.PersonJoined) 12_000 else 4_000)
             notice = null
         }
     }
-    // Lien d'invitation sur un téléphone déjà dans OldTown : le dire.
     LaunchedEffect(invite, hub.loaded, hub.device) {
         if (invite != null && hub.loaded && hub.device != null) {
             notice = Notice.Problem("Ce téléphone est déjà dans OldTown : l'invitation se scanne sur un nouvel appareil.")
@@ -155,7 +137,6 @@ private fun App() {
         }
     }
 
-    // Notifications : demandées une fois l'appareil appairé.
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(hub.device != null) {
         if (hub.device != null && !SystemState.notificationsAllowed(context)) {

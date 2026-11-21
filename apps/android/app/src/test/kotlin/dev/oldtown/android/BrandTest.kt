@@ -7,16 +7,10 @@ import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * Le signe de l'appli est celui de `branding/` : tracés de `Brand.kt` et des
- * icônes (`res/drawable`), placement compris. Les tests JVM tournent depuis
- * `apps/android/app`.
- */
 class BrandTest {
     private val branding = File("../../../branding")
     private val drawable = File("src/main/res/drawable")
 
-    /** Attributs `d` des tracés d'un SVG, dans l'ordre. */
     private fun paths(svg: String): List<String> =
         Regex(""" d="([^"]+)"""").findAll(File(branding, svg).readText()).map { it.groupValues[1] }.toList()
 
@@ -27,7 +21,6 @@ class BrandTest {
         assertEquals(paths("logotype-mono.svg"), listOf(MARK_PATH, WORDMARK_PATH))
     }
 
-    /** Placement `translate(x y) scale(s) translate(-x0 -y0)` d'un SVG Android, et son tracé. */
     private fun placed(svg: String): List<String> {
         val text = File(branding, svg).readText()
         val m = Regex("""transform="translate\(([\d.]+) ([\d.]+)\) scale\(([\d.]+)\) translate\(-([\d.]+) -([\d.]+)\)"""")
@@ -36,7 +29,6 @@ class BrandTest {
         return listOf(s, s, tx, ty, "-$ox", "-$oy") + paths(svg)
     }
 
-    /** Mêmes valeurs lues dans le vecteur Android (groupe extérieur, intérieur, tracé). */
     private fun vector(xml: String): List<String> {
         val text = File(drawable, xml).readText()
         fun attr(name: String) = Regex("""android:$name="([^"]+)"""").findAll(text).map { it.groupValues[1] }.toList()

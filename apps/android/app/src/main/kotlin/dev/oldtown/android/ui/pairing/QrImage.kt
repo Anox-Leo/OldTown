@@ -18,7 +18,6 @@ import dev.oldtown.android.ui.theme.OtShapes
 import dev.oldtown.core.OtException
 import dev.oldtown.core.qrCode
 
-/** QR code de [text], modules calculés par le cœur Rust, noir sur blanc. */
 @Composable
 fun QrImage(text: String, modifier: Modifier = Modifier) {
     val qr = remember(text) {
@@ -42,7 +41,6 @@ fun QrImage(text: String, modifier: Modifier = Modifier) {
             for (y in 0 until n) {
                 for (x in 0 until n) {
                     if (qr.modules[y * n + x]) {
-                        // Un léger recouvrement évite les lignes claires entre modules.
                         drawRect(Color.Black, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
                     }
                 }
