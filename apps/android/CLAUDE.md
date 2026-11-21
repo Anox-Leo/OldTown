@@ -30,18 +30,36 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   pas par l'`Intent`. « Ouvrir » seulement pour `http(s)://`.
 - **Partage** : `share/ShareActivity` (feuille du bas : texte, ou fichiers
   `SEND`/`SEND_MULTIPLE`, URI `content://` seulement) et un raccourci Direct
-  Share par membre (`share/Shortcuts`). Destinataires : « Tous » en tête,
-  puis les appareils du plus utilisé au moins utilisé (`byUsage`, note
-  0033), raccourcis rangés de même.
+  Share par destinataire (`share/Shortcuts`, identifiant `to:<canal>`).
+  Destinataires : « Tous » en tête, puis mes appareils (sans ceux en ligne
+  de commande), puis les autres personnes (sans les services), chacun du
+  plus utilisé au moins utilisé (`shareTargets`, note 0033), raccourcis
+  rangés de même.
 - **Conversations** (note 0033, comme l'extension) : l'accueil
   (`ui/HomeScreen`) liste « Tous mes appareils » puis un appareil par
   ligne, du plus récemment actif au moins récent, avec présence (relue
   toutes les 15 s au premier plan) ; `ui/ConversationScreen` montre les
   bulles du canal (envois à droite) et envoie dans ce canal ; une
   notification ouvre la conversation de son canal (`EXTRA_CHANNEL`). Règles
-  pures dans `ui/Conversations.kt` (`channelOf`, `deviceKind`,
-  `avatarColor`, `conversations`, `byUsage`), recopiées de l'extension et
-  testées sous JVM : les garder identiques à `devices.ts` et `channelOf`.
+  pures dans `ui/Conversations.kt` (`channelOf`, `inChannel`,
+  `deviceKind`, `avatarColor`, `conversations`, `personConversations`,
+  `railPeople`, `unread`, `initials`, `shareTargets`), recopiées de
+  l'extension et testées sous JVM avec les cas de `people.spec.ts` : les
+  garder identiques à `devices.ts`, `channelOf` et `inChannel`. La catégorie
+  d'un appareil est celle qu'il déclare dans l'annuaire (note 0068), jamais
+  devinée au nom.
+- **Personnes** (étape 10) : `RelayHub` tient l'annuaire vérifié
+  (`people`, relu à chaque `DirectoryChanged`), les non-lus (`opened.json`,
+  rangé par `ot-ffi`), les alertes de l'annuaire et la racine à publier
+  (D51 : adoptée d'office, publiée sur « Publier l'annuaire »). Barre
+  latérale de 72 dp (`ui/Rail`) dès qu'il y a une autre personne ou pour
+  l'admin ; canal `user:<id>` ou `user:<id>/<appareil>` ; un service n'a
+  que sa conversation, sans zone d'envoi. Notifications des autres
+  personnes sur leur canal (« Autres personnes »), titre « Bob · bob-phone ».
+  Réglages : `PeopleSettings`, `MyDevicesScreen` ; administration dans
+  `ui/admin` (personnes, inviter par QR ou lien, liens en interrupteurs,
+  appareil de service). Le lien `oldtown://invite` ouvre « J'ai reçu une
+  invitation » sans rien envoyer avant un appui.
   L'historique (100 éléments) contient aussi les envois (`outgoing`,
   `pending`), signalés par `Event.Sent` / `Event.Unsent`.
 - **Fichiers** (étape 5, notes 0027 et 0028) : envoi par le menu *Partager*

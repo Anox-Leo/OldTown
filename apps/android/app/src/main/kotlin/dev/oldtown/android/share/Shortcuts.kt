@@ -6,28 +6,30 @@ import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import dev.oldtown.android.R
-import dev.oldtown.android.ui.byUsage
+import dev.oldtown.android.ui.shareTargets
 import dev.oldtown.core.Group
+import dev.oldtown.core.PersonItem
 import dev.oldtown.core.Received
 
 /**
- * Direct Share : un raccourci par membre du groupe (sauf ce téléphone), mis
- * à jour au démarrage du service et à chaque changement du groupe, rangés
- * du plus utilisé au moins utilisé (note 0033). Le menu Partager les
- * propose en tête.
+ * Direct Share : un raccourci par destinataire de la feuille de partage
+ * (mes autres appareils, puis les autres personnes, note 0033 et étape 10),
+ * mis à jour au démarrage du service et à chaque changement du groupe ou de
+ * l'annuaire, dans l'ordre de [shareTargets]. Le menu Partager les propose
+ * en tête.
  */
 object Shortcuts {
     const val CATEGORY = "dev.oldtown.android.category.SHARE_TARGET"
-    private const val PREFIX = "member:"
+    private const val PREFIX = "to:"
 
-    fun update(context: Context, group: Group?, history: List<Received>) {
-        val all = group?.members.orEmpty()
-        val members = byUsage(all, history, all.firstOrNull { it.isSelf }?.deviceId)
+    fun update(context: Context, group: Group?, history: List<Received>, people: List<PersonItem>) {
+        val members = group?.members.orEmpty()
+        val targets = shareTargets(members, history, members.firstOrNull { it.isSelf }?.deviceId, people)
         val max = ShortcutManagerCompat.getMaxShortcutCountPerActivity(context).coerceAtLeast(1)
-        val shortcuts = members.take(max).mapIndexed { rank, m ->
-            ShortcutInfoCompat.Builder(context, idOf(m.deviceId))
-                .setShortLabel(m.name)
-                .setLongLabel("Envoyer à ${m.name}")
+        val shortcuts = targets.take(max).mapIndexed { rank, t ->
+            ShortcutInfoCompat.Builder(context, idOf(t.channel))
+                .setShortLabel(t.name)
+                .setLongLabel("Envoyer à ${t.name}")
                 .setIcon(IconCompat.createWithResource(context, R.drawable.ic_shortcut_device))
                 .setCategories(setOf(CATEGORY))
                 .setLongLived(true)
@@ -42,8 +44,8 @@ object Shortcuts {
         ShortcutManagerCompat.setDynamicShortcuts(context, shortcuts)
     }
 
-    fun idOf(deviceId: String) = PREFIX + deviceId
+    fun idOf(channel: String) = PREFIX + channel
 
-    /** Membre visé par un raccourci Direct Share, `null` sinon. */
-    fun memberOf(shortcutId: String?): String? = shortcutId?.removePrefix(PREFIX)?.takeIf { it != shortcutId }
+    /** Canal visé par un raccourci Direct Share, `null` sinon. */
+    fun targetOf(shortcutId: String?): String? = shortcutId?.removePrefix(PREFIX)?.takeIf { it != shortcutId }
 }

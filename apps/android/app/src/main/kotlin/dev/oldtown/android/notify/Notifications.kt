@@ -18,6 +18,7 @@ import dev.oldtown.android.files.FileTransfers
 import dev.oldtown.android.files.fileActions
 import dev.oldtown.android.files.humanSize
 import dev.oldtown.android.relay.Connection
+import dev.oldtown.android.relay.Notice
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.relay.RelayService
 import dev.oldtown.android.relay.Transfer
@@ -26,10 +27,12 @@ import dev.oldtown.android.ui.channelOf
 import dev.oldtown.core.Received
 
 /**
- * Trois canaux : « Connexion » (notification permanente du service,
- * discrète), « Messages » (un élément reçu par notification, groupées) et
- * « Transferts » (progression des fichiers, étape 5). Toutes portent la
- * petite icône du signe (`ic_stat_oldtown`) et sa pierre en couleur d'accent.
+ * Quatre canaux : « Connexion » (notification permanente du service,
+ * discrète), « Messages » (un élément reçu de mes appareils par
+ * notification, groupées), « Autres personnes » (étape 10 : leurs éléments,
+ * ceux des services, l'arrivée d'une personne invitée) et « Transferts »
+ * (progression des fichiers, étape 5). Toutes portent la petite icône du
+ * signe (`ic_stat_oldtown`) et sa pierre en couleur d'accent.
  */
 object Notifications {
     const val CONNECTION_ID = 1
@@ -44,6 +47,8 @@ object Notifications {
     private const val OLD_CHANNEL_CONNECTION = "connection"
     private const val CHANNEL_MESSAGES = "messages"
     private const val CHANNEL_TRANSFERS = "transfers"
+    private const val CHANNEL_PEOPLE = "people"
+    private const val PERSON_JOINED_ID = 3
     private const val GROUP = "dev.oldtown.android.MESSAGES"
 
     fun createChannels(context: Context) {
@@ -64,6 +69,11 @@ object Notifications {
                     context.getString(R.string.channel_messages),
                     NotificationManager.IMPORTANCE_HIGH,
                 ).apply { description = context.getString(R.string.channel_messages_desc) },
+                NotificationChannel(
+                    CHANNEL_PEOPLE,
+                    context.getString(R.string.channel_people),
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply { description = context.getString(R.string.channel_people_desc) },
                 NotificationChannel(
                     CHANNEL_TRANSFERS,
                     context.getString(R.string.channel_transfers),
@@ -132,6 +142,37 @@ object Notifications {
             .notify(CONNECTION_ID, connection(context, connection, waitingSponsor))
     }
 
+    /** Canal d'un élément : celui des autres personnes s'il vient d'elles ou d'un service. */
+    private fun channelFor(item: Received) = if (item.fromUser != null) CHANNEL_PEOPLE else CHANNEL_MESSAGES
+
+    /** Titre : l'appareil, précédé de sa personne si elle n'est pas la mienne (« Bob · bob-phone »). */
+    private fun titleOf(item: Received): String {
+        val user = item.fromUser ?: return item.fromName
+        val person = RelayHub.state.value.people.firstOrNull { it.userId == user } ?: return item.fromName
+        return senderTitle(person.name, item.fromName)
+    }
+
+    /** Admin : une personne invitée par ce téléphone est certifiée, avec l'empreinte à comparer. */
+    fun showPersonJoined(context: Context, joined: Notice.PersonJoined) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val text = context.getString(R.string.person_joined_text, joined.deviceName, joined.fingerprint)
+        NotificationManagerCompat.from(context).notify(
+            PERSON_JOINED_ID,
+            NotificationCompat.Builder(context, CHANNEL_PEOPLE)
+                .setSmallIcon(R.drawable.ic_stat_oldtown)
+                .setColor(context.getColor(R.color.ot_mark))
+                .setContentTitle(context.getString(R.string.person_joined_title, joined.name))
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setContentIntent(openApp(context))
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                .build(),
+        )
+    }
+
     /** Une notification par élément reçu, avec ses actions. */
     fun showMessage(context: Context, item: Received) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -143,10 +184,10 @@ object Notifications {
         }
         val id = idOf(item.msgId)
         val text = if (item.sensitive) context.getString(R.string.sensitive_hidden) else preview(item.body)
-        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+        val builder = NotificationCompat.Builder(context, channelFor(item))
             .setSmallIcon(R.drawable.ic_stat_oldtown)
             .setColor(context.getColor(R.color.ot_mark))
-            .setContentTitle(item.fromName)
+            .setContentTitle(titleOf(item))
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(if (item.sensitive) text else item.body))
             .setWhen(item.createdAtMs)
@@ -196,10 +237,10 @@ object Notifications {
         } else {
             context.getString(R.string.file_offered, file.name, humanSize(file.size.toLong()))
         }
-        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+        val builder = NotificationCompat.Builder(context, channelFor(item))
             .setSmallIcon(R.drawable.ic_stat_oldtown)
             .setColor(context.getColor(R.color.ot_mark))
-            .setContentTitle(item.fromName)
+            .setContentTitle(titleOf(item))
             .setContentText(text)
             .setWhen(item.createdAtMs)
             .setShowWhen(true)
@@ -294,7 +335,7 @@ object Notifications {
     /** Messages affichés : (identifiant, date de publication), sans le résumé du groupe. */
     private fun shownMessages(context: Context): List<Pair<Int, Long>> =
         context.getSystemService(NotificationManager::class.java).activeNotifications
-            .filter { it.notification.channelId == CHANNEL_MESSAGES && it.id != SUMMARY_ID }
+            .filter { it.notification.channelId in setOf(CHANNEL_MESSAGES, CHANNEL_PEOPLE) && it.id != SUMMARY_ID }
             .map { it.id to it.postTime }
 
     /** Au plus [MAX_SHOWN_MESSAGES] : les plus anciennes laissent la place. */

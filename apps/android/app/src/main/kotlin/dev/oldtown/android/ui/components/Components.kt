@@ -28,6 +28,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.oldtown.android.ui.DeviceKind
 import dev.oldtown.android.ui.theme.Mono
 import dev.oldtown.android.ui.theme.Ot
@@ -217,23 +220,45 @@ fun ListRow(
 @Composable
 fun Divider() = HorizontalDivider(color = Ot.colors.border, thickness = 1.dp)
 
-/** Pictogramme d'un type d'appareil, pour son avatar. */
+/** Interrupteur aux couleurs de la charte. */
+@Composable
+fun OtSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val c = Ot.colors
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = c.onPrimary,
+            checkedTrackColor = c.primary,
+            checkedBorderColor = c.primary,
+            uncheckedThumbColor = c.muted,
+            uncheckedTrackColor = c.groupedCard,
+            uncheckedBorderColor = c.inputBorder,
+        ),
+    )
+}
+
+/** Pictogramme d'une catégorie d'appareil, pour son avatar (note 0068). */
 fun DeviceKind.icon(): ImageVector = when (this) {
     DeviceKind.PHONE -> OtIcons.Phone
     DeviceKind.LAPTOP -> OtIcons.Laptop
     DeviceKind.DESKTOP -> OtIcons.Desktop
     DeviceKind.BROWSER -> OtIcons.Globe
-    DeviceKind.GROUP -> OtIcons.Users
+    DeviceKind.CLI -> OtIcons.Cli
+    DeviceKind.UNKNOWN -> OtIcons.Unknown
+    DeviceKind.GROUP, DeviceKind.PERSON -> OtIcons.Users
 }
 
 /**
- * Avatar rond d'un appareil (note 0031) : pictogramme blanc de son type sur
- * sa couleur ([dev.oldtown.android.ui.avatarColor]), point vert s'il est en
- * ligne ; « Tous mes appareils » : le signe sur la tuile de l'icône, comme
- * l'extension.
+ * Avatar rond d'un appareil (note 0031) : pictogramme blanc de sa catégorie
+ * sur sa couleur ([dev.oldtown.android.ui.avatarColor]), point vert s'il est
+ * en ligne ; une personne : ses initiales ; « Tous mes appareils » : le signe
+ * sur la tuile de l'icône, comme l'extension.
  */
 @Composable
-fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false) {
+fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false, initials: String = "") {
     val group = kind == DeviceKind.GROUP
     Box(Modifier.size(size)) {
         Box(
@@ -242,6 +267,16 @@ fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = fa
         ) {
             if (group) {
                 Mark(size * 0.55f)
+            } else if (kind == DeviceKind.PERSON) {
+                Text(
+                    initials,
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = (size.value * 0.38f).sp,
+                    ),
+                    color = Ot.colors.onAvatar,
+                    maxLines = 1,
+                )
             } else {
                 Icon(kind.icon(), contentDescription = null, tint = Ot.colors.onAvatar, modifier = Modifier.size(size * 0.5f))
             }

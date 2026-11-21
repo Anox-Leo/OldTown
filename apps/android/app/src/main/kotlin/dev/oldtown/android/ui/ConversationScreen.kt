@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,7 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -61,47 +65,132 @@ import dev.oldtown.core.Received
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 
+/** Ce que l'en-tête et la zone d'envoi disent du canal. */
+private data class Header(
+    val name: String,
+    val kind: DeviceKind,
+    val color: Long,
+    val initials: String = "",
+    /** Présence lue dans l'annuaire (autre personne) ; `null` : demandée au relais. */
+    val online: Boolean? = null,
+    /** On n'écrit pas à un service (D41). */
+    val readOnly: Boolean = false,
+    /** Appareil d'une personne qui ne lira rien. */
+    val outdated: Boolean = false,
+)
+
+private fun headerOf(hub: HubState, channel: String): Header = when (val t = parseChannel(channel)) {
+    is ChannelTarget.Mine -> {
+        val member = hub.group?.members?.firstOrNull { !it.isSelf && it.deviceId == channel }
+        if (member == null) {
+            Header(ALL_NAME, DeviceKind.GROUP, avatarColor(ALL_CHANNEL))
+        } else {
+            val profile = hub.me?.devices?.firstOrNull { it.deviceId == member.deviceId }
+            Header(member.name, deviceKind(profile?.kind), avatarColor(member.deviceId))
+        }
+    }
+    is ChannelTarget.Person -> {
+        val person = hub.people.firstOrNull { it.userId == t.user }
+        val device = person?.devices?.firstOrNull { it.deviceId == t.device }
+        val name = person?.name ?: "Personne inconnue"
+        when {
+            device != null -> Header(
+                "${device.name} · $name",
+                deviceKind(device.kind),
+                avatarColor(device.deviceId),
+                online = device.online,
+                outdated = !device.upToDate,
+            )
+            else -> Header(
+                name,
+                DeviceKind.PERSON,
+                avatarColor(t.user),
+                initials = initials(name),
+                online = person?.devices?.any { it.online } ?: false,
+                readOnly = person?.isService == true,
+            )
+        }
+    }
+}
+
+/** Nom de l'appareil expéditeur : celui de l'annuaire pour une autre personne, sinon celui du roster. */
+private fun senderName(hub: HubState, item: Received): String {
+    if (item.fromUser == null) return item.fromName
+    return hub.people.firstOrNull { it.userId == item.fromUser }?.devices?.firstOrNull { it.deviceId == item.fromId }?.name
+        ?: item.fromName
+}
+
+/** Distance du balayage vers la droite qui ramène à la liste. */
+private val SWIPE_BACK = 96.dp
+
 /**
- * Conversation d'un canal (note 0033, comme l'extension, notes 0030 et
- * 0031) : « Tous » ou un appareil du groupe. Les envois d'ici sont à droite,
- * les reçus à gauche ; la zone d'envoi, en bas, envoie dans ce canal.
- * Toucher une bulle ouvre la feuille de l'élément.
+ * Conversation d'un canal (note 0033, comme l'extension, notes 0030, 0031 et
+ * 0065) : « Tous », un appareil du groupe, une autre personne ou un de ses
+ * appareils. Les envois d'ici sont à droite, les reçus à gauche, avec le nom
+ * de l'appareil quand il n'est pas dit par l'en-tête ; la zone d'envoi, en
+ * bas, envoie dans ce canal (pas à un service). Un balayage vers la droite
+ * ramène à la liste. Toucher une bulle ouvre la feuille de l'élément.
  */
 @Composable
 fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
+    val context = LocalContext.current
     val presence = rememberPresence(hub.connection)
     val me = hub.device?.deviceId
     val others = hub.group?.members?.filterNot { it.isSelf }.orEmpty()
-    val member = others.firstOrNull { it.deviceId == channel }
-    val name = member?.name ?: ALL_NAME
+    val header = headerOf(hub, channel)
+    val target = parseChannel(channel)
+    val device = (target as? ChannelTarget.Mine)?.device?.takeIf { it != ALL_CHANNEL }
+    val person = (target as? ChannelTarget.Person)?.takeIf { it.device == null }
     // Du plus récent au plus ancien : la liste est inversée, le plus récent en bas.
     val visible = remember(hub.history, me, channel) {
-        hub.history.filter { channelOf(it, me) == channel }.sortedByDescending { it.createdAtMs }
+        hub.history.filter { inChannel(it, channel, me) }.sortedByDescending { it.createdAtMs }
     }
-    val uploads = hub.transfers.filter { it.upload && channelOfUpload(it) == channel }
+    val uploads = hub.transfers.filter { it.upload && it.channel == channel }
     var selected by remember { mutableStateOf<Received?>(null) }
     val list = rememberLazyListState()
     // Le dernier élément en vue à chaque nouvel élément ou envoi de fichier.
     LaunchedEffect(visible.firstOrNull()?.msgId, uploads.size) { list.scrollToItem(0) }
+    // Conversation d'une personne à l'écran : ses éléments sont lus.
+    LaunchedEffect(channel, visible.firstOrNull()?.msgId) {
+        if (target is ChannelTarget.Person) {
+            try {
+                RelayHub.markOpened(context, target.user)
+            } catch (_: OtException) {
+                // Stockage illisible : les non-lus restent affichés.
+            }
+        }
+    }
+    val swipe = with(LocalDensity.current) { SWIPE_BACK.toPx() }
+    var dragged by remember { mutableFloatStateOf(0f) }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier.fillMaxSize().pointerInput(onBack) {
+            detectHorizontalDragGestures(
+                onDragStart = { dragged = 0f },
+                onDragEnd = { if (dragged > swipe) onBack() },
+                onDragCancel = { dragged = 0f },
+            ) { _, amount -> dragged += amount }
+        },
+    ) {
         Row(
             Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GhostIcon(OtIcons.Back, "Retour", onBack)
             Spacer(Modifier.width(4.dp))
-            Avatar(member?.let { deviceKind(it.name) } ?: DeviceKind.GROUP, avatarColor(channel), size = 36.dp)
+            Avatar(header.kind, header.color, size = 36.dp, initials = header.initials)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    name,
+                    header.name,
                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                     color = Ot.colors.foreground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                subtitle(presence, member?.deviceId, others.map { it.deviceId })?.let { (online, text) ->
+                val status = header.online?.let { it to if (it) "en ligne" else "hors ligne" }
+                    ?: subtitle(presence, device, others.map { it.deviceId })
+                status?.let { (online, text) ->
                     Text(
                         text,
                         style = MaterialTheme.typography.labelSmall,
@@ -123,7 +212,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
             items(visible, key = { it.msgId }) { item ->
                 MessageBubble(
                     item,
-                    showSender = channel == ALL_CHANNEL,
+                    sender = if (channel == ALL_CHANNEL || person != null) senderName(hub, item) else null,
                     progress = hub.transfers.firstOrNull { !it.upload && it.id == item.msgId && it.error == null },
                     onOpen = { selected = item },
                 )
@@ -131,7 +220,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
             if (visible.isEmpty() && uploads.isEmpty()) {
                 item {
                     Text(
-                        if (channel == ALL_CHANNEL) "Aucun message pour tous vos appareils." else "Aucun message avec $name.",
+                        if (channel == ALL_CHANNEL) "Aucun message pour tous vos appareils." else "Aucun message avec ${header.name}.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Ot.colors.muted,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
@@ -141,13 +230,29 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
             }
         }
 
-        Composer(hub, channel, name)
+        when {
+            header.readOnly -> Text(
+                "Un service écrit sans lire les réponses.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Ot.colors.muted,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            else -> {
+                if (header.outdated) {
+                    Text(
+                        "Cet appareil n'est pas à jour : il ne recevra rien.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Ot.colors.warningForeground,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                    )
+                }
+                Composer(hub, channel, header.name)
+            }
+        }
     }
     selected?.let { ItemSheet(it, onDismiss = { selected = null }) }
 }
-
-/** Canal d'un envoi de fichier en cours : son unique destinataire, sinon « Tous ». */
-private fun channelOfUpload(t: Transfer): String = t.to.singleOrNull() ?: ALL_CHANNEL
 
 /** Sous le nom : « en ligne » ou « hors ligne » ; pour « Tous », combien sont en ligne. */
 private fun subtitle(presence: Map<String, Boolean>?, member: String?, others: List<String>): Pair<Boolean, String>? {
@@ -164,7 +269,7 @@ private val BUBBLE = 16.dp
 private val TAIL = 4.dp
 
 @Composable
-private fun MessageBubble(item: Received, showSender: Boolean, progress: Transfer?, onOpen: () -> Unit) {
+private fun MessageBubble(item: Received, sender: String?, progress: Transfer?, onOpen: () -> Unit) {
     val out = item.outgoing
     val c = Ot.colors
     Box(Modifier.fillMaxWidth(), contentAlignment = if (out) Alignment.CenterEnd else Alignment.CenterStart) {
@@ -172,9 +277,9 @@ private fun MessageBubble(item: Received, showSender: Boolean, progress: Transfe
             Modifier.fillMaxWidth(0.86f),
             horizontalAlignment = if (out) Alignment.End else Alignment.Start,
         ) {
-            if (showSender && !out) {
+            if (sender != null && !out) {
                 Text(
-                    item.fromName,
+                    sender,
                     style = MaterialTheme.typography.labelSmall,
                     color = c.muted,
                     modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
@@ -308,11 +413,10 @@ private fun Composer(hub: HubState, channel: String, name: String) {
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     val ready = hub.group != null
-    val to = recipientsOf(channel)
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         FileTransfers.keepAccess(context, uris)
-        RelayHub.sendFiles(context, uris, to)
+        RelayHub.sendFiles(context, uris, channel)
     }
 
     Column(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)) {
@@ -358,7 +462,7 @@ private fun Composer(hub: HubState, channel: String, name: String) {
                         scope.launch {
                             // L'élément arrive dans la liste par le service (« envoi… »).
                             val failure = try {
-                                RelayHub.send(context, body, to)
+                                RelayHub.send(context, body, channel)
                                 null
                             } catch (e: OtException) {
                                 e.message ?: "envoi impossible"

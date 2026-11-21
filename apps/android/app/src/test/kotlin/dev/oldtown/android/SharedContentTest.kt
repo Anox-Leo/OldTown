@@ -49,8 +49,10 @@ class SharedContentTest {
 
     @Test
     fun shortcutIds() {
-        assertEquals("dev_01ABC", Shortcuts.memberOf("member:dev_01ABC"))
-        assertNull(Shortcuts.memberOf("autre"))
-        assertNull(Shortcuts.memberOf(null))
+        assertEquals("dev_01ABC", Shortcuts.targetOf(Shortcuts.idOf("dev_01ABC")))
+        assertEquals("user:usr_bob", Shortcuts.targetOf(Shortcuts.idOf("user:usr_bob")))
+        assertEquals("", Shortcuts.targetOf(Shortcuts.idOf("")))
+        assertNull(Shortcuts.targetOf("autre"))
+        assertNull(Shortcuts.targetOf(null))
     }
 }

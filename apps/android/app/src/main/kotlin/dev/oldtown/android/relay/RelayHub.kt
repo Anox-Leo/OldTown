@@ -4,10 +4,16 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import dev.oldtown.android.secrets.KeystoreSecretStore
+import dev.oldtown.android.ui.ChannelTarget
+import dev.oldtown.android.ui.mePerson
+import dev.oldtown.android.ui.parseChannel
+import dev.oldtown.android.ui.recipientsOf
+import dev.oldtown.core.AdminRoot
 import dev.oldtown.core.DeviceState
 import dev.oldtown.core.Group
 import dev.oldtown.core.OtClient
 import dev.oldtown.core.OtException
+import dev.oldtown.core.PersonItem
 import dev.oldtown.core.Received
 import dev.oldtown.core.deviceState
 import dev.oldtown.core.groupSnapshot
@@ -41,6 +47,19 @@ sealed interface Notice {
     data class PairingCompleted(val name: String) : Notice
     data class JoinFailed(val message: String) : Notice
     data class Problem(val message: String) : Notice
+    /** Admin : une personne invitée par ce téléphone est certifiée. */
+    data class PersonJoined(val name: String, val deviceName: String, val fingerprint: String) : Notice
+    /** Invité : ma personne est certifiée. */
+    data object Joined : Notice
+}
+
+/** Alerte de l'annuaire, gardée jusqu'au redémarrage du service (20 au plus), comme l'extension. */
+sealed interface DirectoryAlert {
+    /** Le relais publie pour ma personne un autre groupe que le mien. */
+    data object Fork : DirectoryAlert
+    data class Rejected(val userId: String, val reason: String) : DirectoryAlert
+    /** Nouvelles clés (réinvitation) : à vérifier de vive voix. */
+    data class KeysChanged(val userId: String) : DirectoryAlert
 }
 
 /** Fichier en cours d'envoi ou de réception (étape 5). */
@@ -52,8 +71,8 @@ data class Transfer(
     val done: Long,
     val total: Long,
     val error: String? = null,
-    /** Destinataires d'un envoi (vide : tous), pour sa bulle de progression. */
-    val to: List<String> = emptyList(),
+    /** Canal d'un envoi, pour sa bulle de progression. */
+    val channel: String = "",
 )
 
 data class HubState(
@@ -65,7 +84,21 @@ data class HubState(
     val history: List<Received> = emptyList(),
     val loaded: Boolean = false,
     val transfers: List<Transfer> = emptyList(),
-)
+    /** Personnes de l'annuaire vérifié, moi compris (étape 10) ; vide sans annuaire. */
+    val people: List<PersonItem> = emptyList(),
+    /** Dernière ouverture de la conversation de chaque personne (non-lus). */
+    val opened: Map<String, Long> = emptyMap(),
+    /** Admin sans annuaire publié : le nom qui sera signé (D51) ; `null` sinon. */
+    val rootMissing: String? = null,
+    val alerts: List<DirectoryAlert> = emptyList(),
+    /** Invitation rachetée, en attente de la certification par l'admin. */
+    val invitePending: Boolean = false,
+) {
+    /** Ma personne dans l'annuaire. */
+    val me: PersonItem? get() = mePerson(people, device?.deviceId)
+
+    val isAdmin: Boolean get() = me?.isAdmin == true || rootMissing != null
+}
 
 /**
  * Point d'accès des écrans à la connexion : le client lui-même appartient
@@ -89,7 +122,22 @@ object RelayHub {
         val device = deviceState(store)
         val group = if (device != null) groupSnapshot(store) else null
         val items = if (device != null) history(store) else emptyList()
-        _state.update { it.copy(device = device, group = group, history = items, loaded = true) }
+        val openedAt = if (device != null) dev.oldtown.core.opened(store) else emptyMap()
+        val pending = device != null && dev.oldtown.core.invitePending(store)
+        _state.update {
+            val known = device != null
+            it.copy(
+                device = device,
+                group = group,
+                history = items,
+                loaded = true,
+                opened = openedAt,
+                invitePending = pending,
+                people = if (known) it.people else emptyList(),
+                rootMissing = if (known) it.rootMissing else null,
+                alerts = if (known) it.alerts else emptyList(),
+            )
+        }
     }
 
     /** Démarre le service s'il y a un appareil enregistré. */
@@ -118,9 +166,35 @@ object RelayHub {
         return withTimeout(CLIENT_TIMEOUT_MS) { _client.filterNotNull().first() }
     }
 
-    /** Envoie un texte ou un lien ; `to` vide : tous les autres appareils. */
-    suspend fun send(context: Context, text: String, to: List<String>): String =
-        client(context).sendText(text, to)
+    /**
+     * Envoie un texte ou un lien dans un canal : un de mes appareils (`""` :
+     * tous), une personne (ses appareils par défaut) ou un de ses appareils.
+     */
+    suspend fun send(context: Context, text: String, channel: String): String {
+        val c = client(context)
+        return when (val t = parseChannel(channel)) {
+            is ChannelTarget.Mine -> c.sendText(text, recipientsOf(t.device))
+            is ChannelTarget.Person -> c.sendTextToUser(text, t.user, t.device)
+        }
+    }
+
+    /** Conversation d'une personne ouverte maintenant : ses non-lus retombent à zéro. */
+    suspend fun markOpened(context: Context, user: String) = withContext(Dispatchers.IO) {
+        val all = dev.oldtown.core.markOpened(store(context), user, System.currentTimeMillis())
+        _state.update { it.copy(opened = all) }
+    }
+
+    /** Admin : publie l'annuaire (D51), en signant le nom donné par le relais. */
+    suspend fun publishDirectory(context: Context) {
+        val root = client(context).adminRoot(true)
+        if (root is AdminRoot.Ready) setRootMissing(null)
+        refreshPeople(context)
+    }
+
+    /** Relit les personnes de l'annuaire vérifié (sans connexion : l'état connu). */
+    suspend fun refreshPeople(context: Context) {
+        setPeople(client(context).people())
+    }
 
     // --- Appelé par RelayService -------------------------------------------
 
@@ -139,6 +213,18 @@ object RelayHub {
     internal fun setGroup(group: Group?) = _state.update { it.copy(group = group) }
 
     internal fun setDevice(device: DeviceState?) = _state.update { it.copy(device = device) }
+
+    internal fun setPeople(people: List<PersonItem>) = _state.update { it.copy(people = people) }
+
+    internal fun setRootMissing(name: String?) = _state.update { it.copy(rootMissing = name) }
+
+    internal fun setInvitePending(pending: Boolean) = _state.update { it.copy(invitePending = pending) }
+
+    internal fun addAlert(alert: DirectoryAlert) = _state.update { s ->
+        s.copy(alerts = (listOf(alert) + s.alerts.filter { it != alert }).take(MAX_ALERTS))
+    }
+
+    fun dismissAlerts() = _state.update { it.copy(alerts = emptyList()) }
 
     internal fun prepend(item: Received) = _state.update { s ->
         s.copy(history = (listOf(item) + s.history.filter { it.msgId != item.msgId }).take(HISTORY_LEN))
@@ -173,14 +259,14 @@ object RelayHub {
         s.copy(transfers = s.transfers.filterNot { it.id == id })
     }
 
-    /** Envoie des fichiers partagés, par le service (qui garde l'accès aux URI). */
-    fun sendFiles(context: Context, uris: List<android.net.Uri>, to: List<String>) {
+    /** Envoie des fichiers partagés dans un canal, par le service (qui garde l'accès aux URI). */
+    fun sendFiles(context: Context, uris: List<android.net.Uri>, channel: String) {
         if (uris.isEmpty()) return
         val clip = android.content.ClipData.newRawUri(null, uris.first())
         for (u in uris.drop(1)) clip.addItem(android.content.ClipData.Item(u))
         val intent = Intent(context, RelayService::class.java)
             .setAction(RelayService.ACTION_SEND_FILES)
-            .putStringArrayListExtra(RelayService.EXTRA_TO, ArrayList(to))
+            .putExtra(RelayService.EXTRA_CHANNEL, channel)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         intent.clipData = clip
         ContextCompat.startForegroundService(context, intent)
@@ -200,4 +286,5 @@ object RelayHub {
 
     private const val CLIENT_TIMEOUT_MS = 10_000L
     private const val HISTORY_LEN = 100
+    private const val MAX_ALERTS = 20
 }

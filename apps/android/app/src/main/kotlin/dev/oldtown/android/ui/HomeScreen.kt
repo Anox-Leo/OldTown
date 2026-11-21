@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -72,13 +73,15 @@ fun connectionLabel(hub: HubState): Pair<String, Color> {
 }
 
 /**
- * Accueil (note 0033, comme l'extension, note 0031) : les bandeaux, puis la
- * liste des conversations, « Tous mes appareils » en premier, puis un
- * appareil par ligne, du plus récemment actif au moins récent. Toucher une
- * ligne ouvre la conversation.
+ * Accueil (note 0033, comme l'extension, notes 0031 et 0065) : la barre
+ * latérale des personnes s'il y en a d'autres ([Rail]), les bandeaux, puis
+ * la liste des conversations. Ma personne : « Tous mes appareils » en
+ * premier, puis un appareil par ligne, du plus récemment actif au moins
+ * récent. Une autre personne : elle, puis ses appareils joignables. Toucher
+ * une ligne ouvre la conversation.
  */
 @Composable
-fun HomeScreen(hub: HubState, open: (Screen) -> Unit) {
+fun HomeScreen(hub: HubState, person: String?, onPerson: (String?) -> Unit, open: (Screen) -> Unit) {
     val context = LocalContext.current
     var notifications by remember { mutableStateOf(true) }
     var battery by remember { mutableStateOf(true) }
@@ -89,38 +92,59 @@ fun HomeScreen(hub: HubState, open: (Screen) -> Unit) {
     }
     val presence = rememberPresence(hub.connection)
     val me = hub.device?.deviceId
-    val list = remember(hub.group, hub.history, me) {
-        conversations(hub.group?.members.orEmpty(), hub.history, me)
+    val chosen = hub.people.firstOrNull { it.userId == person && it.userId != hub.me?.userId }
+    val list = remember(hub.group, hub.history, hub.people, me, chosen) {
+        if (chosen != null) {
+            personConversations(chosen, hub.history, me)
+        } else {
+            conversations(hub.group?.members.orEmpty(), hub.history, me, hub.me?.devices.orEmpty())
+        }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().height(56.dp).padding(start = 20.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Logo(26.dp)
-            Spacer(Modifier.weight(1f))
-            GhostIcon(OtIcons.Users, "Groupe", { open(Screen.Group) })
-            GhostIcon(OtIcons.Settings, "Réglages", { open(Screen.Settings) })
+    Row(Modifier.fillMaxSize()) {
+        if (showRail(hub)) {
+            Rail(hub, chosen?.userId, onChoose = onPerson, onInvite = { open(Screen.Invite) })
         }
-
-        LazyColumn(
-            Modifier.fillMaxSize().testTag("conversations"),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-        ) {
-            item {
-                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Alerts(hub, notifications, battery)
-                    if (hub.transfers.isNotEmpty()) Transfers(hub.transfers)
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Row(
+                Modifier.fillMaxWidth().height(56.dp).padding(start = 20.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (chosen != null) {
+                    Text(
+                        chosen.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Ot.colors.foreground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).testTag("person-title"),
+                    )
+                } else {
+                    Logo(26.dp)
+                    Spacer(Modifier.weight(1f))
                 }
+                GhostIcon(OtIcons.Users, "Groupe", { open(Screen.Group) })
+                GhostIcon(OtIcons.Settings, "Réglages", { open(Screen.Settings) })
             }
-            items(list, key = { "c:" + it.id }) { c ->
-                ConversationRow(
-                    c,
-                    online = presence?.get(c.id) == true,
-                    divider = c.id != ALL_CHANNEL,
-                    onClick = { open(Screen.Conversation(c.id)) },
-                )
+
+            LazyColumn(
+                Modifier.fillMaxSize().testTag("conversations"),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+            ) {
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Alerts(hub, notifications, battery)
+                        if (hub.transfers.isNotEmpty()) Transfers(hub.transfers)
+                    }
+                }
+                items(list, key = { "c:" + it.id }) { c ->
+                    ConversationRow(
+                        c,
+                        online = c.online ?: (presence?.get(c.id) == true),
+                        divider = c != list.first(),
+                        onClick = { open(Screen.Conversation(c.id)) },
+                    )
+                }
             }
         }
     }
@@ -170,7 +194,7 @@ private fun ConversationRow(c: Conversation, online: Boolean, divider: Boolean, 
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp).testTag("conversation"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(c.kind, c.color, online = online)
+        Avatar(c.kind, c.color, online = online, initials = if (c.kind == DeviceKind.PERSON) initials(c.name) else "")
         Spacer(Modifier.width(12.dp))
         // Séparateur à la WhatsApp : sous le texte, pas sous l'avatar.
         Column(Modifier.weight(1f)) {
@@ -189,6 +213,14 @@ private fun ConversationRow(c: Conversation, online: Boolean, divider: Boolean, 
                         Spacer(Modifier.width(6.dp))
                         Text(shortTime(it.createdAtMs), style = MaterialTheme.typography.labelSmall, color = Ot.colors.muted)
                     }
+                }
+                c.note?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (c.outdated) Ot.colors.warningForeground else Ot.colors.muted,
+                        maxLines = 1,
+                    )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val last = c.last
@@ -214,10 +246,22 @@ private fun Alerts(hub: HubState, notifications: Boolean, battery: Boolean) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val conn = hub.connection
-        if (hub.group == null) {
+        if (hub.group == null && hub.invitePending) {
+            Banner(
+                "Invitation envoyée : l'appareil de l'admin qui vous a invité doit être en ligne pour vous accueillir.",
+                BannerKind.Warning,
+            )
+        } else if (hub.group == null) {
             Banner(
                 "Appairage en cours : le parrain doit être en ligne pour envoyer le groupe à ce téléphone.",
                 BannerKind.Warning,
+            )
+        }
+        if (hub.alerts.isNotEmpty()) {
+            val n = hub.alerts.size
+            Banner(
+                "Annuaire : $n alerte" + (if (n > 1) "s" else "") + ", voir les réglages.",
+                BannerKind.Danger,
             )
         }
         if (conn is Connection.AuthFailed) {

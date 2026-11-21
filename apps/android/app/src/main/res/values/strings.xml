@@ -27,4 +27,8 @@
     <string name="transfer_down">Réception de %1$s</string>
     <string name="transfer_up_failed">Envoi de %1$s interrompu</string>
     <string name="transfer_down_failed">Réception de %1$s interrompue</string>
+    <string name="channel_people">Autres personnes</string>
+    <string name="channel_people_desc">Messages des autres personnes et des services, et arrivées des personnes invitées.</string>
+    <string name="person_joined_title">%1$s a rejoint OldTown</string>
+    <string name="person_joined_text">Depuis %1$s. Empreinte à comparer de vive voix : %2$s</string>
 </resources>

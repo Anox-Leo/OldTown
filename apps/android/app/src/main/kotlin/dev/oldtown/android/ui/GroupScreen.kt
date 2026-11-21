@@ -47,6 +47,7 @@ import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
 import dev.oldtown.android.ui.components.SectionLabel
 import dev.oldtown.android.ui.components.TopBar
+import dev.oldtown.android.ui.components.icon
 import dev.oldtown.android.ui.pairing.QrImage
 import dev.oldtown.android.ui.pairing.QrScanner
 import dev.oldtown.android.ui.theme.Mono
@@ -116,9 +117,10 @@ fun GroupScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
                 group.members.forEachIndexed { i, m ->
                     if (i > 0) Divider()
                     val online = devices?.firstOrNull { it.deviceId == m.deviceId }?.online
+                    val kind = hub.me?.devices?.firstOrNull { it.deviceId == m.deviceId }?.kind
                     ListRow(
                         title = if (m.isSelf) "${m.name}  (ce téléphone)" else m.name,
-                        leading = OtIcons.Laptop,
+                        leading = deviceKind(kind).icon(),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (online != null && !m.isSelf) {
