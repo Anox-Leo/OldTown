@@ -147,6 +147,11 @@ pub struct Received {
     #[serde(default)]
     #[uniffi(default = None)]
     pub to_user: Option<String>,
+    /// Appareil visé d'un envoi d'ici à une personne (`to_user`) ; `None` :
+    /// ses appareils par défaut. Range l'élément dans le fil de cet appareil.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub to_device: Option<String>,
     /// Code à usage unique qui peut être copié ou rempli d'office (règle
     /// O2) : de ma personne ou d'un service seulement.
     #[serde(default)]
@@ -171,6 +176,9 @@ impl Received {
 pub struct PersonDevice {
     pub device_id: String,
     pub name: String,
+    /// Catégorie déclarée par l'appareil (note 0068) : `phone`, `laptop`,
+    /// `desktop`, `browser`, `cli` ; `None` : pas encore déclarée.
+    pub kind: Option<String>,
     pub reachable: bool,
     pub default: bool,
     /// Sait lire les messages entre personnes (`users-v1`).
@@ -186,6 +194,8 @@ pub struct PersonItem {
     pub name: String,
     pub is_admin: bool,
     pub is_service: bool,
+    /// Service coupé par ma personne : ses messages ne m'arrivent plus.
+    pub muted: bool,
     pub devices: Vec<PersonDevice>,
 }
 
@@ -196,12 +206,14 @@ impl From<ot_core::Person> for PersonItem {
             name: p.name,
             is_admin: p.role == ot_core::proto::Role::Admin,
             is_service: p.role == ot_core::proto::Role::Service,
+            muted: p.muted,
             devices: p
                 .devices
                 .into_iter()
                 .map(|d| PersonDevice {
                     device_id: d.id.to_string(),
                     name: d.name,
+                    kind: d.kind.map(|k| k.as_str().to_owned()),
                     reachable: d.reachable,
                     default: d.default,
                     up_to_date: d.up_to_date,
@@ -256,6 +268,28 @@ pub enum Event {
     Joined { user_id: String },
     /// Invitation en échec.
     InviteFailed { reason: String },
+}
+
+/// Racine de l'annuaire vue de ce téléphone (`OtClient::admin_root`, D51).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum AdminRoot {
+    /// Publiée et adoptée : la personne de l'admin.
+    Ready { user_id: String },
+    /// Rien n'est publié : « Publier l'annuaire » signera `name`, le nom
+    /// que le relais donne à l'admin.
+    Missing { name: String },
+    /// Ce téléphone n'est pas à l'admin.
+    NotAdmin,
+}
+
+impl From<ot_core::AdminRoot> for AdminRoot {
+    fn from(r: ot_core::AdminRoot) -> Self {
+        match r {
+            ot_core::AdminRoot::Ready(user) => Self::Ready { user_id: user.to_string() },
+            ot_core::AdminRoot::Missing { name } => Self::Missing { name },
+            ot_core::AdminRoot::NotAdmin => Self::NotAdmin,
+        }
+    }
 }
 
 /// Invitation d'une personne, à transmettre à elle seule (le code contient

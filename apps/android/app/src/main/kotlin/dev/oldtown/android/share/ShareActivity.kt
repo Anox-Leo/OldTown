@@ -51,8 +51,8 @@ import dev.oldtown.android.ui.ALL_CHANNEL
 import dev.oldtown.android.ui.ALL_NAME
 import dev.oldtown.android.ui.DeviceKind
 import dev.oldtown.android.ui.avatarColor
-import dev.oldtown.android.ui.byUsage
-import dev.oldtown.android.ui.deviceKind
+import dev.oldtown.android.ui.initials
+import dev.oldtown.android.ui.shareTargets
 import dev.oldtown.android.ui.components.Avatar
 import dev.oldtown.android.ui.components.OtCard
 import dev.oldtown.android.ui.components.OtIcons
@@ -60,6 +60,7 @@ import dev.oldtown.android.ui.theme.OldTownTheme
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.android.ui.theme.OtShapes
 import dev.oldtown.core.OtException
+import dev.oldtown.core.PersonItem
 import dev.oldtown.core.Received
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,7 +84,7 @@ class ShareActivity : ComponentActivity() {
             intent.getCharSequenceExtra(Intent.EXTRA_TEXT),
             streams(intent),
         )
-        val direct = Shortcuts.memberOf(intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID))
+        val direct = Shortcuts.targetOf(intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID))
         setContent {
             OldTownTheme {
                 ShareSheet(content, direct, onDone = { finish() })
@@ -125,10 +126,10 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
         RelayHub.ensureStarted(context)
     }
 
-    fun send(to: List<String>, label: String) {
+    fun send(channel: String, label: String) {
         if (content is SharedContent.Files) {
             // Le service garde l'accès aux URI et envoie après la fermeture.
-            RelayHub.sendFiles(context, content.uris.map { it.toUri() }, to)
+            RelayHub.sendFiles(context, content.uris.map { it.toUri() }, channel)
             state = SendState.Sent(label)
             scope.launch {
                 delay(900)
@@ -140,7 +141,7 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
         state = SendState.Sending(label)
         scope.launch {
             state = try {
-                RelayHub.send(context, text, to)
+                RelayHub.send(context, text, channel)
                 SendState.Sent(label)
             } catch (e: OtException) {
                 SendState.Failed(e.message ?: "envoi impossible")
@@ -154,13 +155,15 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
         }
     }
 
-    // Direct Share : envoi immédiat au membre choisi.
-    LaunchedEffect(hub.group, direct) {
+    // Direct Share : envoi immédiat au destinataire choisi.
+    LaunchedEffect(hub.group, hub.people, direct) {
         val group = hub.group ?: return@LaunchedEffect
-        val member = group.members.firstOrNull { it.deviceId == direct } ?: return@LaunchedEffect
+        if (direct == null) return@LaunchedEffect
+        val target = shareTargets(group.members, hub.history, hub.device?.deviceId, hub.people)
+            .firstOrNull { it.channel == direct } ?: return@LaunchedEffect
         if (state == SendState.Idle) {
-            androidx.core.content.pm.ShortcutManagerCompat.reportShortcutUsed(context, Shortcuts.idOf(member.deviceId))
-            send(listOf(member.deviceId), member.name)
+            androidx.core.content.pm.ShortcutManagerCompat.reportShortcutUsed(context, Shortcuts.idOf(target.channel))
+            send(target.channel, target.name)
         }
     }
 
@@ -200,7 +203,7 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
                     done = true,
                 )
                 is SendState.Failed -> Banner(s.message, BannerKind.Danger, "Réessayer", { state = SendState.Idle })
-                SendState.Idle -> Recipients(hub.group, hub.history, hub.device?.deviceId, onPick = ::send)
+                SendState.Idle -> Recipients(hub.group, hub.history, hub.device?.deviceId, hub.people, onPick = ::send)
             }
         }
     }
@@ -269,21 +272,24 @@ private fun Preview(text: String) {
 }
 
 /**
- * Destinataires : « Tous mes appareils » en tête, puis les appareils du plus
- * utilisé au moins utilisé (note 0033, [byUsage]), avec leur avatar.
+ * Destinataires : « Tous mes appareils » en tête, puis mes appareils et
+ * enfin les autres personnes, chacun du plus utilisé au moins utilisé (note
+ * 0033, [shareTargets]), avec leur avatar.
  */
 @Composable
 private fun Recipients(
     group: dev.oldtown.core.Group?,
     history: List<Received>,
     me: String?,
-    onPick: (List<String>, String) -> Unit,
+    people: List<PersonItem>,
+    onPick: (String, String) -> Unit,
 ) {
     if (group == null) {
         Banner("Groupe pas encore reçu : en attente du parrain.", BannerKind.Warning)
         return
     }
-    val others = remember(group, history, me) { byUsage(group.members, history, me) }
+    val targets = remember(group, history, me, people) { shareTargets(group.members, history, me, people) }
+    val (others, persons) = targets.partition { it.kind != DeviceKind.PERSON }
     OtCard(padding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
         RecipientRow(
             ALL_NAME,
@@ -291,11 +297,25 @@ private fun Recipients(
             DeviceKind.GROUP,
             avatarColor(ALL_CHANNEL),
             Modifier.testTag("recipient-all"),
-        ) { onPick(emptyList(), "tous") }
-        for (m in others) {
+        ) { onPick(ALL_CHANNEL, "tous") }
+        for (t in others) {
             Divider()
-            RecipientRow(m.name, null, deviceKind(m.name), avatarColor(m.deviceId), Modifier.testTag("recipient")) {
-                onPick(listOf(m.deviceId), m.name)
+            RecipientRow(t.name, null, t.kind, t.color, Modifier.testTag("recipient")) { onPick(t.channel, t.name) }
+        }
+    }
+    if (persons.isNotEmpty()) {
+        Text("Personnes", style = MaterialTheme.typography.labelMedium, color = Ot.colors.muted)
+        OtCard(padding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+            persons.forEachIndexed { i, t ->
+                if (i > 0) Divider()
+                RecipientRow(
+                    t.name,
+                    "ses appareils par défaut",
+                    t.kind,
+                    t.color,
+                    Modifier.testTag("recipient-person"),
+                    initials = initials(t.name),
+                ) { onPick(t.channel, t.name) }
             }
         }
     }
@@ -308,13 +328,14 @@ private fun RecipientRow(
     kind: DeviceKind,
     color: Long,
     modifier: Modifier = Modifier,
+    initials: String = "",
     onClick: () -> Unit,
 ) {
     Row(
         modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(kind, color, size = 36.dp)
+        Avatar(kind, color, size = 36.dp, initials = initials)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(name, style = MaterialTheme.typography.bodyMedium, color = Ot.colors.foreground)

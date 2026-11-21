@@ -6,6 +6,7 @@ import dev.oldtown.android.notify.MessageAction.SHARE
 import dev.oldtown.android.notify.actionsFor
 import dev.oldtown.android.notify.isWebLink
 import dev.oldtown.android.notify.preview
+import dev.oldtown.android.notify.senderTitle
 import dev.oldtown.core.ContentKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -48,5 +49,12 @@ class MessageActionsTest {
         val long = "x".repeat(200)
         assertEquals(140, preview(long).length)
         assertTrue(preview(long).endsWith("…"))
+    }
+
+    @Test
+    fun anotherPersonsTitleNamesHerThenTheDevice() {
+        assertEquals("Bob · bob-phone", senderTitle("Bob", "bob-phone"))
+        assertEquals("Notifier", senderTitle("Notifier", ""))
+        assertEquals("Notifier", senderTitle("Notifier", "Notifier"))
     }
 }
