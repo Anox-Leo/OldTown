@@ -857,6 +857,9 @@ async fn otp_bridge(
     socket: Option<PathBuf>,
     min_confidence: f64,
 ) -> Result<()> {
+    if cfg!(not(unix)) {
+        bail!("otp-bridge lit un socket Unix : il ne tourne pas sous Windows");
+    }
     if !(0.0..=1.0).contains(&min_confidence) {
         bail!("--min-confidence doit être compris entre 0 et 1");
     }
@@ -949,6 +952,18 @@ async fn otp_bridge(
     Ok(())
 }
 
+#[cfg(unix)]
+async fn otp_connect(socket: &std::path::Path) -> Result<tokio::net::UnixStream> {
+    tokio::net::UnixStream::connect(socket)
+        .await
+        .with_context(|| format!("socket {} injoignable", socket.display()))
+}
+
+#[cfg(not(unix))]
+async fn otp_connect(socket: &std::path::Path) -> Result<tokio::io::Empty> {
+    bail!("socket {} : pas de socket Unix sous Windows", socket.display())
+}
+
 /// Une connexion au socket d'otp-relay, lue jusqu'à sa fermeture.
 async fn otp_session(
     home: &Home,
@@ -961,9 +976,7 @@ async fn otp_session(
 ) -> Result<()> {
     use tokio::io::AsyncBufReadExt;
 
-    let stream = tokio::net::UnixStream::connect(socket)
-        .await
-        .with_context(|| format!("socket {} injoignable", socket.display()))?;
+    let stream = otp_connect(socket).await?;
     *backoff = Duration::from_secs(1);
     let mut lines = tokio::io::BufReader::new(stream).lines();
     while let Some(line) = lines.next_line().await? {
