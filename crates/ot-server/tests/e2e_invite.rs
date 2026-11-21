@@ -343,11 +343,13 @@ async fn removing_an_admin_device_recertifies_what_it_signed() {
         }
     })
     .await;
-    let people = people_until(&cc1, &mut ec1, |p| {
+    // Carol peut lire le roster sans a2 avant son certificat re-signé : entre
+    // les deux, celui signé par a2 ne vaut plus. Elle attend les deux.
+    people_until(&cc1, &mut ec1, |p| {
         person(p, &alice).is_some_and(|a| a.roster.member(&net.a[1].id).is_none())
+            && ready(p, &carol, 1)
     })
     .await;
-    assert!(ready(&people, &carol, 1), "Carol toujours certifiée");
     let ca1_people = within(ca1.directory()).await.unwrap();
     assert!(ready(&ca1_people, &carol, 1));
     net.server.stop().await;
