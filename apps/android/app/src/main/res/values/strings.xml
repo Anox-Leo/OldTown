@@ -3,7 +3,6 @@
     <string name="app_name">OldTown</string>
     <string name="share_label">OldTown</string>
 
-    <!-- Notifications -->
     <string name="channel_connection">Connexion au relais</string>
     <string name="channel_connection_desc">État de la connexion permanente au relais.</string>
     <string name="channel_messages">Messages</string>

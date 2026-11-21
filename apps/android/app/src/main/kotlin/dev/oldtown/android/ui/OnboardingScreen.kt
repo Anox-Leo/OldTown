@@ -48,13 +48,6 @@ import kotlinx.coroutines.launch
 
 private enum class Step { Intro, Scan, Manual, Invite }
 
-/**
- * Premier lancement : le téléphone rejoint mon groupe en scannant le QR de
- * `ot pair new --qr` (ou en saisissant le code), puis attend le parrain. Ou,
- * étape 10, il rejoint l'OldTown de quelqu'un : « J'ai reçu une invitation »
- * (QR, lien collé, ou lien `oldtown://invite` ouvert depuis un message),
- * puis attend que l'appareil de l'admin le certifie.
- */
 @Composable
 fun OnboardingScreen(invite: String? = null, onInviteRead: () -> Unit = {}) {
     val context = LocalContext.current
@@ -67,7 +60,6 @@ fun OnboardingScreen(invite: String? = null, onInviteRead: () -> Unit = {}) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    // Lien d'invitation ouvert depuis un message : rien ne part sans un appui.
     LaunchedEffect(invite) {
         if (invite != null) {
             link = invite
@@ -93,7 +85,6 @@ fun OnboardingScreen(invite: String? = null, onInviteRead: () -> Unit = {}) {
         }
     }
 
-    /** Lien collé : seul `oldtown://invite?…` porte le relais (le code `ot2-…` seul reste à la CLI). */
     fun submitLink() {
         when (val kind = classifyQr(link.trim())) {
             is QrKind.Invite -> submitInvite(kind.serverUrl, kind.code)

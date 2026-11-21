@@ -11,10 +11,8 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 
-/** Fichier partagé, décrit par son fournisseur. */
 data class SharedFile(val uri: Uri, val name: String, val mime: String, val size: Long)
 
-/** Nom, type et taille d'une URI `content://` partagée. */
 fun describe(context: Context, uri: Uri): SharedFile {
     var name: String? = null
     var size: Long? = null
@@ -31,11 +29,6 @@ fun describe(context: Context, uri: Uri): SharedFile {
     return SharedFile(uri, name ?: uri.lastPathSegment ?: "fichier", mime, size ?: -1)
 }
 
-/**
- * Lecture par morceaux d'une URI partagée, pour le cœur Rust (qui ne sait pas
- * ouvrir une URI `content://`). Lectures à un décalage : la reprise relit
- * seulement les morceaux manquants. Appelée hors du thread principal.
- */
 class UriSource private constructor(
     private val pfd: ParcelFileDescriptor,
     private val length: Long,
@@ -65,7 +58,6 @@ class UriSource private constructor(
     }
 
     companion object {
-        /** Ouvre `uri` ; la taille vient du descripteur, sinon du fournisseur. */
         fun open(context: Context, file: SharedFile): UriSource {
             val pfd = context.contentResolver.openFileDescriptor(file.uri, "r")
                 ?: throw IOException("fichier illisible")

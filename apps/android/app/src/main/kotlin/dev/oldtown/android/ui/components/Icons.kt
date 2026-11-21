@@ -8,10 +8,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
-/**
- * Icônes au trait (2 px, bouts arrondis), dessinées d'après Lucide (ISC,
- * licence dans apps/android/third_party), comme celles de T3 Code.
- */
 object OtIcons {
     private fun icon(name: String, vararg paths: String): ImageVector =
         ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
@@ -66,7 +62,6 @@ object OtIcons {
         "laptop",
         "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16",
     )
-    // Avatars des appareils (`ui/Conversations.kt`), comme dans l'extension.
     val Phone = icon(
         "phone",
         "M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z",
@@ -127,8 +122,6 @@ object OtIcons {
         "M12 9v4",
         "M12 17h.01",
     )
-    // Étape 10, comme l'extension : catégorie non déclarée (neutre), ligne de
-    // commande, inviter une personne.
     val Unknown = icon(
         "unknown",
         "M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8",

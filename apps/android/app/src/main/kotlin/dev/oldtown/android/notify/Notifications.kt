@@ -26,23 +26,9 @@ import dev.oldtown.android.ui.MainActivity
 import dev.oldtown.android.ui.channelOf
 import dev.oldtown.core.Received
 
-/**
- * Quatre canaux : « Connexion » (notification permanente du service,
- * discrète), « Messages » (un élément reçu de mes appareils par
- * notification, groupées), « Autres personnes » (étape 10 : leurs éléments,
- * ceux des services, l'arrivée d'une personne invitée) et « Transferts »
- * (progression des fichiers, étape 5). Toutes portent la petite icône du
- * signe (`ic_stat_oldtown`) et sa pierre en couleur d'accent.
- */
 object Notifications {
     const val CONNECTION_ID = 1
     private const val SUMMARY_ID = 2
-    /**
-     * Notification imposée par Android au service de premier plan : importance
-     * minimale (ni icône dans la barre d'état, ni son, repliée en bas du
-     * volet). Nouvel identifiant, car l'importance d'un canal existant ne
-     * change plus ; l'ancien (`connection`, importance basse) est supprimé.
-     */
     private const val CHANNEL_CONNECTION = "connection_quiet"
     private const val OLD_CHANNEL_CONNECTION = "connection"
     private const val CHANNEL_MESSAGES = "messages"
@@ -93,7 +79,6 @@ object Notifications {
         PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** Ouvre l'appli sur la conversation de l'élément (note 0033) : le canal seul, pas le contenu. */
     private fun openConversation(context: Context, item: Received, id: Int): PendingIntent {
         val channel = channelOf(item, RelayHub.state.value.device?.deviceId)
         return PendingIntent.getActivity(
@@ -106,7 +91,6 @@ object Notifications {
         )
     }
 
-    /** Texte de la notification permanente pour un état de connexion. */
     fun statusText(context: Context, connection: Connection, waitingSponsor: Boolean): String =
         context.getString(
             when {
@@ -142,17 +126,14 @@ object Notifications {
             .notify(CONNECTION_ID, connection(context, connection, waitingSponsor))
     }
 
-    /** Canal d'un élément : celui des autres personnes s'il vient d'elles ou d'un service. */
     private fun channelFor(item: Received) = if (item.fromUser != null) CHANNEL_PEOPLE else CHANNEL_MESSAGES
 
-    /** Titre : l'appareil, précédé de sa personne si elle n'est pas la mienne (« Bob · bob-phone »). */
     private fun titleOf(item: Received): String {
         val user = item.fromUser ?: return item.fromName
         val person = RelayHub.state.value.people.firstOrNull { it.userId == user } ?: return item.fromName
         return senderTitle(person.name, item.fromName)
     }
 
-    /** Admin : une personne invitée par ce téléphone est certifiée, avec l'empreinte à comparer. */
     fun showPersonJoined(context: Context, joined: Notice.PersonJoined) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -173,7 +154,6 @@ object Notifications {
         )
     }
 
-    /** Une notification par élément reçu, avec ses actions. */
     fun showMessage(context: Context, item: Received) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -196,7 +176,6 @@ object Notifications {
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            // Nos actions suffisent : pas d'« Ouvrir le lien » ajouté par Android.
             .setAllowSystemGeneratedContextualActions(false)
             .setVisibility(
                 if (item.sensitive) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE,
@@ -221,10 +200,6 @@ object Notifications {
         trimMessages(context)
     }
 
-    /**
-     * Fichier reçu : proposé (« Télécharger », par le service) ou enregistré
-     * dans `Download/OldTown` (un appui l'ouvre).
-     */
     private fun showFile(context: Context, item: Received) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -282,7 +257,6 @@ object Notifications {
         trimMessages(context)
     }
 
-    /** Progression d'un transfert (notification silencieuse, en cours). */
     fun transferProgress(context: Context, t: Transfer) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -310,7 +284,6 @@ object Notifications {
         NotificationManagerCompat.from(context).cancel(transferId(id))
     }
 
-    /** Transfert en échec : il se relance depuis l'appli (ou en repartageant). */
     fun transferFailed(context: Context, t: Transfer) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -332,22 +305,16 @@ object Notifications {
 
     private fun transferId(id: String): Int = 500_000_000 + (id.hashCode() and 0x0fffffff)
 
-    /** Messages affichés : (identifiant, date de publication), sans le résumé du groupe. */
     private fun shownMessages(context: Context): List<Pair<Int, Long>> =
         context.getSystemService(NotificationManager::class.java).activeNotifications
             .filter { it.notification.channelId in setOf(CHANNEL_MESSAGES, CHANNEL_PEOPLE) && it.id != SUMMARY_ID }
             .map { it.id to it.postTime }
 
-    /** Au plus [MAX_SHOWN_MESSAGES] : les plus anciennes laissent la place. */
     private fun trimMessages(context: Context) {
         val manager = NotificationManagerCompat.from(context)
         for (id in oldestBeyond(shownMessages(context), MAX_SHOWN_MESSAGES)) manager.cancel(id)
     }
 
-    /**
-     * Écran principal ouvert : les éléments sont dans la liste, les
-     * notifications de messages n'ont plus lieu d'être (étape 4, T8b).
-     */
     fun clearMessages(context: Context) {
         val manager = NotificationManagerCompat.from(context)
         for ((id, _) in shownMessages(context)) manager.cancel(id)
@@ -366,8 +333,6 @@ object Notifications {
 
     private fun pending(context: Context, action: MessageAction, item: Received, id: Int): PendingIntent =
         when (action) {
-            // Copier passe par un récepteur : le texte ne quitte pas l'appli,
-            // il est relu dans l'historique par son msg_id.
             MessageAction.COPY -> PendingIntent.getBroadcast(
                 context,
                 id,
@@ -393,15 +358,12 @@ object Notifications {
             )
         }
 
-    /** Sélecteur Partager pour un texte reçu. */
     fun shareIntent(text: String): Intent = Intent.createChooser(
         Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text),
         null,
     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    /** Identifiant de notification stable pour un `msg_id`. */
     fun idOf(msgId: String): Int = 1_000 + (msgId.hashCode() and 0x3fffffff)
 
-    /** Échecs de connexion de suite avant de soupçonner Tailscale. */
     const val UNREACHABLE_AFTER = 3
 }

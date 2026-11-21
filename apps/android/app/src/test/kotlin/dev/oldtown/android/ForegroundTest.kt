@@ -7,7 +7,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Étape 4, T8b : appli au premier plan → pas de notification. */
 class ForegroundTest {
     @Test
     fun noNotificationWhileTheAppIsVisible() {
@@ -16,7 +15,6 @@ class ForegroundTest {
 
     @Test
     fun noNotificationWhileAndroidSaysTheAppIsVisible() {
-        // Le drapeau a manqué le passage au premier plan : Android le sait.
         assertFalse(shouldNotify(mainVisible = false, processForeground = true))
     }
 

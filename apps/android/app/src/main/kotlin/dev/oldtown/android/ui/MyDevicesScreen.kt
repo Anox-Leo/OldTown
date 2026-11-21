@@ -45,7 +45,6 @@ import dev.oldtown.android.ui.theme.OtShapes
 import dev.oldtown.core.PersonDevice
 import kotlinx.coroutines.launch
 
-/** Catégories qu'un appareil peut déclarer, dans l'ordre du menu (comme l'extension). */
 private val KINDS = listOf(
     "phone" to "Téléphone",
     "laptop" to "Portable",
@@ -56,13 +55,6 @@ private val KINDS = listOf(
 
 private fun kindLabel(kind: String?): String = KINDS.firstOrNull { it.first == kind }?.second ?: "Non précisée"
 
-/**
- * Mes appareils (étape 10, A2 et A4, comme `people-settings.ts`) : une autre
- * personne qui m'écrit vise mes appareils par défaut, ou un de mes appareils
- * joignables. Catégorie, par défaut, joignable, retirer ; les appareils en
- * ligne de commande, membres du groupe mais jamais joignables ni par
- * défaut, sont repliés à part.
- */
 @Composable
 fun MyDevicesScreen(hub: HubState, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -105,7 +97,6 @@ fun MyDevicesScreen(hub: HubState, onBack: () -> Unit) {
             error?.let { Banner(it, BannerKind.Danger) }
             for (d in usual) {
                 DeviceCard(d, self = d.deviceId == me, busy = busy, onKind = { k ->
-                    // Passer en ligne de commande retire « par défaut » et « joignable ».
                     if (k == "cli") update(d, kind = k, reachable = false, default = false) else update(d, kind = k)
                 }, onDefault = { update(d, default = it) }, onReachable = { update(d, reachable = it) }, onRemove = { removing = d })
             }

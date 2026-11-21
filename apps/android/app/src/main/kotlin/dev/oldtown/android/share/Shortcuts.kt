@@ -11,13 +11,6 @@ import dev.oldtown.core.Group
 import dev.oldtown.core.PersonItem
 import dev.oldtown.core.Received
 
-/**
- * Direct Share : un raccourci par destinataire de la feuille de partage
- * (mes autres appareils, puis les autres personnes, note 0033 et étape 10),
- * mis à jour au démarrage du service et à chaque changement du groupe ou de
- * l'annuaire, dans l'ordre de [shareTargets]. Le menu Partager les propose
- * en tête.
- */
 object Shortcuts {
     const val CATEGORY = "dev.oldtown.android.category.SHARE_TARGET"
     private const val PREFIX = "to:"
@@ -46,6 +39,5 @@ object Shortcuts {
 
     fun idOf(channel: String) = PREFIX + channel
 
-    /** Canal visé par un raccourci Direct Share, `null` sinon. */
     fun targetOf(shortcutId: String?): String? = shortcutId?.removePrefix(PREFIX)?.takeIf { it != shortcutId }
 }

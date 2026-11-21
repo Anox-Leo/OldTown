@@ -93,3 +93,11 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   icônes tierces : licence dans `third_party/`.
 - CI : `.github/workflows/android.yml` (Linux, filtré sur `apps/android/**`
   et `crates/**`), produit l'APK de debug.
+- **Pas de commentaires** (note 0072, comme l'extension, note 0066) : le
+  pourquoi va dans une note de `docs/decisions/`, le quoi dans les noms et
+  les tests, un raccourci dans une issue. `NoCommentsTest` (JVM) échoue sur
+  tout commentaire de Kotlin, de `.kts`, de XML, de TOML, de `.properties`
+  ou de `.pro` sous `apps/android`, sauf dans les fichiers générés
+  (`Tokens.kt`, `res/values*/tokens.xml`, à corriger dans
+  `tools/design-tokens/gen.mjs`). Pour trier ce qui reviendrait :
+  `/delete-comment`.

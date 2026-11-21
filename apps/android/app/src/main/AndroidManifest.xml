@@ -9,16 +9,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Appli installée hors Play Store (étape 3) : l'exemption est demandée
-         explicitement pour garder la connexion au relais en veille. -->
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:ignore="BatteryLife" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
-    <!-- Rien n'est sauvegardé par Android : les clés vivent dans
-         noBackupFilesDir et ne doivent jamais quitter le téléphone. -->
     <application
         android:name=".OldTownApp"
         android:allowBackup="false"
@@ -40,8 +36,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Lien d'invitation (étape 10) reçu par SMS ou courriel : il ouvre
-                 l'appli sur « J'ai reçu une invitation ». -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -53,7 +47,6 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- Cible du menu Partager : feuille du bas sur l'appli d'origine. -->
         <activity
             android:name=".share.ShareActivity"
             android:excludeFromRecents="true"
@@ -66,7 +59,6 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- Fichiers, images, vidéos (étape 5), un ou plusieurs. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
@@ -79,7 +71,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Seul propriétaire de la connexion au relais (note 0009). -->
         <service
             android:name=".relay.RelayService"
             android:exported="false"

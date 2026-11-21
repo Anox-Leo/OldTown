@@ -53,10 +53,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Présence relue auprès du relais tant que l'écran est au premier plan. */
 private const val PRESENCE_EVERY_MS = 15_000L
 
-/** Libellé et couleur de l'état de connexion. */
 @Composable
 fun connectionLabel(hub: HubState): Pair<String, Color> {
     val c = Ot.colors
@@ -72,14 +70,6 @@ fun connectionLabel(hub: HubState): Pair<String, Color> {
     }
 }
 
-/**
- * Accueil (note 0033, comme l'extension, notes 0031 et 0065) : la barre
- * latérale des personnes s'il y en a d'autres ([Rail]), les bandeaux, puis
- * la liste des conversations. Ma personne : « Tous mes appareils » en
- * premier, puis un appareil par ligne, du plus récemment actif au moins
- * récent. Une autre personne : elle, puis ses appareils joignables. Toucher
- * une ligne ouvre la conversation.
- */
 @Composable
 fun HomeScreen(hub: HubState, person: String?, onPerson: (String?) -> Unit, open: (Screen) -> Unit) {
     val context = LocalContext.current
@@ -150,11 +140,6 @@ fun HomeScreen(hub: HubState, person: String?, onPerson: (String?) -> Unit, open
     }
 }
 
-/**
- * Présence des appareils d'après le relais : lue à l'affichage puis toutes
- * les 15 s, tant que l'écran est au premier plan et la connexion établie ;
- * `null` (inconnue) sinon.
- */
 @Composable
 internal fun rememberPresence(connection: Connection): Map<String, Boolean>? {
     val context = LocalContext.current
@@ -181,13 +166,11 @@ internal fun rememberPresence(connection: Connection): Map<String, Boolean>? {
 private suspend fun loadPresence(context: Context): Map<String, Boolean>? = try {
     RelayHub.client(context).devices().associate { it.deviceId to it.online }
 } catch (_: OtException) {
-    // Relais injoignable entre deux : l'état de la connexion le dira.
     null
 } catch (_: TimeoutCancellationException) {
     null
 }
 
-/** Ligne d'une conversation : avatar, nom et heure, aperçu du dernier élément. */
 @Composable
 private fun ConversationRow(c: Conversation, online: Boolean, divider: Boolean, onClick: () -> Unit) {
     Row(
@@ -196,7 +179,6 @@ private fun ConversationRow(c: Conversation, online: Boolean, divider: Boolean, 
     ) {
         Avatar(c.kind, c.color, online = online, initials = if (c.kind == DeviceKind.PERSON) initials(c.name) else "")
         Spacer(Modifier.width(12.dp))
-        // Séparateur à la WhatsApp : sous le texte, pas sous l'avatar.
         Column(Modifier.weight(1f)) {
             if (divider) Divider()
             Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -287,7 +269,6 @@ private fun Alerts(hub: HubState, notifications: Boolean, battery: Boolean) {
     }
 }
 
-/** Fichiers en cours d'envoi ou de réception. */
 @Composable
 private fun Transfers(transfers: List<Transfer>) {
     OtCard {

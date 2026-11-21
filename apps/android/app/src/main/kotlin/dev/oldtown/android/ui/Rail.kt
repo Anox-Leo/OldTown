@@ -37,23 +37,13 @@ import dev.oldtown.android.ui.components.OtIcons
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.core.PersonItem
 
-/** Largeur de la barre latérale. */
 val RAIL_WIDTH = 72.dp
 
-/**
- * La barre latérale se montre, une fois l'annuaire lu, dès qu'il y a une
- * autre personne, ou pour l'admin (son « ＋ »), comme l'extension.
- */
 fun showRail(hub: HubState): Boolean {
     val me = hub.me ?: return false
     return me.isAdmin || hub.people.any { it.userId != me.userId }
 }
 
-/**
- * Barre latérale (comme `rail.ts`) : moi (mes appareils), un séparateur, les
- * autres personnes de la plus récemment active à la moins, avec leurs
- * non-lus et leur présence, puis « ＋ » pour l'admin.
- */
 @Composable
 fun Rail(hub: HubState, selected: String?, onChoose: (String?) -> Unit, onInvite: () -> Unit) {
     val me = hub.me

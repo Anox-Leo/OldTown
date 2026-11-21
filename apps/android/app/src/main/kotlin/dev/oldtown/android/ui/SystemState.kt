@@ -8,7 +8,6 @@ import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
 
-/** Réglages du téléphone dont dépend la réception. */
 object SystemState {
     fun notificationsAllowed(context: Context) =
         NotificationManagerCompat.from(context).areNotificationsEnabled()
@@ -16,11 +15,6 @@ object SystemState {
     fun batteryExempt(context: Context) =
         context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 
-    /**
-     * Demande l'exemption d'optimisation de batterie : sans elle, Doze coupe
-     * le réseau de l'appli et les messages n'arrivent qu'au réveil. Autorisé
-     * hors Play Store (étape 3).
-     */
     @SuppressLint("BatteryLife")
     fun requestBatteryExemption(context: Context) {
         context.startActivity(

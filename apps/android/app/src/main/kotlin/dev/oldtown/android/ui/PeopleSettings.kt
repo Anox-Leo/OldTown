@@ -36,7 +36,6 @@ import dev.oldtown.core.OtException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 
-/** Lance un appel au service ; renvoie le message d'erreur, `null` s'il a réussi. */
 suspend fun attempt(block: suspend () -> Unit): String? = try {
     block()
     null
@@ -46,14 +45,8 @@ suspend fun attempt(block: suspend () -> Unit): String? = try {
     "le service ne répond pas"
 }
 
-/** Nom d'une personne de l'annuaire, son identifiant à défaut. */
 fun nameOf(hub: HubState, user: String): String = hub.people.firstOrNull { it.userId == user }?.name ?: user
 
-/**
- * Réglages de l'étape 10 (comme `people-settings.ts`) : publier l'annuaire
- * (D51), alertes de l'annuaire, mes appareils, services à couper, lien vers
- * l'administration. Rien sans annuaire, sauf « Publier l'annuaire ».
- */
 @Composable
 fun PeopleSettings(hub: HubState, open: (Screen) -> Unit) {
     val context = LocalContext.current
