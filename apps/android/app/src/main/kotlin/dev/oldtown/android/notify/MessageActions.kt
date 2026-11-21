@@ -36,3 +36,6 @@ fun preview(body: String, max: Int = 140): String {
     val oneLine = body.trim().replace(Regex("\\s+"), " ")
     return if (oneLine.length <= max) oneLine else oneLine.take(max - 1) + "…"
 }
+
+/** Titre d'un élément d'une autre personne : sa personne, puis l'appareil (« Bob · bob-phone »). */
+fun senderTitle(person: String, device: String): String = if (device.isBlank() || device == person) person else "$person · $device"

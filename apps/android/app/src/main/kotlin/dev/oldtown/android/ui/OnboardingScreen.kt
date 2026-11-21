@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.Banner
@@ -41,24 +43,64 @@ import dev.oldtown.core.OtException
 import dev.oldtown.core.QrKind
 import dev.oldtown.core.classifyQr
 import dev.oldtown.core.join
+import dev.oldtown.core.joinInvite
 import kotlinx.coroutines.launch
 
-private enum class Step { Intro, Scan, Manual }
+private enum class Step { Intro, Scan, Manual, Invite }
 
 /**
- * Premier lancement : le téléphone rejoint le groupe en scannant le QR de
- * `ot pair new --qr` (ou en saisissant le code), puis attend le parrain.
+ * Premier lancement : le téléphone rejoint mon groupe en scannant le QR de
+ * `ot pair new --qr` (ou en saisissant le code), puis attend le parrain. Ou,
+ * étape 10, il rejoint l'OldTown de quelqu'un : « J'ai reçu une invitation »
+ * (QR, lien collé, ou lien `oldtown://invite` ouvert depuis un message),
+ * puis attend que l'appareil de l'admin le certifie.
  */
 @Composable
-fun OnboardingScreen() {
+fun OnboardingScreen(invite: String? = null, onInviteRead: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var step by rememberSaveable { mutableStateOf(Step.Intro) }
     var name by rememberSaveable { mutableStateOf(Build.MODEL.take(64)) }
     var server by rememberSaveable { mutableStateOf("wss://") }
     var code by remember { mutableStateOf("") }
+    var link by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    // Lien d'invitation ouvert depuis un message : rien ne part sans un appui.
+    LaunchedEffect(invite) {
+        if (invite != null) {
+            link = invite
+            step = Step.Invite
+            onInviteRead()
+        }
+    }
+
+    fun submitInvite(serverUrl: String, inviteCode: String) {
+        busy = true
+        error = null
+        step = Step.Intro
+        scope.launch {
+            try {
+                joinInvite(RelayHub.store(context), serverUrl, inviteCode, name)
+                RelayHub.reload(context)
+                RelayHub.ensureStarted(context)
+            } catch (e: OtException) {
+                error = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    /** Lien collé : seul `oldtown://invite?…` porte le relais (le code `ot2-…` seul reste à la CLI). */
+    fun submitLink() {
+        when (val kind = classifyQr(link.trim())) {
+            is QrKind.Invite -> submitInvite(kind.serverUrl, kind.code)
+            is QrKind.Invalid -> error = kind.reason
+            else -> error = "Ce n'est pas un lien d'invitation OldTown (oldtown://invite?…)."
+        }
+    }
 
     fun submit(serverUrl: String, pairingCode: String) {
         busy = true
@@ -79,7 +121,9 @@ fun OnboardingScreen() {
     }
 
     Column(Modifier.fillMaxSize()) {
-        if (step != Step.Intro) TopBar("Rejoindre un groupe", onBack = { step = Step.Intro })
+        if (step != Step.Intro) {
+            TopBar(if (step == Step.Invite) "J'ai reçu une invitation" else "Rejoindre un groupe", onBack = { step = Step.Intro })
+        }
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -114,6 +158,14 @@ fun OnboardingScreen() {
                         icon = OtIcons.Keyboard,
                         enabled = name.isNotBlank() && !busy,
                     )
+                    OtButton(
+                        "J'ai reçu une invitation",
+                        { step = Step.Invite },
+                        Modifier.fillMaxWidth().testTag("invite"),
+                        kind = ButtonKind.Secondary,
+                        icon = OtIcons.Link,
+                        enabled = name.isNotBlank() && !busy,
+                    )
                     Spacer(Modifier.height(8.dp))
                     OtCard {
                         Text("Sur un ordinateur du groupe", style = MaterialTheme.typography.labelMedium, color = Ot.colors.foreground)
@@ -133,7 +185,7 @@ fun OnboardingScreen() {
                 }
                 Step.Scan -> {
                     Text(
-                        "Visez le QR affiché par « ot pair new --qr ».",
+                        "Visez le QR affiché par « ot pair new --qr », ou le QR d'invitation.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Ot.colors.muted,
                     )
@@ -141,11 +193,7 @@ fun OnboardingScreen() {
                         onResult = { text ->
                             when (val kind = classifyQr(text)) {
                                 is QrKind.Join -> submit(kind.serverUrl, kind.code)
-                                // Rejoindre par invitation : écran de T14 (PR Android).
-                                is QrKind.Invite -> {
-                                    error = "Les invitations arrivent dans une prochaine version de l'appli."
-                                    step = Step.Intro
-                                }
+                                is QrKind.Invite -> submitInvite(kind.serverUrl, kind.code)
                                 is QrKind.Sponsor -> {
                                     error = "Ce QR sert à ajouter un appareil au groupe : il se scanne depuis un téléphone déjà appairé."
                                     step = Step.Intro
@@ -167,6 +215,42 @@ fun OnboardingScreen() {
                         { step = Step.Manual },
                         Modifier.fillMaxWidth(),
                         kind = ButtonKind.Secondary,
+                    )
+                }
+                Step.Invite -> {
+                    Text(
+                        "La personne qui vous invite vous a donné un QR ou un lien oldtown://invite. " +
+                            "Il contient un secret : ne le partagez pas.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Ot.colors.muted,
+                    )
+                    SectionLabel("Nom de ce téléphone")
+                    OtTextField(name, { name = it.take(64) }, "Pixel")
+                    SectionLabel("Lien d'invitation")
+                    OtTextField(
+                        link,
+                        { link = it; error = null },
+                        "oldtown://invite?…",
+                        mono = true,
+                        singleLine = false,
+                        minLines = 2,
+                        modifier = Modifier.testTag("invite-link"),
+                    )
+                    error?.let { Banner(it, BannerKind.Danger) }
+                    OtButton(
+                        "Rejoindre",
+                        { submitLink() },
+                        Modifier.fillMaxWidth(),
+                        enabled = name.isNotBlank() && link.isNotBlank(),
+                        loading = busy,
+                    )
+                    OtButton(
+                        "Scanner le QR d'invitation",
+                        { step = Step.Scan },
+                        Modifier.fillMaxWidth(),
+                        kind = ButtonKind.Secondary,
+                        icon = OtIcons.Scan,
+                        enabled = name.isNotBlank() && !busy,
                     )
                 }
                 Step.Manual -> {

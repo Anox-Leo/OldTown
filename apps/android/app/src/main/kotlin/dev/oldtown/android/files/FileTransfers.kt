@@ -11,6 +11,9 @@ import androidx.core.net.toUri
 import dev.oldtown.android.notify.Notifications
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.relay.Transfer
+import dev.oldtown.android.ui.ChannelTarget
+import dev.oldtown.android.ui.parseChannel
+import dev.oldtown.android.ui.recipientsOf
 import dev.oldtown.core.OtClient
 import dev.oldtown.core.OtException
 import dev.oldtown.core.Received
@@ -65,28 +68,35 @@ object FileTransfers {
         }
     }
 
-    /** Envoie une URI partagée ; relancer la même URI reprend l'envoi. */
-    suspend fun send(context: Context, client: OtClient, uri: Uri, to: List<String>) {
+    /**
+     * Envoie une URI partagée dans un canal (un de mes appareils, `""` : tous,
+     * ou une personne) ; relancer la même URI reprend l'envoi.
+     */
+    suspend fun send(context: Context, client: OtClient, uri: Uri, channel: String) {
         val id = uri.toString()
         var name = uri.lastPathSegment ?: "fichier"
         try {
             val file = describe(context, uri)
             name = file.name
-            val start = Transfer(id, name, upload = true, done = 0, total = file.size.coerceAtLeast(0), to = to)
+            val start = Transfer(id, name, upload = true, done = 0, total = file.size.coerceAtLeast(0), channel = channel)
             RelayHub.setTransfer(start)
             UriSource.open(context, file).use { source ->
-                client.sendFile(source, id, file.name, file.mime, to, Progress(context, start))
+                val progress = Progress(context, start)
+                when (val t = parseChannel(channel)) {
+                    is ChannelTarget.Mine -> client.sendFile(source, id, file.name, file.mime, recipientsOf(t.device), progress)
+                    is ChannelTarget.Person -> client.sendFileToUser(source, id, file.name, file.mime, t.user, t.device, progress)
+                }
             }
             RelayHub.removeTransfer(id)
             Notifications.transferEnd(context, id)
             release(context, uri)
         } catch (e: OtException) {
-            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), e.message)
+            failed(context, Transfer(id, name, upload = true, 0, 0, channel = channel), e.message)
         } catch (e: IOException) {
-            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), e.message)
+            failed(context, Transfer(id, name, upload = true, 0, 0, channel = channel), e.message)
         } catch (e: SecurityException) {
             // Accès à l'URI retiré (appli tuée, partage expiré) : il faut repartager.
-            failed(context, Transfer(id, name, upload = true, 0, 0, to = to), "fichier plus accessible : le partager de nouveau")
+            failed(context, Transfer(id, name, upload = true, 0, 0, channel = channel), "fichier plus accessible : le partager de nouveau")
         }
     }
 

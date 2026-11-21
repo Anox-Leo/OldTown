@@ -69,6 +69,7 @@ pub use tls::TlsRoots;
 #[cfg(feature = "net")]
 pub use transfer::{ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig};
 pub use types::{
-    Accepted, ClientError, Event, Origin, PairingInvitation, Received, ReceivedOtp, Target,
+    Accepted, AdminRoot, ClientError, Event, Origin, PairingInvitation, Received, ReceivedOtp,
+    Target,
 };
 pub use uri::{INVITE_URI_PREFIX, InviteUri, PAIR_URI_PREFIX, PairUri, classify};

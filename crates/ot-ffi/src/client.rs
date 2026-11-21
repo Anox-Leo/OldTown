@@ -14,8 +14,8 @@ use crate::files::{FileItem, FileSink, FileSource, Listener, Sink, Source, Trans
 use crate::local::{Local, PendingJoin};
 use crate::types::millis;
 use crate::{
-    AdminUserItem, DeviceState, Event, Group, Invitation, OtError, PersonInvite, PersonItem,
-    RUNTIME, Received, RelayDevice, SecretStore, ServiceAdded, Sponsored, on_runtime,
+    AdminRoot, AdminUserItem, DeviceState, Event, Group, Invitation, OtError, PersonInvite,
+    PersonItem, RUNTIME, Received, RelayDevice, SecretStore, ServiceAdded, Sponsored, on_runtime,
 };
 
 /// Client du relais : se connecte et se reconnecte seul tant qu'il existe.
@@ -129,12 +129,20 @@ impl OtClient {
     }
 
     /// Admin : publie le certificat racine (première fois), ou adopte celui
-    /// d'un autre appareil de l'admin. Sans effet s'il l'est déjà ; à
-    /// appeler au lancement par les applis de l'admin. Renvoie la personne
-    /// de l'admin.
+    /// d'un autre appareil de l'admin. Refusé (`Invalid`) s'il est déjà
+    /// adopté. Renvoie la personne de l'admin.
     pub async fn admin_init(&self) -> Result<String, OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.admin_init().await?.to_string()) }).await
+    }
+
+    /// Racine de l'annuaire (D51) : adopte celle qu'un appareil de mon
+    /// groupe a publiée ; sinon la publie si `create`, ou rend `Missing`
+    /// avec le nom qui sera signé. À appeler à chaque connexion avec
+    /// `create` faux, et avec `create` vrai sur « Publier l'annuaire ».
+    pub async fn admin_root(&self, create: bool) -> Result<AdminRoot, OtError> {
+        let client = self.client.clone();
+        on_runtime(async move { Ok(client.admin_root(create).await?.into()) }).await
     }
 
     /// Admin : invite une personne, liée dans les deux sens à `links`. La
@@ -380,6 +388,12 @@ impl OtClient {
         self.client.reconnect_now();
     }
 
+    /// Relit l'annuaire maintenant (présence des autres personnes, au
+    /// premier plan) ; `Event::DirectoryChanged` signale un changement.
+    pub fn refresh_directory(&self) {
+        self.client.refresh_directory();
+    }
+
     /// Ferme proprement la connexion ; le client ne sert plus ensuite.
     pub async fn shutdown(&self) {
         let client = self.client.clone();
@@ -405,9 +419,11 @@ impl OtClient {
             if text.trim().is_empty() {
                 return Err(OtError::Invalid { message: "texte vide".into() });
             }
-            let to_user = match &target {
-                Target::Person { user, .. } => Some(user.to_string()),
-                Target::MyDevices(_) => None,
+            let (to_user, to_device) = match &target {
+                Target::Person { user, device } => {
+                    (Some(user.to_string()), device.as_ref().map(ToString::to_string))
+                }
+                Target::MyDevices(_) => (None, None),
             };
             let content = ot_core::classify(&text);
             let env = client.seal_to(target, &content).await?;
@@ -419,7 +435,7 @@ impl OtClient {
                 content.body,
                 &env.to,
             );
-            outbox.add(Received { pending: true, to_user, ..item }).await;
+            outbox.add(Received { pending: true, to_user, to_device, ..item }).await;
             match client.send_envelope(env).await {
                 Ok(_) => {
                     outbox.accepted(&msg_id).await;
@@ -456,8 +472,11 @@ impl OtClient {
                 info.name.clone(),
                 &to,
             );
-            let item = Received { file: Some(FileItem::from_info(&info)), ..item };
-            outbox.add(item.with_origin(&info.origin)).await;
+            let item = Received { file: Some(FileItem::from_info(&info)), ..item }
+                .with_origin(&info.origin);
+            let to_device =
+                if item.to_user.is_some() { to.first().map(ToString::to_string) } else { None };
+            outbox.add(Received { to_device, ..item }).await;
             Ok(msg_id)
         })
         .await
@@ -505,6 +524,7 @@ impl Outbox {
             from_user: None,
             from_service: false,
             to_user: None,
+            to_device: None,
             auto_fill: false,
         }
     }
@@ -680,6 +700,7 @@ impl Forwarder {
                     from_user: None,
                     from_service: false,
                     to_user: None,
+                    to_device: None,
                     auto_fill: false,
                 }
                 .with_origin(&m.origin);
@@ -705,6 +726,7 @@ impl Forwarder {
                     from_user: None,
                     from_service: false,
                     to_user: None,
+                    to_device: None,
                     auto_fill,
                 }
                 .with_origin(&o.origin);
@@ -729,6 +751,7 @@ impl Forwarder {
                     from_user: None,
                     from_service: false,
                     to_user: None,
+                    to_device: None,
                     auto_fill: false,
                 }
                 .with_origin(&f.origin);

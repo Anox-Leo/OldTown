@@ -66,7 +66,7 @@ class ConversationsUiTest {
 
     @Test
     fun allFirstThenByRecency() {
-        compose.setContent { OldTownTheme { HomeScreen(hub, open = {}) } }
+        compose.setContent { OldTownTheme { HomeScreen(hub, person = null, onPerson = {}, open = {}) } }
         val tops = listOf(ALL_NAME, "Bravo", "Charlie", "Alpha").map(::top)
         assertEquals(tops.sorted(), tops)
         compose.onNodeWithText("Vous : message 3").assertExists()

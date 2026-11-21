@@ -25,7 +25,7 @@ use crate::transfer::{
     ChunkSink, ChunkSource, OutgoingFile, Progress, TransferConfig, Transfers, blocking,
     hash_source,
 };
-use crate::types::{Accepted, ClientError, Event, Origin, PairingInvitation, Target};
+use crate::types::{Accepted, AdminRoot, ClientError, Event, Origin, PairingInvitation, Target};
 use crate::{Dedup, Identity};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -200,8 +200,9 @@ enum Command {
     Effects(EffectsJob, Reply<()>),
     /// Un déroulé de fond est terminé (`true` : réussi).
     FlowDone(Flow, bool),
-    /// Admin : publier le certificat racine (`admin_init`).
-    AdminInit(Reply<UserId>),
+    /// Admin : adopter le certificat racine, ou le publier si `true`
+    /// (`admin_root`).
+    AdminInit(bool, Reply<AdminRoot>),
     Reconnect,
     Shutdown(oneshot::Sender<()>),
 }
@@ -674,7 +675,23 @@ impl Client {
     /// déjà publié par un appareil de mon groupe, l'adopte. Renvoie
     /// l'identifiant de la personne admin.
     pub async fn admin_init(&self) -> Result<UserId, ClientError> {
-        self.request(Command::AdminInit).await
+        match self.admin_root(true).await? {
+            AdminRoot::Ready(admin) => Ok(admin),
+            AdminRoot::NotAdmin => {
+                Err(ClientError::Invalid("cet appareil n'est pas à l'admin".into()))
+            }
+            AdminRoot::Missing { .. } => {
+                Err(ClientError::Invalid("certificat de l'admin non publié".into()))
+            }
+        }
+    }
+
+    /// Racine de l'annuaire (D51) : l'adopte si un appareil de mon groupe
+    /// l'a publiée ; sinon la publie si `create`, ou rend le nom qui sera
+    /// signé (`Missing`). Déjà connue : `Ready` sans connexion (`create`
+    /// la refuse alors, comme [`Client::admin_init`]).
+    pub async fn admin_root(&self, create: bool) -> Result<AdminRoot, ClientError> {
+        self.request(|reply| Command::AdminInit(create, reply)).await
     }
 
     /// État du groupe ; `None` sans groupe.
@@ -918,7 +935,7 @@ impl Worker {
                 let now = OffsetDateTime::now_utc();
                 if !self.secure.has_anchor()
                     || self.secure.directory_fresh(now)
-                    || matches!(self.read, Some(Reading::AdminInit(_)))
+                    || matches!(self.read, Some(Reading::AdminInit { .. }))
                 {
                     f(&mut self.secure);
                     return Next::Frames(Vec::new());
@@ -936,7 +953,8 @@ impl Worker {
             }
             Command::RefreshDirectory => Next::Frames(self.start_read()),
             Command::AfterRead(f) => {
-                if !self.secure.has_anchor() || matches!(self.read, Some(Reading::AdminInit(_))) {
+                if !self.secure.has_anchor() || matches!(self.read, Some(Reading::AdminInit { .. }))
+                {
                     f(&mut self.secure);
                     return Next::Frames(Vec::new());
                 }
@@ -977,13 +995,24 @@ impl Worker {
                 }
                 Next::Frames(self.drive())
             }
-            Command::AdminInit(reply) => {
-                let busy = matches!(self.read, Some(Reading::AdminInit(_)))
+            Command::AdminInit(create, reply) => {
+                let busy = matches!(self.read, Some(Reading::AdminInit { .. }))
                     || self.unref.iter().any(|p| matches!(p, Pending::AdminInit { .. }));
                 let refused = if self.secure.info().is_none() {
                     Some(ClientError::NoGroup)
-                } else if self.secure.has_anchor() {
+                } else if self.secure.has_anchor() && create {
                     Some(ClientError::Invalid("certificat de l'admin déjà publié".into()))
+                } else if self.secure.has_anchor() {
+                    // Racine adoptée, journal de l'admin vérifié ou à vérifier.
+                    let job: Job = Box::new(move |s| {
+                        let _ = reply.send(Ok(known_root(s)));
+                    });
+                    if self.secure.directory_state().admin.is_some() {
+                        job(&mut self.secure);
+                        return Next::Frames(Vec::new());
+                    }
+                    self.waiting.push(job);
+                    return Next::Frames(self.start_read());
                 } else if busy {
                     Some(ClientError::Invalid("admin_init déjà en cours".into()))
                 } else {
@@ -995,7 +1024,7 @@ impl Worker {
                 }
                 // Une page de l'annuaire d'abord : qui suis-je, qui est
                 // l'admin, son certificat manque-t-il ?
-                self.read = Some(Reading::AdminInit(reply));
+                self.read = Some(Reading::AdminInit { create, reply });
                 self.unref.push_back(Pending::Directory);
                 Next::Frames(vec![Frame::DirectoryGet { known: Default::default(), after: None }])
             }
@@ -1153,7 +1182,7 @@ impl Worker {
                 }
             }
         }
-        if let Some(Reading::AdminInit(reply)) = self.read.take() {
+        if let Some(Reading::AdminInit { reply, .. }) = self.read.take() {
             let _ = reply.send(Err(ClientError::Closed));
         }
         // Leurs réponses tombent avec elles : `Closed`.
@@ -1238,7 +1267,7 @@ impl Worker {
             None => {}
         }
         match &self.read {
-            Some(Reading::AdminInit(_)) => {
+            Some(Reading::AdminInit { .. }) => {
                 self.unref.push_back(Pending::Directory);
                 resume.push(Frame::DirectoryGet { known: Default::default(), after: None });
             }
@@ -1374,7 +1403,7 @@ impl Worker {
                     tracing::info!(user = %user, "certificat de l'admin publié");
                     let effects = self.secure.adopt_admin_root(&cert);
                     let mut frames = self.effects(effects).await;
-                    let _ = reply.send(Ok(user));
+                    let _ = reply.send(Ok(AdminRoot::Ready(user)));
                     frames.extend(self.start_read());
                     for frame in &frames {
                         send_frame(ws, frame).await?;
@@ -1467,7 +1496,7 @@ impl Worker {
                         },
                         Some(Pending::Directory) => {
                             tracing::warn!(?code, message, "lecture de l'annuaire refusée");
-                            if let Some(Reading::AdminInit(reply)) = self.read.take() {
+                            if let Some(Reading::AdminInit { reply, .. }) = self.read.take() {
                                 let _ = reply.send(Err(err));
                             }
                             self.read_again = false;
@@ -1484,6 +1513,23 @@ impl Worker {
     }
 }
 
+/// Racine déjà adoptée : `Ready` si mon groupe a un appareil dans le
+/// dernier roster vérifié de l'admin (celui-ci peut ne pas y être encore,
+/// juste après son appairage).
+fn known_root(secure: &Secure) -> AdminRoot {
+    let mine = secure.info().map(|g| g.members).unwrap_or_default();
+    match &secure.directory_state().admin {
+        Some((id, known))
+            if known.chain.as_ref().is_some_and(|c| {
+                c.roster.members.iter().any(|m| mine.iter().any(|x| x.device_id == m.device_id))
+            }) =>
+        {
+            AdminRoot::Ready(id.clone())
+        }
+        _ => AdminRoot::NotAdmin,
+    }
+}
+
 /// Demande dont le refus revient sans référence.
 enum Pending {
     Pair(Reply<PairingInvitation>),
@@ -1493,7 +1539,7 @@ enum Pending {
     AdminInit {
         cert: SignedBlob,
         entry: SignedBlob,
-        reply: Reply<UserId>,
+        reply: Reply<AdminRoot>,
     },
     /// Trame d'administration, de journal ou de profil (étape 10). Le
     /// relais la refuse avec `reference`, ou sans référence (`forbidden`).
@@ -1578,8 +1624,9 @@ impl Pending {
 enum Reading {
     /// Lecture vérifiée, page par page, tour par tour.
     Verify(DirectoryRead),
-    /// `admin_init` : une page pour savoir qui est l'admin.
-    AdminInit(Reply<UserId>),
+    /// `admin_root` : une page pour savoir qui est l'admin et si sa
+    /// racine est publiée ; `create` : la publier sinon.
+    AdminInit { create: bool, reply: Reply<AdminRoot> },
 }
 
 impl Worker {
@@ -1619,15 +1666,14 @@ impl Worker {
                 tracing::debug!("page de l'annuaire inattendue");
                 Vec::new()
             }
-            Some(Reading::AdminInit(reply)) => {
+            Some(Reading::AdminInit { create, reply }) => {
                 let Some(raw) = users.into_iter().find(|u| u.id == admin) else {
                     let why = "l'admin manque dans l'annuaire".into();
                     let _ = reply.send(Err(ClientError::Invalid(why)));
                     return Vec::new();
                 };
                 if me != admin {
-                    let why = "cet appareil n'est pas à l'admin".into();
-                    let _ = reply.send(Err(ClientError::Invalid(why)));
+                    let _ = reply.send(Ok(AdminRoot::NotAdmin));
                     return Vec::new();
                 }
                 if let Some(cert) = &raw.cert {
@@ -1636,7 +1682,7 @@ impl Worker {
                     match self.secure.adopt_existing_root(&admin, cert) {
                         Ok(effects) => {
                             frames = self.effects(effects).await;
-                            let _ = reply.send(Ok(admin));
+                            let _ = reply.send(Ok(AdminRoot::Ready(admin)));
                             frames.extend(self.start_read());
                         }
                         Err(e) => {
@@ -1644,6 +1690,10 @@ impl Worker {
                         }
                     }
                     return frames;
+                }
+                if !create {
+                    let _ = reply.send(Ok(AdminRoot::Missing { name: raw.name }));
+                    return Vec::new();
                 }
                 match self.secure.admin_root(&admin, &raw.name, OffsetDateTime::now_utc()) {
                     Ok((cert, entry)) => {

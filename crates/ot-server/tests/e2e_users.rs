@@ -14,8 +14,8 @@ use ot_core::crypto::directory::{
 };
 use ot_core::directory::DirectoryState;
 use ot_core::{
-    Client, ClientConfig, ClientError, Content, DeviceKind, Event, Events, Keyring, Origin,
-    OutgoingFile, Person, Target, ensure_exchange_key,
+    AdminRoot, Client, ClientConfig, ClientError, Content, DeviceKind, Event, Events, Keyring,
+    Origin, OutgoingFile, Person, Target, ensure_exchange_key,
 };
 use ot_proto::{Role, UserId};
 use ot_server::store::Store;
@@ -304,4 +304,53 @@ async fn a_client_declares_its_configured_kind() {
     people_until(&c1, &mut e1, |p| kind_of(p, &a0) == Some(Some(DeviceKind::Phone))).await;
     let people = people_until(&c1, &mut e1, |p| up_to_date(p, &net.alice, 2)).await;
     assert_eq!(kind_of(&people, &a1), Some(None), "sans catégorie configurée, rien n'est déclaré");
+}
+
+#[tokio::test]
+async fn the_admin_root_is_adopted_and_created_only_on_request() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::in_memory().await.unwrap();
+    let a1 = add_device(&store, "alice-phone").await;
+    let a2 = add_device(&store, "alice-laptop").await;
+    make_group(&[&a1, &a2]);
+    let config = Config { blob_dir: dir.path().join("blobs"), ..test_config() };
+    let server = TestServer::start(store, config).await;
+    let url = server.url();
+    let (c1, _e1) = online(&a1, &url).await;
+    let (c2, _e2) = online(&a2, &url).await;
+
+    let missing = within(c1.admin_root(false)).await.unwrap();
+    let AdminRoot::Missing { name } = missing else { panic!("racine inattendue : {missing:?}") };
+    let store = server.relay.store();
+    let me = store.device(&a1.id).await.unwrap().unwrap().user_id;
+    let page = store.directory(&me, &Default::default(), None).await.unwrap();
+    assert_eq!(page.users[0].name, name, "le nom à signer est celui du relais");
+    assert!(page.users[0].cert.is_none(), "rien n'est publié sans `create`");
+    assert_eq!(within(c2.admin_root(false)).await.unwrap(), AdminRoot::Missing { name });
+    assert!(within(c1.directory()).await.unwrap().is_empty());
+
+    let alice = match within(c1.admin_root(true)).await.unwrap() {
+        AdminRoot::Ready(user) => user,
+        other => panic!("racine inattendue : {other:?}"),
+    };
+    assert_eq!(alice, me);
+    assert_eq!(within(c1.admin_root(false)).await.unwrap(), AdminRoot::Ready(alice.clone()));
+    let again = within(c1.admin_init()).await;
+    assert!(matches!(again, Err(ClientError::Invalid(_))), "déjà publiée : {again:?}");
+
+    assert_eq!(within(c2.admin_root(false)).await.unwrap(), AdminRoot::Ready(alice.clone()));
+    assert!(
+        a2.keyring.load_directory().unwrap().anchor.is_some(),
+        "adoptée par le second appareil"
+    );
+    assert_eq!(within(c2.admin_root(false)).await.unwrap(), AdminRoot::Ready(alice));
+}
+
+#[tokio::test]
+async fn a_member_is_not_the_admin() {
+    let net = net().await;
+    let (cb, _eb) = online(&net.b[0], &net.server.url()).await;
+    assert_eq!(within(cb.admin_root(false)).await.unwrap(), AdminRoot::NotAdmin);
+    let refused = within(cb.admin_init()).await;
+    assert!(matches!(refused, Err(ClientError::Invalid(_))), "{refused:?}");
 }

@@ -52,9 +52,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Réglages et état (étape 3, T10). */
+/** Réglages et état (étape 3, T10), personnes et services (étape 10). */
 @Composable
-fun SettingsScreen(hub: HubState, onBack: () -> Unit, onForgotten: () -> Unit) {
+fun SettingsScreen(hub: HubState, onBack: () -> Unit, onForgotten: () -> Unit, open: (Screen) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val device = hub.device ?: return
@@ -144,6 +144,8 @@ fun SettingsScreen(hub: HubState, onBack: () -> Unit, onForgotten: () -> Unit) {
                 Divider()
                 ListRow("Identifiant", subtitle = device.deviceId, subtitleMono = true)
             }
+
+            PeopleSettings(hub, open)
 
             SectionLabel("Téléphone")
             OtCard(padding = PaddingValues(0.dp)) {

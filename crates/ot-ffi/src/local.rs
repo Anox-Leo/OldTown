@@ -1,6 +1,7 @@
 //! État local de l'appareil, rangé dans le [`SecretStore`] de l'appli :
 //! identité, configuration, appairage en cours, messages vus, historique.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ot_core::{
@@ -24,6 +25,8 @@ pub(crate) const PENDING_JOIN: &str = "pending_join.json";
 pub(crate) const SEEN: &str = "seen.json";
 /// Derniers éléments reçus et envoyés.
 pub(crate) const HISTORY: &str = "history.json";
+/// Dernière ouverture de la conversation de chaque personne (non-lus).
+pub(crate) const OPENED: &str = "opened.json";
 
 /// Taille de l'historique gardé (note 0033, comme l'extension).
 pub const HISTORY_LEN: usize = 100;
@@ -200,13 +203,30 @@ impl Local {
 
     pub fn clear_history(&self) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        self.delete(HISTORY)
+        self.delete(HISTORY)?;
+        self.delete(OPENED)
+    }
+
+    /// Dernière ouverture de la conversation de chaque personne, en
+    /// millisecondes ; un état illisible compte comme vide (tout non lu).
+    pub fn opened(&self) -> HashMap<String, i64> {
+        self.read_json(OPENED).ok().flatten().unwrap_or_default()
+    }
+
+    /// Conversation de `user` ouverte à `at_ms` ; jamais en arrière.
+    pub fn mark_opened(&self, user: &str, at_ms: i64) -> Result<HashMap<String, i64>, OtError> {
+        let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut opened = self.opened();
+        let at = opened.get(user).map_or(at_ms, |&prev| prev.max(at_ms));
+        opened.insert(user.to_owned(), at);
+        self.write_json(OPENED, &opened)?;
+        Ok(opened)
     }
 
     /// Efface tout : identité, configuration, groupe, état.
     pub fn forget(&self) -> Result<(), OtError> {
         self.keyring().forget_group()?;
-        for name in [DEVICE, DEVICE_KEY, PENDING_JOIN, SEEN, HISTORY] {
+        for name in [DEVICE, DEVICE_KEY, PENDING_JOIN, SEEN, HISTORY, OPENED] {
             self.delete(name)?;
         }
         Ok(())
@@ -373,6 +393,31 @@ pub fn clear_history(store: Arc<dyn SecretStore>) -> Result<(), OtError> {
     Local::new(store).clear_history()
 }
 
+/// Invitation rachetée, en attente de la certification par l'admin
+/// (`Event::Joined` la termine).
+#[uniffi::export]
+pub fn invite_pending(store: Arc<dyn SecretStore>) -> Result<bool, OtError> {
+    use ot_core::Keyring;
+    Ok(Local::new(store).keyring().load_pending_invite()?.is_some())
+}
+
+/// Dernière ouverture de la conversation de chaque personne
+/// (`user_id` → millisecondes), pour compter ses non-lus.
+#[uniffi::export]
+pub fn opened(store: Arc<dyn SecretStore>) -> HashMap<String, i64> {
+    Local::new(store).opened()
+}
+
+/// Note l'ouverture de la conversation de `user_id` ; renvoie le tout.
+#[uniffi::export]
+pub fn mark_opened(
+    store: Arc<dyn SecretStore>,
+    user_id: String,
+    at_ms: i64,
+) -> Result<HashMap<String, i64>, OtError> {
+    Local::new(store).mark_opened(&user_id, at_ms)
+}
+
 /// Note où un fichier reçu a été enregistré (pour « Ouvrir »).
 #[uniffi::export]
 pub fn set_file_uri(
@@ -391,6 +436,7 @@ pub(crate) const ALL_NAMES: &[&str] = &[
     PENDING_JOIN,
     SEEN,
     HISTORY,
+    OPENED,
     ot_core::names::EXCHANGE_KEY,
     ot_core::names::GROUP,
     ot_core::names::ROSTER,

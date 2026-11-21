@@ -16,6 +16,7 @@ import dev.oldtown.android.notify.Notifications
 import dev.oldtown.android.notify.processInForeground
 import dev.oldtown.android.notify.shouldNotify
 import dev.oldtown.android.share.Shortcuts
+import dev.oldtown.core.AdminRoot
 import dev.oldtown.core.Event
 import dev.oldtown.core.OtClient
 import dev.oldtown.core.OtException
@@ -64,8 +65,8 @@ class RelayService : LifecycleService() {
             ACTION_SEND_FILES -> {
                 val clip = intent.clipData
                 val uris = (0 until (clip?.itemCount ?: 0)).mapNotNull { clip?.getItemAt(it)?.uri }
-                val to = intent.getStringArrayListExtra(EXTRA_TO).orEmpty()
-                lifecycleScope.launch(Dispatchers.IO) { sendFiles(uris, to) }
+                val channel = intent.getStringExtra(EXTRA_CHANNEL).orEmpty()
+                lifecycleScope.launch(Dispatchers.IO) { sendFiles(uris, channel) }
             }
             ACTION_DOWNLOAD -> intent.getStringExtra(EXTRA_MSG_ID)?.let { msgId ->
                 lifecycleScope.launch(Dispatchers.IO) { download(msgId, userAsked = true) }
@@ -74,14 +75,14 @@ class RelayService : LifecycleService() {
         return START_STICKY
     }
 
-    private suspend fun sendFiles(uris: List<Uri>, to: List<String>) {
+    private suspend fun sendFiles(uris: List<Uri>, channel: String) {
         val c = try {
             RelayHub.client(this)
         } catch (e: OtException) {
             RelayHub.notify(Notice.Problem(e.message ?: "envoi impossible"))
             return
         }
-        for (uri in uris) FileTransfers.send(this, c, uri, to)
+        for (uri in uris) FileTransfers.send(this, c, uri, channel)
     }
 
     /**
@@ -133,7 +134,7 @@ class RelayService : LifecycleService() {
         RelayHub.setGroup(started.group())
         RelayHub.setConnection(Connection.Connecting)
         RelayHub.attach(started)
-        Shortcuts.update(this, RelayHub.state.value.group, RelayHub.state.value.history)
+        refreshPeople(started)
         render()
 
         var failures = 0
@@ -143,6 +144,7 @@ class RelayService : LifecycleService() {
                 is Event.Connected -> {
                     failures = 0
                     RelayHub.setConnection(Connection.Connected(event.pending))
+                    checkRoot(started)
                 }
                 is Event.Disconnected -> {
                     failures += 1
@@ -161,25 +163,81 @@ class RelayService : LifecycleService() {
                 is Event.Sent -> RelayHub.upsert(event.item)
                 is Event.Unsent -> RelayHub.remove(event.msgId)
                 is Event.GroupChanged -> {
-                    val group = started.group()
-                    RelayHub.setGroup(group)
-                    Shortcuts.update(this, group, RelayHub.state.value.history)
+                    RelayHub.setGroup(started.group())
+                    refreshPeople(started)
+                    checkRoot(started)
                 }
                 is Event.PairingCompleted -> RelayHub.notify(Notice.PairingCompleted(event.name))
                 is Event.JoinFailed -> RelayHub.notify(Notice.JoinFailed(event.message))
                 is Event.Rejected -> Log.w(TAG, "message de ${event.fromName} rejeté : ${event.reason}")
                 is Event.StorageError -> RelayHub.notify(Notice.Problem(event.message))
-                // Étape 10 : annuaire, personnes et invitations, montrés par la
-                // PR Android (T13 à T15) ; journalisés en attendant.
-                is Event.DirectoryChanged -> Unit
-                is Event.DirectoryRejected -> Log.w(TAG, "annuaire : ${event.userId} refusé : ${event.reason}")
-                is Event.DirectoryFork -> RelayHub.notify(Notice.Problem("le relais publie un autre groupe que le mien"))
-                is Event.KeysChanged -> Log.w(TAG, "${event.userId} a de nouvelles clés")
-                is Event.PersonJoined -> Log.i(TAG, "${event.name} a rejoint OldTown (${event.deviceName})")
-                is Event.Joined -> Log.i(TAG, "invitation acceptée")
+                // Étape 10 : annuaire, personnes et invitations.
+                is Event.DirectoryChanged -> refreshPeople(started)
+                is Event.DirectoryRejected -> {
+                    Log.w(TAG, "annuaire : objet de ${event.userId} refusé : ${event.reason}")
+                    RelayHub.addAlert(DirectoryAlert.Rejected(event.userId, event.reason))
+                }
+                is Event.DirectoryFork -> {
+                    RelayHub.addAlert(DirectoryAlert.Fork)
+                    RelayHub.notify(Notice.Problem("Le relais publie un autre groupe que le mien : voir les réglages."))
+                }
+                is Event.KeysChanged -> {
+                    RelayHub.addAlert(DirectoryAlert.KeysChanged(event.userId))
+                    refreshPeople(started)
+                }
+                is Event.PersonJoined -> {
+                    val joined = Notice.PersonJoined(event.name, event.deviceName, event.fingerprint)
+                    RelayHub.notify(joined)
+                    if (shouldNotify(Foreground.mainVisible, processInForeground())) {
+                        Notifications.showPersonJoined(this, joined)
+                    }
+                    refreshPeople(started)
+                }
+                is Event.Joined -> {
+                    RelayHub.setInvitePending(false)
+                    RelayHub.setGroup(started.group())
+                    RelayHub.notify(Notice.Joined)
+                    refreshPeople(started)
+                }
                 is Event.InviteFailed -> RelayHub.notify(Notice.Problem(event.reason))
             }
             render()
+        }
+    }
+
+    /**
+     * Relit les personnes de l'annuaire, puis les raccourcis Direct Share ;
+     * à part, pour ne pas retenir les événements suivants.
+     */
+    private fun refreshPeople(client: OtClient) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                RelayHub.setPeople(client.people())
+            } catch (e: OtException) {
+                Log.w(TAG, "annuaire illisible : ${e.message}")
+            }
+            val s = RelayHub.state.value
+            Shortcuts.update(this@RelayService, s.group, s.history, s.people)
+        }
+    }
+
+    /**
+     * Racine de l'annuaire (D51) : adoptée d'office si un autre appareil de
+     * l'admin l'a publiée ; sinon, sur un appareil de l'admin, « Publier
+     * l'annuaire » est proposé dans les réglages.
+     */
+    private fun checkRoot(client: OtClient) {
+        if (RelayHub.state.value.group == null) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                when (val root = client.adminRoot(false)) {
+                    is AdminRoot.Missing -> RelayHub.setRootMissing(root.name)
+                    is AdminRoot.Ready -> RelayHub.setRootMissing(null)
+                    AdminRoot.NotAdmin -> RelayHub.setRootMissing(null)
+                }
+            } catch (e: OtException) {
+                Log.w(TAG, "racine de l'annuaire : ${e.message}")
+            }
         }
     }
 
@@ -217,7 +275,7 @@ class RelayService : LifecycleService() {
         const val ACTION_RESTART = "dev.oldtown.android.action.RESTART"
         const val ACTION_SEND_FILES = "dev.oldtown.android.action.SEND_FILES"
         const val ACTION_DOWNLOAD = "dev.oldtown.android.action.DOWNLOAD"
-        const val EXTRA_TO = "to"
+        const val EXTRA_CHANNEL = "channel"
         const val EXTRA_MSG_ID = "msg_id"
         private const val TAG = "OldTown"
         private const val SHUTDOWN_TIMEOUT_MS = 3_000L
