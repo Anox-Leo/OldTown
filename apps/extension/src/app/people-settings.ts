@@ -95,6 +95,9 @@ const KINDS: readonly { value: Kind; label: string }[] = [
               (change)="setKind(d, $any($event.target).value)"
               [attr.aria-label]="'Catégorie de ' + d.name"
             >
+              @if (kindOf(d) === 'unknown') {
+                <option value="" selected disabled>Non précisée</option>
+              }
               @for (k of kinds; track k.value) {
                 <option [value]="k.value" [selected]="k.value === kindOf(d)">{{ k.label }}</option>
               }
@@ -236,7 +239,7 @@ export class PeopleSettingsComponent {
   protected readonly error = signal<string | undefined>(undefined);
 
   protected kindOf(d: PersonDeviceView): Kind {
-    return deviceKind(d.name, d.kind);
+    return deviceKind(d.kind);
   }
 
   protected nameOf(user: string): string {

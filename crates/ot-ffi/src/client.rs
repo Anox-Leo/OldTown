@@ -50,6 +50,7 @@ impl OtClient {
             Arc::new(keyring.clone()),
         );
         config.seen = local.seen();
+        config.kind = Some(ot_core::DeviceKind::Phone);
         let seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, config.seen.clone());
 
         let _guard = RUNTIME.enter();

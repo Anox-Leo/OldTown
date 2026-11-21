@@ -14,8 +14,8 @@ use ot_core::crypto::directory::{
 };
 use ot_core::directory::DirectoryState;
 use ot_core::{
-    Client, ClientConfig, ClientError, Content, Event, Events, Keyring, Origin, OutgoingFile,
-    Person, Target, ensure_exchange_key,
+    Client, ClientConfig, ClientError, Content, DeviceKind, Event, Events, Keyring, Origin,
+    OutgoingFile, Person, Target, ensure_exchange_key,
 };
 use ot_proto::{Role, UserId};
 use ot_server::store::Store;
@@ -284,4 +284,24 @@ async fn text_and_file_between_two_people_both_ways() {
         assert_eq!(*sink.data.lock().unwrap(), data);
     }
     net.server.stop().await;
+}
+
+fn kind_of(people: &[Person], device: &ot_proto::DeviceId) -> Option<Option<DeviceKind>> {
+    people.iter().flat_map(|p| &p.devices).find(|d| &d.id == device).map(|d| d.kind)
+}
+
+#[tokio::test]
+async fn a_client_declares_its_configured_kind() {
+    let net = net().await;
+    let url = net.server.url();
+    let (a0, a1) = (net.a[0].id.clone(), net.a[1].id.clone());
+    let mut phone = config(&net.a[0], &url);
+    phone.kind = Some(DeviceKind::Phone);
+    let (_c0, mut e0) = Client::start(phone);
+    wait_connected(&mut e0).await;
+    let (c1, mut e1) = online(&net.a[1], &url).await;
+
+    people_until(&c1, &mut e1, |p| kind_of(p, &a0) == Some(Some(DeviceKind::Phone))).await;
+    let people = people_until(&c1, &mut e1, |p| up_to_date(p, &net.alice, 2)).await;
+    assert_eq!(kind_of(&people, &a1), Some(None), "sans catégorie configurée, rien n'est déclaré");
 }

@@ -122,11 +122,11 @@ describe('listes de l’accueil', () => {
     added_epoch: 1,
   });
 
-  it('la nature déclarée passe avant le nom ; une nature inconnue est un portable', () => {
-    expect(deviceKind('Chrome Mac', 'phone')).toBe('phone');
-    expect(deviceKind('pc', 'cli')).toBe('cli');
-    expect(deviceKind('pc', 'unknown')).toBe('laptop');
-    expect(deviceKind('Chrome Mac')).toBe('browser');
+  it('une nature déclarée est gardée ; absente ou inconnue, l’appareil reste neutre', () => {
+    expect(deviceKind('phone')).toBe('phone');
+    expect(deviceKind('cli')).toBe('cli');
+    expect(deviceKind('unknown')).toBe('unknown');
+    expect(deviceKind()).toBe('unknown');
   });
 
   it('les appareils en ligne de commande ne sont pas des conversations (A4)', () => {

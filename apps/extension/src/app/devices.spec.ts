@@ -13,15 +13,10 @@ const member = (id: string, name: string): MemberView => ({
 const at = (n: number) => new Date(Date.UTC(2026, 9, 15, 10, n)).toISOString();
 
 describe('devices', () => {
-  it('devine le type d’appareil à son nom', () => {
-    expect(deviceKind('Chrome Mac')).toBe('browser');
-    expect(deviceKind('Brave Windows')).toBe('browser');
-    expect(deviceKind('Téléphone')).toBe('phone');
-    expect(deviceKind('Pixel 9')).toBe('phone');
-    expect(deviceKind('PC Windows')).toBe('desktop');
-    expect(deviceKind('Mac mini')).toBe('desktop');
-    expect(deviceKind('MacBook Air')).toBe('laptop');
-    expect(deviceKind('relais')).toBe('laptop');
+  it('le type vient du profil, jamais du nom', () => {
+    expect(deviceKind('browser')).toBe('browser');
+    expect(deviceKind('phone')).toBe('phone');
+    expect(deviceKind(undefined)).toBe('unknown');
   });
 
   it('une couleur stable par appareil', () => {

@@ -464,13 +464,13 @@ export class ChatComponent {
   });
   protected readonly kind = computed(() => {
     const d = this.personDevice();
-    if (d) return deviceKind(d.name, d.kind);
+    if (d) return deviceKind(d.kind);
     if (this.target().user) return 'person';
     const m = this.member();
     const profile = this.state()
       .people.find((p) => p.user === this.state().me)
       ?.devices.find((x) => x.device_id === m?.device_id);
-    return m ? deviceKind(m.name, profile?.kind) : 'group';
+    return m ? deviceKind(profile?.kind) : 'group';
   });
   protected readonly color = computed(() => {
     const t = this.target();

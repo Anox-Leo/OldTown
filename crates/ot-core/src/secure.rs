@@ -16,12 +16,12 @@ use ot_crypto::{
 };
 use ot_proto::{
     BlobId, Content, ContentKind, DeviceId, DeviceInfo, DeviceKind, DirectoryUser, Encoding,
-    Envelope, Known, LogEntry, MAX_RECIPIENTS, Payload, Role, SignedBlob, UserId,
+    Envelope, Feature, Frame, Known, LogEntry, MAX_RECIPIENTS, Payload, Role, SignedBlob, UserId,
 };
 use time::OffsetDateTime;
 
 use crate::Identity;
-use crate::directory::{Chain, DirectoryEvent, DirectoryState, Person};
+use crate::directory::{Chain, DeviceProfile, DirectoryEvent, DirectoryState, Person};
 use crate::files::{
     FileInfo, FileMeta, PendingUpload, ReceivedFile, StoredFile, add_offer, prune_offers,
     stored_from_body,
@@ -385,9 +385,30 @@ impl Secure {
     /// Mon profil sur le relais n'annonce pas encore `users-v1` : à
     /// déclarer (`device_update`), seul l'appareil le peut.
     pub fn needs_features(&self) -> bool {
-        self.my_person()
-            .and_then(|p| p.devices.iter().find(|d| d.id == self.me))
-            .is_some_and(|d| !d.up_to_date)
+        self.my_profile().is_some_and(|d| !d.up_to_date)
+    }
+
+    /// `device_update` que cet appareil doit au relais : ses capacités si
+    /// son profil ne les a pas, et `kind` si son profil n'a pas de
+    /// catégorie (jamais celle choisie dans les réglages). `None` : rien.
+    pub fn declaration(&self, kind: Option<DeviceKind>) -> Option<Frame> {
+        let profile = self.my_profile()?;
+        let features = (!profile.up_to_date).then(|| vec![Feature::users_v1()]);
+        let kind = kind.filter(|_| profile.kind.is_none());
+        if features.is_none() && kind.is_none() {
+            return None;
+        }
+        Some(Frame::DeviceUpdate {
+            device: self.me.clone(),
+            kind,
+            reachable: None,
+            default: None,
+            features,
+        })
+    }
+
+    fn my_profile(&self) -> Option<&DeviceProfile> {
+        self.my_person()?.devices.iter().find(|d| d.id == self.me)
     }
 
     fn my_person(&self) -> Option<&Person> {
@@ -2532,6 +2553,28 @@ mod tests {
             (got[0].content.kind, got[0].origin.from_user.as_ref()),
             (ContentKind::Link, Some(&bob))
         );
+    }
+
+    #[test]
+    fn declaration_adds_the_kind_only_when_the_profile_has_none() {
+        let mut p = People::new(1, 1);
+        let kind_of = |f: Option<Frame>| match f {
+            Some(Frame::DeviceUpdate { kind, features, .. }) => Some((kind, features.is_some())),
+            _ => None,
+        };
+        let me = |p: &People| p.a[0].secure.declaration(Some(DeviceKind::Browser));
+
+        p.set_profile(0, 0, device_profile(&p.a[0], false, true, None));
+        assert_eq!(kind_of(me(&p)), Some((Some(DeviceKind::Browser), true)));
+        assert_eq!(kind_of(p.a[0].secure.declaration(None)), Some((None, true)));
+
+        p.set_profile(0, 0, device_profile(&p.a[0], true, true, None));
+        assert_eq!(kind_of(me(&p)), Some((Some(DeviceKind::Browser), false)));
+        assert!(p.a[0].secure.declaration(None).is_none());
+
+        let chosen = device_profile(&p.a[0], true, true, Some(DeviceKind::Desktop));
+        p.set_profile(0, 0, chosen);
+        assert!(me(&p).is_none(), "une catégorie choisie n'est jamais remplacée");
     }
 
     #[test]

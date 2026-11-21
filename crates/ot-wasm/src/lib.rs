@@ -528,10 +528,11 @@ impl Core {
     }
 
     /// Trame `device_update` qui déclare `users-v1` si mon profil ne l'a
-    /// pas, `undefined` sinon. À envoyer après chaque lecture complète.
-    #[wasm_bindgen(js_name = featuresFrame)]
-    pub fn features_frame(&self, device_id: &str) -> Result<Option<String>, JsError> {
-        Ok(self.state.features_frame(device_id).map_err(js)?.map(|f| f.to_json()))
+    /// pas, et `kind` (`browser`…) s'il n'a pas de catégorie ; `undefined`
+    /// sinon. À envoyer après chaque lecture complète.
+    #[wasm_bindgen(js_name = declarationFrame)]
+    pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<String>, JsError> {
+        Ok(self.state.declaration_frame(kind).map_err(js)?.map(|f| f.to_json()))
     }
 
     /// Appareils destinataires d'un envoi à `user` (JSON).
