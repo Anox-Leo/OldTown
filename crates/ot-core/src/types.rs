@@ -44,6 +44,19 @@ pub enum Target {
     Person { user: UserId, device: Option<DeviceId> },
 }
 
+/// Racine de l'annuaire vue d'un appareil (`Client::admin_root`, D51).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminRoot {
+    /// Publiée, par cet appel ou par un autre appareil de l'admin, et
+    /// adoptée : l'identifiant de la personne admin.
+    Ready(UserId),
+    /// Rien n'est publié : `name`, le nom que le relais donne à l'admin,
+    /// sera signé une fois pour toutes à la création.
+    Missing { name: String },
+    /// Cet appareil n'est pas à l'admin.
+    NotAdmin,
+}
+
 /// Message reçu, déchiffré, d'un membre du roster dont la signature est
 /// vérifiée, et pas encore vu.
 #[derive(Debug, Clone)]

@@ -164,6 +164,40 @@ async fn phone_joins_by_code_then_exchanges() {
 }
 
 #[tokio::test]
+async fn the_admin_phone_publishes_the_directory_only_on_request() {
+    let (url, relay_store) = relay().await;
+    let a = OtClient::start(phone(&url, &relay_store).await).unwrap();
+    next(&a, connected).await;
+
+    let AdminRoot::Missing { name } = a.admin_root(false).await.unwrap() else {
+        panic!("rien n'est publié");
+    };
+    assert!(!name.is_empty());
+    assert!(a.people().await.unwrap().is_empty());
+    let AdminRoot::Ready { user_id } = a.admin_root(true).await.unwrap() else {
+        panic!("racine publiée attendue");
+    };
+    assert_eq!(a.admin_root(false).await.unwrap(), AdminRoot::Ready { user_id: user_id.clone() });
+    assert!(matches!(a.admin_init().await, Err(OtError::Invalid { .. })), "déjà publiée");
+
+    // Le téléphone déclare sa catégorie ; l'annuaire relu la montre.
+    let me = within(async {
+        loop {
+            let people = a.people().await.unwrap();
+            if let Some(p) = people.into_iter().find(|p| p.user_id == user_id)
+                && p.devices.iter().any(|d| d.kind.as_deref() == Some("phone"))
+            {
+                return p;
+            }
+            next(&a, |e| matches!(e, Event::DirectoryChanged)).await;
+        }
+    })
+    .await;
+    assert!(me.is_admin && !me.is_service && !me.muted);
+    assert_eq!(me.devices.len(), 1);
+}
+
+#[tokio::test]
 async fn phone_sponsors_by_reverse_qr() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
@@ -376,6 +410,21 @@ fn forget_erases_everything() {
 }
 
 #[test]
+fn opened_conversations_never_go_back() {
+    let store = Arc::new(TestStore::default());
+    assert!(opened(store.clone()).is_empty());
+    mark_opened(store.clone(), "usr_bob".into(), 20).unwrap();
+    let all = mark_opened(store.clone(), "usr_bob".into(), 10).unwrap();
+    assert_eq!(all.get("usr_bob"), Some(&20), "une ouverture plus ancienne ne rouvre rien");
+    mark_opened(store.clone(), "usr_carol".into(), 5).unwrap();
+    assert_eq!(opened(store.clone()).len(), 2);
+    store.put("opened.json".into(), b"pas du json".to_vec()).unwrap();
+    assert!(opened(store.clone()).is_empty(), "illisible : tout compte comme non lu");
+    clear_history(store.clone()).unwrap();
+    assert!(!store.names().contains(&"opened.json".to_owned()));
+}
+
+#[test]
 fn qr_helpers() {
     assert_eq!(classify_qr("https://example.org".into()), QrKind::Unknown);
     assert!(matches!(classify_qr("oldtown://sponsor?o=AAAA".into()), QrKind::Invalid { .. }));
@@ -420,6 +469,7 @@ fn history_keeps_the_last_hundred() {
             from_user: None,
             from_service: false,
             to_user: None,
+            to_device: None,
             auto_fill: false,
         };
         local.push_history(item).unwrap();
