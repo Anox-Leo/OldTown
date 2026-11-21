@@ -67,13 +67,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Cible du menu Partager (étape 3, T7 ; fichiers à l'étape 5) : feuille du
- * bas par-dessus l'appli d'origine, choix du destinataire, envoi par le
- * service, confirmation brève. Depuis un raccourci Direct Share, le
- * destinataire est déjà choisi. Les fichiers sont confiés au service, qui
- * les envoie après la fermeture de la feuille.
- */
 class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -93,7 +86,6 @@ class ShareActivity : ComponentActivity() {
     }
 }
 
-/** URI partagées : `EXTRA_STREAM` (une ou une liste), à défaut le `ClipData`. */
 private fun streams(intent: Intent): List<String> {
     val list = if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
         IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, android.net.Uri::class.java).orEmpty()
@@ -128,7 +120,6 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
 
     fun send(channel: String, label: String) {
         if (content is SharedContent.Files) {
-            // Le service garde l'accès aux URI et envoie après la fermeture.
             RelayHub.sendFiles(context, content.uris.map { it.toUri() }, channel)
             state = SendState.Sent(label)
             scope.launch {
@@ -155,7 +146,6 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
         }
     }
 
-    // Direct Share : envoi immédiat au destinataire choisi.
     LaunchedEffect(hub.group, hub.people, direct) {
         val group = hub.group ?: return@LaunchedEffect
         if (direct == null) return@LaunchedEffect
@@ -209,7 +199,6 @@ private fun ShareSheet(content: SharedContent, direct: String?, onDone: () -> Un
     }
 }
 
-/** Noms et tailles des fichiers partagés, lus auprès de leur fournisseur. */
 @Composable
 private fun FilesPreview(uris: List<String>) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -271,11 +260,6 @@ private fun Preview(text: String) {
     }
 }
 
-/**
- * Destinataires : « Tous mes appareils » en tête, puis mes appareils et
- * enfin les autres personnes, chacun du plus utilisé au moins utilisé (note
- * 0033, [shareTargets]), avec leur avatar.
- */
 @Composable
 private fun Recipients(
     group: dev.oldtown.core.Group?,

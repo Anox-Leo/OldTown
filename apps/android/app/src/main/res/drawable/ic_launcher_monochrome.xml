@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Icône thématique (Android 13 et plus) : le système la teinte.
-     Tracé et placement repris de branding/android-monochrome.svg (BrandTest le vérifie). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

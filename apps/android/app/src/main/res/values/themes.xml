@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Fenêtres claires « parchemin » en mode jour, « nuit » en mode sombre
-         (values-night) ; couleurs générées dans tokens.xml, le reste du thème
-         est en Compose (ui/theme). Écran de démarrage (Android 12 et plus) :
-         le signe sur la tuile nuit, dans les deux thèmes, comme l'icône. -->
     <style name="Theme.OldTown" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/ot_screen</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

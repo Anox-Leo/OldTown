@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import dev.oldtown.android.R
 
-/** DM Sans (charte, note 0059), fonte variable : une graisse par entrée. */
 private fun dmSans(weight: FontWeight) = Font(
     R.font.dm_sans,
     weight = weight,
@@ -36,15 +35,12 @@ val DmSans = FontFamily(
 private fun style(size: TextUnit, weight: FontWeight = FontWeight.Normal, line: Int = size.value.toInt() + 6) =
     TextStyle(fontFamily = DmSans, fontWeight = weight, fontSize = size, lineHeight = line.sp)
 
-/** Échelle des jetons (`OtTokens.TextSize`), 11 à 24. */
 private val OtTypography = with(OtTokens.TextSize) {
     Typography(
         headlineSmall = style(headline, FontWeight.SemiBold, 30),
         titleLarge = style(large, FontWeight.SemiBold, 26),
         titleMedium = style(title, FontWeight.Medium, 22),
         titleSmall = style(body, FontWeight.Medium, 20),
-        // Noms d'appareils et de fichiers en tête : un cran au-dessus du corps,
-        // hors échelle comme avant les jetons.
         bodyLarge = style(16.sp, line = 23),
         bodyMedium = style(body, line = 21),
         bodySmall = style(small, line = 18),
@@ -54,7 +50,6 @@ private val OtTypography = with(OtTokens.TextSize) {
     )
 }
 
-/** Arrondis des jetons : contrôles 10, cartes 14, feuilles 20, pastilles 999. */
 object OtShapes {
     val card = RoundedCornerShape(OtTokens.Radius.card)
     val control = RoundedCornerShape(OtTokens.Radius.control)
@@ -62,7 +57,6 @@ object OtShapes {
     val sheet = RoundedCornerShape(topStart = OtTokens.Radius.sheet, topEnd = OtTokens.Radius.sheet)
 }
 
-/** Police à chasse fixe des empreintes et des codes. */
 val Mono = FontFamily.Monospace
 
 @Composable
@@ -105,7 +99,6 @@ fun OldTownTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () 
     }
 }
 
-/** Accès court à la palette : `Ot.colors.muted`. */
 object Ot {
     val colors: OtColors
         @Composable @ReadOnlyComposable get() = LocalOtColors.current

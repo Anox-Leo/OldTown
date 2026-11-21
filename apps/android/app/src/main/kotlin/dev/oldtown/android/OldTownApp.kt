@@ -13,7 +13,6 @@ class OldTownApp : Application() {
     }
 
     companion object {
-        /** Travail qui doit survivre à un écran ou au service (arrêt propre du client). */
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

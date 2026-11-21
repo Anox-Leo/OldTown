@@ -21,10 +21,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Accueil et conversation (note 0033), sur un état fictif : sans relais ni
- * service, et sans toucher aux données de l'appli.
- */
 @RunWith(AndroidJUnit4::class)
 class ConversationsUiTest {
     @get:Rule val compose = createComposeRule()
@@ -78,7 +74,6 @@ class ConversationsUiTest {
         val bubble = compose.onNodeWithText("message 2").fetchSemanticsNode().boundsInRoot
         val width = compose.onNode(hasTestTag("messages")).fetchSemanticsNode().boundsInRoot.width
         assertTrue("bulle à droite : $bubble sur $width", bubble.left > width / 2)
-        // Les autres canaux n'y sont pas.
         compose.onNodeWithText("message 3").assertDoesNotExist()
         compose.onNodeWithText("message 1").assertDoesNotExist()
     }

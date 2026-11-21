@@ -50,7 +50,6 @@ import dev.oldtown.core.AdminUserItem
 import dev.oldtown.core.PersonInvite
 import kotlinx.coroutines.launch
 
-/** Personnes telles que le relais les connaît (admin), relues à chaque changement de l'annuaire. */
 @Composable
 private fun rememberUsers(hub: HubState): Triple<List<AdminUserItem>?, String?, suspend () -> Unit> {
     val context = LocalContext.current
@@ -73,11 +72,6 @@ private fun stateLabel(u: AdminUserItem): String = when (u.state) {
     }
 }
 
-/**
- * Administration (T15, comme `admin.html`) : inviter, ajouter un appareil
- * de service, puis les personnes et les services ; une ligne ouvre sa fiche
- * (liens, renommer, réinviter, révoquer).
- */
 @Composable
 fun AdminScreen(hub: HubState, onBack: () -> Unit, open: (Screen) -> Unit) {
     val scope = rememberCoroutineScope()
@@ -129,11 +123,6 @@ private fun UserList(title: String, users: List<AdminUserItem>, open: (Screen) -
 
 private enum class Confirm { Revoke, Rename }
 
-/**
- * Fiche d'une personne (admin) : ses appareils, ses liens en interrupteurs
- * (dans les deux sens entre personnes ; d'un service vers une personne, à
- * sens unique, D41), renommer, réinviter (appareils perdus), révoquer.
- */
 @Composable
 fun PersonAdminScreen(hub: HubState, userId: String, onBack: () -> Unit) {
     val context = LocalContext.current

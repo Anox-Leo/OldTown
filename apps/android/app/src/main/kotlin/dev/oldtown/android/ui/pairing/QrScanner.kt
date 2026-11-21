@@ -45,10 +45,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import zxingcpp.BarcodeReader
 
-/**
- * Lecture d'un QR par la caméra : CameraX et zxing-cpp (Apache 2.0, sans
- * Google Play Services, note 0016). Appelle [onResult] une seule fois.
- */
 @Composable
 fun QrScanner(onResult: (String) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -104,7 +100,6 @@ private fun CameraPreview(onResult: (String) -> Unit) {
             BarcodeReader.Options(
                 formats = setOf(BarcodeReader.Format.QR_CODE),
                 tryHarder = true,
-                // `ot pair … --qr` dessine en clair sur fond sombre.
                 tryInvert = true,
             ),
         )
@@ -135,7 +130,6 @@ private fun CameraPreview(onResult: (String) -> Unit) {
     AndroidView({ view }, Modifier.fillMaxSize())
 }
 
-/** Cadre de visée : quatre coins arrondis. */
 @Composable
 private fun Frame() {
     val accent = Color.White

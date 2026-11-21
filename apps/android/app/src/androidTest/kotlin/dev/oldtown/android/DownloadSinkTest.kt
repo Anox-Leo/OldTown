@@ -10,7 +10,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Étape 5, T5 : un fichier reçu s'écrit dans `Download/OldTown`, ou disparaît s'il est abandonné. */
 @RunWith(AndroidJUnit4::class)
 class DownloadSinkTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext

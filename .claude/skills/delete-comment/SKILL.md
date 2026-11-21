@@ -94,6 +94,11 @@ lancer `--suppress-all` ni `--suppress-rule` pour faire passer un
 commentaire nouveau. Ces options ne servent qu'à poser le cliquet d'un
 nouveau composant.
 
+Android : `apps/android/app/src/test/kotlin/dev/oldtown/android/NoCommentsTest.kt`
+échoue sur tout commentaire hors fichiers générés (`./gradlew test`) ; son
+lexer sert aussi d'inventaire. Un fichier généré sort de sa liste quand son
+générateur cesse d'écrire des commentaires.
+
 Pour couvrir un autre composant : y brancher la même règle
 (`apps/extension/eslint-rules/no-comments.js`) ou son équivalent (detekt
 pour Kotlin, un test pour Rust), poser le cliquet, puis trier.

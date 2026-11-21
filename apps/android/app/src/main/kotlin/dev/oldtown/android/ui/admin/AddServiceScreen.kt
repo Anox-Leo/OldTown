@@ -43,18 +43,12 @@ import dev.oldtown.core.ServiceAdded
 import dev.oldtown.core.classifyQr
 import kotlinx.coroutines.launch
 
-/**
- * Ajouter un appareil de service (T15, PR 4) : le nom du service (créé à son
- * premier appareil), puis le QR inversé affiché par
- * `ot pair join --qr --service`. Relancé avec le même QR après une coupure,
- * l'ajout reprend où il s'était arrêté.
- */
 @Composable
 fun AddServiceScreen(hub: HubState, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var service by rememberSaveable { mutableStateOf("") }
-    var scanned by remember { mutableStateOf<Pair<String, String>?>(null) } // (qr, nom de l'appareil)
+    var scanned by remember { mutableStateOf<Pair<String, String>?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }

@@ -11,12 +11,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 
-/**
- * Fichier reçu, écrit dans `Download/OldTown` par MediaStore (aucune
- * permission de stockage). Il reste `IS_PENDING` (invisible des autres
- * applis) jusqu'à `finish`, appelé une fois le SHA-256 vérifié ; `abort`
- * l'efface.
- */
 class DownloadSink private constructor(
     private val context: Context,
     private val uri: Uri,
@@ -56,7 +50,6 @@ class DownloadSink private constructor(
     }
 
     companion object {
-        /** Crée l'entrée `Download/OldTown/<name>` (renommée par Android si le nom est pris). */
         fun create(context: Context, name: String, mime: String): DownloadSink {
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, name)

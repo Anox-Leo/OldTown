@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Petite icône des notifications : taille optique (archivolte épaissie,
-     noyau plein), blanche ; setColor la teinte dans le volet.
-     Tracé et placement repris de branding/android-notification.svg (BrandTest le vérifie). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

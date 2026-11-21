@@ -30,10 +30,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * Mêmes cas que `devices.spec.ts` (note 0031) et `people.spec.ts` (note
- * 0065) de l'extension, plus le partage (note 0033).
- */
 class ConversationsTest {
     private fun member(id: String, name: String) =
         Member(deviceId = id, name = name, signFingerprint = "", exchangeFingerprint = "", addedEpoch = 1u, isSelf = id == ME)
@@ -91,23 +87,17 @@ class ConversationsTest {
     private fun person(user: String, name: String, devices: List<PersonDevice> = emptyList(), service: Boolean = false) =
         PersonItem(userId = user, name = name, isAdmin = false, isService = service, muted = false, devices = devices)
 
-    // --- Entre mes appareils (notes 0030, 0031, 0033) ----------------------
-
     @Test
     fun itemsGoToTheirChannel() {
-        // Envoyé : son unique destinataire, sinon « Tous ».
         assertEquals("dev_a", channelOf(sent("1", listOf("dev_a"), 1), ME))
         assertEquals("", channelOf(sent("2", emptyList(), 1), ME))
         assertEquals("", channelOf(sent("3", listOf("dev_a", "dev_b"), 1), ME))
-        // Reçu : l'expéditeur s'il m'était adressé à moi seul.
         assertEquals("dev_a", channelOf(item("4", "dev_a", listOf(ME), 1), ME))
         assertEquals("", channelOf(item("5", "dev_a", emptyList(), 1), ME))
         assertEquals("", channelOf(item("6", "dev_a", listOf(ME, "dev_b"), 1), ME))
         assertEquals(emptyList<String>(), recipientsOf(""))
         assertEquals(listOf("dev_a"), recipientsOf("dev_a"))
     }
-
-    // --- channelOf (étape 10) ------------------------------------------------
 
     @Test
     fun receivedFromAnotherPersonGoesToHerConversation() {
@@ -123,7 +113,6 @@ class ConversationsTest {
 
     @Test
     fun aCopyFromOneOfMyDevicesGoesToThePerson() {
-        // D43 : envoi d'un autre de mes appareils, reçu en copie.
         val copy = item("1", "dev_tel", listOf("dev_bob", ME), 1, toUser = BOB)
         assertEquals("user:usr_bob", channelOf(copy, ME))
     }
@@ -142,8 +131,6 @@ class ConversationsTest {
         assertEquals(ChannelTarget.Person(BOB), parseChannel(userChannel(BOB)))
         assertEquals(ChannelTarget.Person(BOB, "dev_bob"), parseChannel(userChannel(BOB, "dev_bob")))
     }
-
-    // --- inChannel -------------------------------------------------------------
 
     private val fromPhone = item("1", "dev_bob_tel", emptyList(), 1, fromUser = BOB)
     private val fromPc = item("2", "dev_bob_pc", emptyList(), 1, fromUser = BOB)
@@ -168,8 +155,6 @@ class ConversationsTest {
         assertFalse(inChannel(carol, userChannel(BOB), ME))
         assertFalse(inChannel(carol, "", ME))
     }
-
-    // --- Listes de l'accueil ---------------------------------------------------
 
     @Test
     fun aDeclaredKindIsKeptOtherwiseNeutral() {
@@ -226,8 +211,6 @@ class ConversationsTest {
         assertEquals(listOf("user:usr_svc"), personConversations(svc, emptyList(), ME).map { it.id })
     }
 
-    // --- Barre latérale ----------------------------------------------------
-
     private val people = listOf(person("usr_me", "Alice"), person(BOB, "Bob"), person(CAROL, "Carol"), person("usr_dan", "Dan"))
 
     @Test
@@ -260,12 +243,8 @@ class ConversationsTest {
         assertEquals("ÉL", initials("élise"))
     }
 
-    // --- Couleurs, ordre, aperçu, heure (note 0031) -----------------------------
-
     @Test
     fun sameColorAsTheExtension() {
-        // Valeurs calculées par `avatarColor` de l'extension (couleurs accordées
-        // de `design/tokens.json`, mêmes rangs qu'avant les jetons).
         assertEquals(0xFFC77A1C, avatarColor(""))
         assertEquals(0xFFC4534F, avatarColor("dev_a"))
         assertEquals(0xFF9058B0, avatarColor("dev_b"))
@@ -299,15 +278,12 @@ class ConversationsTest {
             item("2", "dev_c", listOf(ME), 2),
             sent("3", listOf("dev_a"), 3),
             sent("4", listOf("dev_c"), 4),
-            // À tous : ne compte pour aucun appareil.
             sent("5", emptyList(), 5),
             sent("6", emptyList(), 6),
             sent("7", listOf("dev_d"), 7),
         )
         val members = MEMBERS + member("dev_d", "Delta")
-        // Charlie (3), puis Delta et Alpha (1 chacun, Delta plus récent), puis Bravo (0).
         assertEquals(listOf("Charlie", "Delta", "Alpha", "Bravo"), shareTargets(members, items, ME).map { it.name })
-        // Sans historique : par nom.
         assertEquals(listOf("Alpha", "Bravo", "Charlie"), shareTargets(MEMBERS, emptyList(), ME).map { it.name })
     }
 
