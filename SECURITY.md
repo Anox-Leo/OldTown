@@ -20,8 +20,13 @@ vulnerability*), not a public issue.
 | A malicious relay during pairing | Refuse the pairing, not hijack it: without the one-time secret of the code or QR (128 bits) it can neither read the request nor forge the answer. |
 | A relay adding a device of its own | Make it appear in `ot devices` (flagged "outside the group"); it receives nothing readable and its messages are rejected. |
 | Anyone who can reach the relay | Open at most 16 unauthenticated connections per IP (256 in total), 10 s each; fail authentication, try pairing tokens (80 bits, 10 minutes, single use) or sign file requests badly 30 times in a row, then once every 10 s, before being refused. |
-| A group member | Read and write like the others, add a device, rotate the group key: a group serves one person. |
-| A stolen device | Everything a member can do, until the group key is rotated without it and it is revoked on the relay. Android keys are encrypted by an Android Keystore key and excluded from backups, but usable while the phone is locked. Extension keys are encrypted by a non-extractable WebCrypto key of the same browser profile: whoever opens the computer session can use them. |
+| A device of my group | Read and write like my other devices, add a device, rotate the group key: a group serves one person. |
+| Another person on the same relay | Read and write in their own group; write to the people they are linked to and see their names, reachable devices and presence. Not read my group, invite, link or see anyone else: the relay refuses (`forbidden`, `not_allowed`). |
+| A service | Write one way to the people it is linked to; anyone can mute it. It has no group key and reads nothing. |
+| The admin, who also hosts the relay | See everyone's metadata (who writes to whom, when, sizes), certify people, set links, revoke. Not read what other people write, unless they send it to the admin. Whoever runs a code bridge for someone reads that person's mailbox. |
+| A relay showing a false directory | Hide a directory update (a removed device keeps receiving while the relay delivers to it), or deliver a message from a certified person who is not linked. Not invent a person or a device, replace a certificate, shorten or fork a roster log: clients check every certificate and log entry against the admin's anchor, and report a fork of their own roster. |
+| Whoever intercepts an invitation | Take the invited person's place if they use it first, within 48 h; the admin sees the device name and a fingerprint to compare. The secret in the link (128 bits) never reaches the relay; the token is single use. |
+| A stolen device | Everything its person can do, until it is removed (group key rotated without it, then revoked on the relay). A stolen admin device can also invite people and change links until it is removed; the certificates it signed are then re-signed by another admin device or lapse. Android keys are encrypted by an Android Keystore key and excluded from backups, but usable while the phone is locked. Extension keys are encrypted by a non-extractable WebCrypto key of the same browser profile: whoever opens the computer session can use them. |
 
 ## In place
 
@@ -33,6 +38,25 @@ vulnerability*), not a public issue.
   implementation.
 - Clients reject plaintext, senders outside the roster and bad signatures;
   trust comes from pairing, never from the relay's device list.
+- Several people: one group key per person. Messages to another person use
+  a multi-recipient scheme (`0x05`): a message key sealed to each recipient
+  device with X25519 and HKDF-SHA256 (bound to the device and `msg_id`), a
+  key commitment so every recipient reads the same plaintext, the same
+  Ed25519 signature as within a group. Test vectors cross-checked against an
+  independent implementation.
+- Signed directory: the admin's self-signed certificate is the anchor,
+  carried by every invitation; each person has a certificate signed by an
+  admin device and an append-only roster log signed by their own devices;
+  the admin's log commits to every current certificate, so a replaced or
+  revoked one cannot be replayed. Clients verify the whole chain, ignore
+  devices outside a verified roster, and refuse a shorter or diverging admin
+  log than the one they were given when they joined.
+- Relay rules per person: delivery only within a person or along a link;
+  admin frames only from admin devices; per-person quotas (devices, storage,
+  send rate, pending messages, roster log); invitation tokens stored as
+  SHA-256, single use, 48 h.
+- One-time codes from another person are never copied or filled
+  automatically, only from my own devices or a service.
 - Group key rotation that excludes a device; old keys kept 7 days, then
   forgotten. Secrets zeroized in memory, never logged.
 - Relay: Ed25519 challenge authentication with a domain prefix and
@@ -73,6 +97,14 @@ vulnerability*), not a public issue.
 - The host running otp-relay holds a mailbox app password, which grants
   full access to the mailbox, not just to codes.
 - A received one-time code is copied to the clipboard, so it may land in an
-  OS clipboard history. The bridge's host holds a group key.
+  OS clipboard history. A bridge sending to my devices (`--to`) holds my
+  group key; as a service (`--to-user`) it holds none.
+- The admin is trusted for names and links: a person's name is the one the
+  admin signed, and the relay host sees who is linked to whom.
+- An invitation sent by SMS or chat can be read by the operator until it is
+  used.
+- Losing every admin device loses the anchor: `ot-server admin reset` on
+  the relay, then every person must be invited again. Keep at least two
+  admin devices.
 - Automatic code filling needs access to all HTTPS pages (optional, granted
   on a click): a flaw in the extension would then reach every such page.

@@ -4,7 +4,8 @@ Send texts, links and files between your own devices (Android phone,
 Chromium-based browser on any computer, a terminal) through a relay you host
 yourself. Everything is end-to-end encrypted under a key that only your
 devices hold: the relay stores and forwards ciphertext and never sees the
-content.
+content. Optionally, the same relay serves people you invite: each keeps
+their own key, and writes only to the people they are linked to.
 
 Think Pushbullet, self-hosted, without an account and without trusting the
 server.
@@ -177,20 +178,37 @@ Scan the QR code shown in the terminal from the phone, as above.
 One relay can serve several people, each with their own devices and group
 key. The person who installed the relay is the **admin**: their signed
 certificate anchors a directory that every client verifies, so the relay
-cannot slip in a device or a person. From one of the admin's devices:
+cannot slip in a device or a person.
+
+First set the admin's name on the relay, since it is signed once:
+`ots user rename owner Alice`. Then publish the directory from one admin
+device; the others adopt it by themselves:
+
+- **Android or extension**: settings → *Publier l'annuaire* (publish the
+  directory), which shows the name about to be signed;
+- **command line**: `ot admin init`.
+
+Invite someone from an admin device:
+
+- **Android**: the `＋` at the bottom of the side bar, or settings →
+  *Administration* → *Inviter*: a QR code to scan in person, or a link to
+  send;
+- **extension**: settings → *Ouvrir l'administration*;
+- **command line**:
 
 ```sh
-ots user rename owner Alice          # on the relay: the admin's name is signed once
-ot admin init                        # publish the admin certificate (the anchor)
 ot admin invite Bob --link Alice     # prints an oldtown://invite?… link (and --qr)
 ```
 
-The invitation holds a secret: give it to Bob only. On Bob's computer, `ot
-invite join '<link>' --name bob-laptop`. The admin's `ot admin invite` stays running until Bob's
+The invitation holds a secret: give it to Bob only. Bob follows
+[Join someone's OldTown](#join-someones-oldtown); with the command line,
+`ot invite join '<link>' --name bob-laptop`. The admin's `ot admin invite` stays running until Bob's
 request arrives, certifies him and prints his device's key fingerprint, to
 compare with the one Bob sees; interrupted, the invitation stays valid
 (48 h) and the next `ot listen` on that device completes it. People can
-only write to people they are linked to:
+only write to people they are linked to. The apps show the admin each
+person's links as switches (Android) or as a grid (extension); with the
+command line:
 
 ```sh
 ot admin users                       # everyone, their devices and links
@@ -218,17 +236,41 @@ ot otp-bridge --to-user Bob          # on the service device (OT_OTP_TO_USER)
 ```
 
 The first device creates the service; more devices can join it the same
-way. `deploy/ot-diag.sh` also accepts `OT_DIAG_TO_USER`.
+way. From the Android app: settings → *Administration* → *Service*, then
+scan the QR code of `ot pair join --qr --service`. `deploy/ot-diag.sh` also
+accepts `OT_DIAG_TO_USER`.
+
+### Join someone's OldTown
+
+Someone who runs OldTown sent you an invitation: a QR code, or an
+`oldtown://invite?…` link. It is valid 48 hours, once, and holds a secret:
+do not share it.
+
+1. Install the Android app or the extension (sections 3 and 4, or the
+   files your host gives you).
+2. **Android**: on the first screen, pick a name for the phone, then
+   *J'ai reçu une invitation* (I received an invitation): scan the QR code,
+   or paste the link. A link opened from a text message fills it in;
+   nothing is sent before you tap *Rejoindre*. **Extension**: *J'ai reçu
+   une invitation*, then paste the link.
+3. Wait for the admin's device to welcome you (it must be online). The
+   admin sees your device's name and a short fingerprint: compare it aloud
+   if you can.
+
+Your other devices then join your own group as usual (sections 3 to 5).
+The admin sees who writes to you and when, never what.
 
 ## Everyday use
 
 - **Android**: *Share* from any app to OldTown (texts, links, photos,
-  files), or the conversation screen; received items come as notifications
-  with *Copy* and *Open*.
+  files), to one of my devices or to another person; or the conversation
+  screen. Other people sit in a side bar, with their unread count; a person
+  opens on their default devices, then each reachable device. Received
+  items come as notifications with *Copy* and *Open*.
 - **Extension**: right-click a page, link, selection or image → *Envoyer à
   OldTown*; `Alt+Shift+S` sends the current tab, `Alt+Shift+V` the
-  clipboard; the popup lists conversations per device. Chrome must be
-  running to receive; the relay keeps messages for 7 days.
+  clipboard; the popup lists conversations per device, and other people in a
+  side bar. Chrome must be running to receive; the relay keeps messages for 7 days.
 - **One-time codes** (optional): [otp-relay](tools/otp-relay/README.md)
   watches a mailbox over IMAP IDLE and publishes the codes it finds on a
   local Unix socket; `ot otp-bridge` reads them and sends each one,
