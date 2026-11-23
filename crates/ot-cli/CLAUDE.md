@@ -32,7 +32,8 @@ Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
 - Appareil de service : `config.toml` porte `role = "service"` ; pas de
   groupe, et aucun avertissement pour cela. `otp-bridge --to-user` saute les
   personnes qui ont coupé le service ou sans appareil joignable et à jour,
-  par identifiant dans le journal.
+  par identifiant dans le journal. Avec `--device` (une seule personne), il
+  vise cet appareil au lieu de ses appareils par défaut.
 - Chaque commande ponctuelle ouvre une session et coupe brièvement un
   `ot listen` de la même identité (note 0009). Sur un ordinateur qui a aussi
   l'extension Chrome, la CLI est un appareil distinct (note 0017).

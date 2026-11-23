@@ -576,6 +576,18 @@ impl Secure {
         self.seal_multi(to, &Body::Otp(otp.clone()))
     }
 
+    /// Comme [`Secure::seal_otp_to`], pour un seul appareil d'une personne
+    /// plutôt que ses appareils par défaut.
+    pub fn seal_otp_to_device(
+        &self,
+        otp: &Otp,
+        user: &UserId,
+        device: &DeviceId,
+    ) -> Result<Envelope, ClientError> {
+        let to = self.recipients(user, Some(device))?;
+        self.seal_multi(to, &Body::Otp(otp.clone()))
+    }
+
     /// Chiffre l'annonce d'un fichier déposé pour ces appareils, déjà
     /// résolus par [`Secure::recipients`] (le blob leur est ouvert).
     pub fn seal_file_to(
@@ -2575,6 +2587,23 @@ mod tests {
         let chosen = device_profile(&p.a[0], true, true, Some(DeviceKind::Desktop));
         p.set_profile(0, 0, chosen);
         assert!(me(&p).is_none(), "une catégorie choisie n'est jamais remplacée");
+    }
+
+    #[test]
+    fn a_code_for_one_device_goes_to_that_device_only() {
+        let p = People::new(1, 3);
+        let otp = Otp {
+            code: "482913".into(),
+            display: "G-482913".into(),
+            sender_name: "Google".into(),
+            sender_domain: "google.com".into(),
+            sender_verified: true,
+            expires_at: 1_793_628_791,
+        };
+        let env = p.a[0].secure.seal_otp_to_device(&otp, &p.bob, &p.b[1].id).unwrap();
+        assert_eq!(env.to, [p.b[1].id.clone()]);
+        let err = p.a[0].secure.seal_otp_to_device(&otp, &p.bob, &p.a[0].id).unwrap_err();
+        assert!(matches!(err, ClientError::Invalid(_) | ClientError::NoRecipient(_)), "{err}");
     }
 
     #[test]

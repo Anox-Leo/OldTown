@@ -363,6 +363,19 @@ impl Client {
         self.send_envelope(env).await
     }
 
+    /// Comme [`Client::send_otp_to`], pour un seul appareil d'une personne
+    /// (`ot otp-bridge --to-user … --device …`).
+    pub async fn send_otp_to_device(
+        &self,
+        user: &UserId,
+        device: &DeviceId,
+        otp: &Otp,
+    ) -> Result<Accepted, ClientError> {
+        let (user, device, otp) = (user.clone(), device.clone(), otp.clone());
+        let env = self.with_fresh(move |s| s.seal_otp_to_device(&otp, &user, &device)).await?;
+        self.send_envelope(env).await
+    }
+
     /// Exécute `f` après la fin de la prochaine lecture complète de
     /// l'annuaire (tout de suite sans ancre).
     pub(crate) async fn after_read<T: Send + 'static>(

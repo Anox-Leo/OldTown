@@ -233,12 +233,14 @@ ot pair join --qr --service --server wss://relay.example.org --name notifier-1
 ot admin service add Notifier --qr '<text of the QR>'
 ot admin link add Notifier Bob
 ot otp-bridge --to-user Bob          # on the service device (OT_OTP_TO_USER)
+ot otp-bridge --to-user Bob --device bob-laptop   # one of his devices only (OT_OTP_DEVICE)
 ```
 
 The first device creates the service; more devices can join it the same
 way. From the Android app: settings → *Administration* → *Service*, then
 scan the QR code of `ot pair join --qr --service`. `deploy/ot-diag.sh` also
-accepts `OT_DIAG_TO_USER`.
+accepts `OT_DIAG_TO_USER`, and `OT_DIAG_DEVICE` for one device of a single
+person.
 
 ### Join someone's OldTown
 

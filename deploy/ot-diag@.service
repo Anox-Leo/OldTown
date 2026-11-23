@@ -9,6 +9,7 @@
 #   OT_DIAG_TO=<nom du téléphone>
 # ou, si ot-diag est un appareil de service (`ot pair join --qr --service`) :
 #   OT_DIAG_TO_USER=<personne>
+#   OT_DIAG_DEVICE=<un de ses appareils, au lieu de ses appareils par défaut>
 
 [Unit]
 Description=Diagnostic du relais OldTown (%i)
