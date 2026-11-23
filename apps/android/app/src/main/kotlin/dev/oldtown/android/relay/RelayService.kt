@@ -25,8 +25,14 @@ import dev.oldtown.core.deviceState
 import dev.oldtown.core.history
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+data class ServiceStatus(val running: Boolean = false, val stops: Int = 0)
 
 class RelayService : LifecycleService() {
     private var client: OtClient? = null
@@ -35,6 +41,7 @@ class RelayService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        _status.update { it.copy(running = true) }
         ServiceCompat.startForeground(
             this,
             Notifications.CONNECTION_ID,
@@ -241,6 +248,7 @@ class RelayService : LifecycleService() {
         network = null
         stopClient()
         super.onDestroy()
+        _status.update { it.copy(running = false, stops = it.stops + 1) }
     }
 
     companion object {
@@ -249,6 +257,8 @@ class RelayService : LifecycleService() {
         const val ACTION_DOWNLOAD = "dev.oldtown.android.action.DOWNLOAD"
         const val EXTRA_CHANNEL = "channel"
         const val EXTRA_MSG_ID = "msg_id"
+        private val _status = MutableStateFlow(ServiceStatus())
+        val status: StateFlow<ServiceStatus> = _status.asStateFlow()
         private const val TAG = "OldTown"
         private const val SHUTDOWN_TIMEOUT_MS = 3_000L
     }

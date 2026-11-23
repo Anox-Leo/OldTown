@@ -12,6 +12,7 @@ import java.util.Base64
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,6 +37,7 @@ class RelayServiceTest {
     fun tearDown() {
         if (!ownsStore) return
         context.stopService(Intent(context, RelayService::class.java))
+        runBlocking { withTimeoutOrNull(10_000) { RelayService.status.first { !it.running } } }
         forgetDevice(store)
     }
 
@@ -56,17 +58,19 @@ class RelayServiceTest {
         }
         assertTrue(reconnecting.connection is Connection.Reconnecting)
 
+        val stopsBefore = RelayService.status.value.stops
         context.stopService(Intent(context, RelayService::class.java))
-        val stopped = withTimeout(10_000) { RelayHub.state.first { it.connection == Connection.Stopped } }
-        assertEquals(Connection.Stopped, stopped.connection)
+        withTimeout(10_000) { RelayService.status.first { !it.running && it.stops > stopsBefore } }
+        assertEquals(Connection.Stopped, RelayHub.state.value.connection)
     }
 
     @Test
     fun unpairedServiceStopsItself() = runBlocking {
         forgetDevice(store)
         RelayHub.reload(context)
+        val stopsBefore = withTimeout(10_000) { RelayService.status.first { !it.running }.stops }
         ContextCompat.startForegroundService(context, Intent(context, RelayService::class.java))
-        kotlinx.coroutines.delay(1_000)
+        withTimeout(10_000) { RelayService.status.first { !it.running && it.stops > stopsBefore } }
         assertEquals(Connection.Stopped, RelayHub.state.value.connection)
     }
 }
