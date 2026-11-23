@@ -26,8 +26,15 @@ pub enum Body {
         exchange_key: [u8; 32],
     },
     /// Parrain → nouvel appareil (schéma `0x02`) : clés de groupe encore
-    /// utiles, de la plus ancienne à la courante, et roster complet.
-    PairWelcome { keys: Vec<EpochKey>, roster: Roster },
+    /// utiles, de la plus ancienne à la courante, roster complet, et ancre
+    /// de l'annuaire si le parrain en a une (note 0076). Absente chez un
+    /// parrain d'avant la note : le nouvel appareil s'en passe.
+    PairWelcome {
+        keys: Vec<EpochKey>,
+        roster: Roster,
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "b64::opt_array")]
+        anchor: Option<[u8; 16]>,
+    },
     /// Roster complet, envoyé à tous après un ajout (schéma `0x01`).
     Roster { roster: Roster },
     /// Nouvelle époque après une rotation, pour un seul appareil (schéma
@@ -254,6 +261,24 @@ mod tests {
         // Le `Debug` d'un corps `file` ne montre pas la clé.
         assert!(!format!("{body:?}").contains("[1, 1"));
         assert!(Body::from_json(&file(4).to_json()).is_err());
+    }
+
+    /// L'ancre de `pair_welcome` est facultative (note 0076) : la bienvenue
+    /// d'un parrain plus ancien, sans elle, s'ouvre toujours.
+    #[test]
+    fn pair_welcome_anchor_is_optional() {
+        let roster = Roster { epoch: 1, version: 1, members: Vec::new() };
+        let keys = vec![EpochKey { epoch: 1, key: GroupKey::from_bytes([4; 32]) }];
+        let old = Body::PairWelcome { keys: keys.clone(), roster: roster.clone(), anchor: None };
+        assert!(!String::from_utf8_lossy(&old.to_json()).contains("anchor"));
+        assert_eq!(Body::from_json(&old.to_json()).unwrap(), old);
+
+        let new = Body::PairWelcome { keys, roster, anchor: Some([5; 16]) };
+        assert!(
+            String::from_utf8_lossy(&new.to_json())
+                .contains(r#""anchor":"BQUFBQUFBQUFBQUFBQUFBQ==""#)
+        );
+        assert_eq!(Body::from_json(&new.to_json()).unwrap(), new);
     }
 
     fn otp() -> Otp {

@@ -105,6 +105,7 @@ fn vectors() -> Vec<Vector> {
             body: Body::PairWelcome {
                 keys: vec![EpochKey { epoch: 1, key: GroupKey::from_bytes(bytes(10)) }],
                 roster: roster(1, 2),
+                anchor: Some(bytes(160)),
             },
         },
         Vector {
@@ -127,6 +128,7 @@ fn vectors() -> Vec<Vector> {
             body: Body::PairWelcome {
                 keys: vec![EpochKey { epoch: 1, key: GroupKey::from_bytes(bytes(10)) }],
                 roster: roster(1, 2),
+                anchor: Some(bytes(160)),
             },
         },
         Vector {

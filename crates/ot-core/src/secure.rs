@@ -237,6 +237,9 @@ pub struct Secure {
     pending_invite: Option<PendingInvite>,
     /// Appareil de service : bienvenue reçue, à confirmer par l'annuaire.
     service_join: Option<service::ServiceJoin>,
+    /// Ancre reçue du parrain (note 0076) : une lecture de l'annuaire est
+    /// due, pour que cet appareil se trouve et déclare ses capacités.
+    read_due: bool,
 }
 
 /// Ce qu'une entrée de mon journal doit changer (§ 4.2, note 0056).
@@ -330,6 +333,7 @@ impl Secure {
             invites: Vec::new(),
             pending_invite: None,
             service_join: None,
+            read_due: false,
         };
         secure.invites = secure.keyring.load_invites().unwrap_or_else(|e| {
             events.push(Event::KeyringError { message: e.0 });
@@ -784,9 +788,12 @@ impl Secure {
         self.pending_invite.is_some()
     }
 
-    /// Bienvenue reçue : à confirmer par une lecture de l'annuaire.
+    /// Une lecture de l'annuaire est attendue : bienvenue d'invitation ou de
+    /// service à confirmer, ou ancre reçue du parrain (note 0076).
     pub fn awaits_directory(&self) -> bool {
-        self.pending_invite.as_ref().is_some_and(|p| p.welcome.is_some()) || self.awaits_service()
+        self.pending_invite.as_ref().is_some_and(|p| p.welcome.is_some())
+            || self.awaits_service()
+            || self.read_due
     }
 
     /// Bienvenue de l'admin : ouverte sous `S`, signée par l'appareil qui a
@@ -1067,6 +1074,7 @@ impl Secure {
         let mut fx = Vec::new();
         let now = OffsetDateTime::now_utc();
         self.me_user = Some(me.clone());
+        self.read_due = false;
         let before = self.directory.clone();
         let applied = self.directory.apply(admin, users);
         if self.directory != before
@@ -1441,6 +1449,7 @@ impl Secure {
                 .map(|e| EpochKey { epoch: e.epoch, key: e.key.clone() })
                 .collect(),
             roster: next.clone(),
+            anchor: self.directory.anchor,
         };
         let welcome = self.seal_env(vec![device_id.clone()], key, &body).map_err(crypto)?;
         let group = SealKey::Group { epoch, key: &current };
@@ -1741,7 +1750,7 @@ impl Secure {
         now: OffsetDateTime,
         fx: &mut Vec<Effect>,
     ) -> Result<Handled, Reject> {
-        let Body::PairWelcome { keys, roster } = opened.body()? else {
+        let Body::PairWelcome { keys, roster, anchor } = opened.body()? else {
             return Err("pair_welcome attendu".into());
         };
         let sponsor = roster.member(&env.from).ok_or("parrain absent du roster")?;
@@ -1767,6 +1776,16 @@ impl Secure {
         self.joining_qr = None;
         self.save_keys(fx);
         self.set_roster(roster, fx);
+        // L'ancre vient d'un appareil de ma personne, authentifié par `S`
+        // comme les clés de groupe ; sans elle, l'annuaire ne se lit pas
+        // (seuls les appareils de l'admin peuvent adopter la racine).
+        if let Some(anchor) = anchor.filter(|_| !self.has_anchor()) {
+            self.directory = DirectoryState::with_anchor(anchor);
+            if let Err(e) = self.keyring.save_directory(&self.directory) {
+                fx.push(Effect::Emit(Event::KeyringError { message: e.0 }));
+            }
+            self.read_due = true;
+        }
         fx.push(Effect::Emit(Event::GroupChanged { epoch }));
         Ok(Handled::KeysChanged)
     }
@@ -2185,6 +2204,54 @@ mod tests {
         assert_eq!(texts(&new.receive(d[1].send("bienvenue"))), ["bienvenue"]);
         // Le roster rediffusé est déjà connu du nouveau : ignoré sans bruit.
         assert!(rejected(&new.receive(out[1].clone())).is_empty());
+    }
+
+    /// Un parrain qui a l'ancre la donne au nouvel appareil, par le code
+    /// comme par le QR inversé (note 0076) : sans elle, un appareil d'une
+    /// personne autre que l'admin ne lit jamais l'annuaire.
+    #[test]
+    fn pairing_passes_the_directory_anchor() {
+        let mut d = group(1);
+        d[0].keyring.save_directory(&DirectoryState::with_anchor([9; 16])).unwrap();
+        d[0].reload();
+        let expires = OffsetDateTime::now_utc() + time::Duration::minutes(10);
+
+        let mut by_code = Dev::new();
+        let code = d[0].secure.sponsor([7; 10], expires).unwrap();
+        let request = by_code.secure.start_join(&code, d[0].id.clone(), "code").unwrap();
+        let welcome = sends(&d[0].receive(request)).remove(0);
+        by_code.receive(welcome);
+
+        let mut by_qr = Dev::new();
+        let offer = PairingOffer::parse(&by_qr.secure.offer("qr").unwrap().encode()).unwrap();
+        let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
+        by_qr.receive(welcome);
+
+        for new in [&mut by_code, &mut by_qr] {
+            assert_eq!(new.secure.directory_state().anchor, Some([9; 16]));
+            assert!(new.secure.awaits_directory(), "une lecture est due");
+            new.reload();
+            assert_eq!(new.secure.directory_state().anchor, Some([9; 16]), "ancre rangée");
+        }
+        // La lecture faite, plus rien n'est attendu.
+        let user = UserId::generate();
+        by_code.secure.apply_directory(&user, &UserId::generate(), &[]);
+        assert!(!by_code.secure.awaits_directory());
+    }
+
+    /// Sans ancre chez le parrain (ou chez un parrain d'avant la note 0076),
+    /// la bienvenue n'en porte pas et l'appareil rejoint quand même.
+    #[test]
+    fn pairing_without_anchor_still_joins() {
+        let mut d = group(1);
+        let mut new = Dev::new();
+        let expires = OffsetDateTime::now_utc() + time::Duration::minutes(10);
+        let code = d[0].secure.sponsor([7; 10], expires).unwrap();
+        let request = new.secure.start_join(&code, d[0].id.clone(), "nouveau").unwrap();
+        let fx = new.receive(sends(&d[0].receive(request)).remove(0));
+        assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
+        assert!(!new.secure.has_anchor());
+        assert!(!new.secure.awaits_directory());
     }
 
     #[test]

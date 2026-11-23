@@ -241,8 +241,7 @@ async fn a_new_device_of_a_person_is_published_and_seen_by_others() {
         identity,
         keyring: Arc::new(MemoryKeyring::new()),
     };
-    let anchor = b1.keyring.load_directory().unwrap().anchor.unwrap();
-    b2.keyring.save_directory(&ot_core::directory::DirectoryState::with_anchor(anchor)).unwrap();
+    // L'ancre arrive avec la bienvenue du parrain (note 0076).
     let (cb2, mut eb2) = online(&b2, &url).await;
     within(cb2.pair_join(&pairing.code, redeemed.sponsor, "bob-laptop")).await.unwrap();
     wait_for(&mut eb2, |e| matches!(e, Event::GroupChanged { .. })).await;

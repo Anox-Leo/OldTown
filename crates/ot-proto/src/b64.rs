@@ -44,3 +44,27 @@ pub mod bytes {
         decode(&s).map_err(de::Error::custom)
     }
 }
+
+/// Comme [`array`], pour un champ facultatif (`null` ou absent : `None`).
+pub mod opt_array {
+    use super::*;
+
+    pub fn serialize<S: Serializer, const N: usize>(
+        v: &Option<[u8; N]>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(v) => s.serialize_str(&encode(v)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>, const N: usize>(
+        d: D,
+    ) -> Result<Option<[u8; N]>, D::Error> {
+        let Some(s) = Option::<String>::deserialize(d)? else { return Ok(None) };
+        decode_array(&s)
+            .map(Some)
+            .ok_or_else(|| de::Error::custom(format!("attendu {N} octets en base64")))
+    }
+}
