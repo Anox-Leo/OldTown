@@ -124,6 +124,17 @@ pub fn otp_recipients(people: &[Person], names: &[String]) -> Vec<UserId> {
     users
 }
 
+/// Destinataire d'un code pour `--to-user … --device …` : la personne et son
+/// appareil, ou ce qui l'empêche (service coupé, nom inconnu ou ambigu).
+pub fn otp_device(people: &[Person], user: &str, device: &str) -> Result<(UserId, DeviceId)> {
+    let person = find_person(people, user)?;
+    if person.muted {
+        bail!("{} a coupé ce service", person.id);
+    }
+    let d = pick(&person.devices, device, "appareil", |d| d.id.to_string(), |d| d.name.clone())?;
+    Ok((person.id.clone(), d.id.clone()))
+}
+
 /// Ma personne dans l'annuaire : celle dont le roster porte cet appareil.
 fn me<'a>(people: &'a [Person], device: &DeviceId) -> Option<&'a Person> {
     people.iter().find(|p| p.roster.contains(device))

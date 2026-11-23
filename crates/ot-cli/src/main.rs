@@ -136,6 +136,10 @@ enum Command {
         /// virgules. Ne se combine pas avec --to.
         #[arg(long = "to-user", env = "OT_OTP_TO_USER", value_delimiter = ',')]
         to_user: Vec<String>,
+        /// Avec une seule personne dans --to-user : cet appareil (nom ou
+        /// identifiant) au lieu de ses appareils par défaut.
+        #[arg(long, env = "OT_OTP_DEVICE", requires = "to_user")]
+        device: Option<String>,
         /// Socket d'otp-relay (par défaut
         /// `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`).
         #[arg(long)]
@@ -362,8 +366,8 @@ fn main() -> Result<()> {
                 server, name, code: None, force, service, ..
             }) => pair_join_qr(&home, server, name, force, service).await,
             Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
-            Command::OtpBridge { to, to_user, socket, min_confidence } => {
-                otp_bridge(&home, to, to_user, socket, min_confidence).await
+            Command::OtpBridge { to, to_user, device, socket, min_confidence } => {
+                otp_bridge(&home, to, to_user, device, socket, min_confidence).await
             }
         }
     })
@@ -848,12 +852,18 @@ const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
 enum OtpTarget {
     Devices(Vec<String>),
     People(Vec<String>),
+    /// Un seul appareil d'une personne (`--to-user … --device …`).
+    Device {
+        user: String,
+        device: String,
+    },
 }
 
 async fn otp_bridge(
     home: &Home,
     to: Vec<String>,
     to_user: Vec<String>,
+    device: Option<String>,
     socket: Option<PathBuf>,
     min_confidence: f64,
 ) -> Result<()> {
@@ -871,7 +881,11 @@ async fn otp_bridge(
             bail!("--to (appareils de mon groupe) et --to-user (personnes) ne se combinent pas")
         }
         (to, _) if !to.is_empty() => OtpTarget::Devices(to),
-        (_, users) if !users.is_empty() => OtpTarget::People(users),
+        (_, mut users) if !users.is_empty() => match device {
+            Some(device) if users.len() == 1 => OtpTarget::Device { user: users.remove(0), device },
+            Some(_) => bail!("--device demande une seule personne dans --to-user"),
+            None => OtpTarget::People(users),
+        },
         _ => bail!("aucun destinataire : --to ou --to-user (ou OT_OTP_TO, OT_OTP_TO_USER)"),
     };
     let socket = match socket {
@@ -887,7 +901,12 @@ async fn otp_bridge(
     }
 
     let (client, mut events) = start(home)?;
-    if let OtpTarget::People(names) = &target {
+    let names = match &target {
+        OtpTarget::Devices(_) => Vec::new(),
+        OtpTarget::People(names) => names.clone(),
+        OtpTarget::Device { user, .. } => vec![user.clone()],
+    };
+    if !names.is_empty() {
         // Les personnes se lisent dans l'annuaire vérifié : relais injoignable
         // au démarrage, les noms seront vérifiés au premier code.
         match tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await {
@@ -899,11 +918,17 @@ async fn otp_bridge(
                          à plusieurs personnes (voir `ot pair join --qr --service`)"
                     );
                 }
-                for name in names {
+                for name in &names {
                     if let Err(e) = people::find_person(&people, name) {
                         client.shutdown().await;
                         return Err(e);
                     }
+                }
+                if let OtpTarget::Device { user, device } = &target
+                    && let Err(e) = people::otp_device(&people, user, device)
+                {
+                    client.shutdown().await;
+                    return Err(e);
                 }
             }
             Ok(Err(e)) => eprintln!("⚠ annuaire illisible : {e}"),
@@ -1044,6 +1069,11 @@ async fn send_otp(client: Client, target: OtpTarget, code: ot_core::Otp) {
                     bail!("aucune des personnes de --to-user n'est joignable");
                 }
                 client.send_otp_to(&users, &code).await?;
+            }
+            OtpTarget::Device { user, device } => {
+                let people = client.fresh_directory().await?;
+                let (user, device) = people::otp_device(&people, user, device)?;
+                client.send_otp_to_device(&user, &device, &code).await?;
             }
         }
         anyhow::Ok(())

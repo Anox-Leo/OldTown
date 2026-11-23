@@ -124,6 +124,10 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
     // --to et --to-user ne se combinent pas.
     let err = ot_fails(&notifier, &["otp-bridge", "--to", "x", "--to-user", "Bob"]).await;
     assert!(err.contains("ne se combinent pas"), "{err}");
+    // --device ne vise qu'une personne.
+    let err =
+        ot_fails(&notifier, &["otp-bridge", "--to-user", "Alice,Bob", "--device", "bob-cli"]).await;
+    assert!(err.contains("une seule personne"), "{err}");
 
     let socket = root.path().join("otp-relay.sock");
     fake_relay(&socket, vec![("c1", "482913")]);
@@ -168,4 +172,42 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
     assert!(log.contains("a coupé ce service : sautée"), "{log}");
     assert!(log.contains("usr_") && !log.contains("482913"), "{log}");
     let _ = bridge.kill().await;
+}
+
+#[tokio::test]
+async fn bridge_sends_to_one_device_of_a_person() {
+    let root = TempDir::new().unwrap();
+    let (store, url) = relay(root.path()).await;
+    let alice = admin(&store, root.path(), &url).await;
+    let bob = invite(&alice, root.path(), "Bob", &["Alice"], "bob-cli").await;
+    let notifier = service(&alice, root.path(), &url, "Notifier", "notifier-1").await;
+    ot(&alice, &["admin", "link", "add", "Notifier", "Bob"]).await;
+
+    // Un appareil inconnu se voit dès le démarrage.
+    let err = ot_fails(
+        &notifier,
+        &["otp-bridge", "--to-user", "Bob", "--device", "nope", "--socket", "/nonexistent"],
+    )
+    .await;
+    assert!(err.contains("nope"), "{err}");
+
+    let socket = root.path().join("otp-relay.sock");
+    fake_relay(&socket, vec![("d1", "135790")]);
+    let _bridge = Command::new(env!("CARGO_BIN_EXE_ot"))
+        .arg("--home")
+        .arg(&notifier)
+        .args(["otp-bridge", "--socket", socket.to_str().unwrap()])
+        .env("OT_OTP_TO_USER", "Bob")
+        .env("OT_OTP_DEVICE", "bob-cli")
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let (_listen, mut lines) = spawn(&bob, &["listen", "--json"]);
+    let line = tokio::time::timeout(Duration::from_secs(20), line_starting(&mut lines, "{"))
+        .await
+        .expect("code reçu");
+    let got: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!((&got["kind"], &got["code"]), (&"otp".into(), &"135790".into()), "{line}");
+    assert_eq!(got["from_user_name"], "Notifier");
 }
