@@ -5,12 +5,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NoCommentsTest {
-    private val generated = setOf(
-        "src/main/kotlin/dev/oldtown/android/ui/theme/Tokens.kt",
-        "src/main/res/values/tokens.xml",
-        "src/main/res/values-night/tokens.xml",
-    )
-
     private val roots = listOf(
         "src",
         "build.gradle.kts",
@@ -24,10 +18,9 @@ class NoCommentsTest {
     private val extensions = setOf("kt", "kts", "xml", "toml", "properties", "pro")
 
     @Test
-    fun noCommentsOutsideGeneratedFiles() {
+    fun noComments() {
         val found = roots.map(::File).filter { it.exists() }
             .flatMap { root -> root.walkTopDown().filter { it.isFile && it.extension in extensions }.toList() }
-            .filter { it.invariantSeparatorsPath !in generated }
             .flatMap { f -> commentLines(f.extension, f.readText()).map { "${f.invariantSeparatorsPath}:$it" } }
         assertEquals(emptyList<String>(), found)
     }

@@ -170,3 +170,13 @@ test('thème clair : celui du système, ou choisi par data-theme', () => {
   const block = (start) => css.slice(css.indexOf(start)).split('}')[0].split('\n').slice(1).map((l) => l.trim());
   assert.deepEqual(block(":root:not([data-theme='dark'])"), block(":root[data-theme='light']"));
 });
+
+test('aucun commentaire dans les sorties de l\'extension et d\'Android', () => {
+  const files = render(load());
+  for (const key of ['css', 'ts', 'kotlin']) {
+    assert.doesNotMatch(files[OUTPUTS[key]], /\/\/|\/\*/);
+  }
+  for (const key of ['androidLight', 'androidDark']) {
+    assert.doesNotMatch(files[OUTPUTS[key]], /<!--/);
+  }
+});
