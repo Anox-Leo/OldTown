@@ -1,16 +1,10 @@
-// Fichier généré par tools/design-tokens/gen.mjs depuis design/tokens.json : ne pas modifier.
 package dev.oldtown.android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Jetons du système de design (`design/tokens.json`), mêmes valeurs que
- * l'extension, lus par `Color.kt` et `Theme.kt`.
- */
 object OtTokens {
-    /** Rôles du thème sombre « nuit ». */
     object Dark {
         val screen = Color(0xFF0F1120)
         val card = Color(0xFF161A2E)
@@ -38,7 +32,6 @@ object OtTokens {
         val onAvatar = Color(0xFFFFFFFF)
     }
 
-    /** Rôles du thème clair « parchemin ». */
     object Light {
         val screen = Color(0xFFFAF7F2)
         val card = Color(0xFFFFFFFF)
@@ -66,7 +59,6 @@ object OtTokens {
         val onAvatar = Color(0xFFFFFFFF)
     }
 
-    /** Couleurs des avatars (ARGB), dans l'ordre : les mêmes que l'extension. */
     val avatarColors = longArrayOf(
         0xFFC4534F,
         0xFFC77A1C,
@@ -80,7 +72,6 @@ object OtTokens {
         0xFF5A7488,
     )
 
-    /** Arrondis : contrôles, cartes, feuilles, pastilles. */
     object Radius {
         val control = 10.dp
         val card = 14.dp
@@ -88,7 +79,6 @@ object OtTokens {
         val pill = 999.dp
     }
 
-    /** Espacements, au pas de 4. */
     object Space {
         val xs = 4.dp
         val sm = 8.dp
@@ -98,7 +88,6 @@ object OtTokens {
         val xxl = 32.dp
     }
 
-    /** Échelle typographique. */
     object TextSize {
         val label = 11.sp
         val small = 13.sp

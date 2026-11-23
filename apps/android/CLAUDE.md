@@ -97,7 +97,5 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   pourquoi va dans une note de `docs/decisions/`, le quoi dans les noms et
   les tests, un raccourci dans une issue. `NoCommentsTest` (JVM) échoue sur
   tout commentaire de Kotlin, de `.kts`, de XML, de TOML, de `.properties`
-  ou de `.pro` sous `apps/android`, sauf dans les fichiers générés
-  (`Tokens.kt`, `res/values*/tokens.xml`, à corriger dans
-  `tools/design-tokens/gen.mjs`). Pour trier ce qui reviendrait :
-  `/delete-comment`.
+  ou de `.pro` sous `apps/android`, fichiers générés compris. Pour trier ce
+  qui reviendrait : `/delete-comment`.

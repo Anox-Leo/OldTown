@@ -206,45 +206,37 @@ function ts(tokens) {
 }
 
 function kotlin(tokens) {
-  const theme = (name, doc, t) => [
-    `    /** ${doc} */`,
+  const theme = (name, t) => [
     `    object ${name} {`,
     ...roles(tokens, t).map(([n, c]) => `        val ${camel(n)} = Color(${argb(c)})`),
     '    }',
   ];
-  const dimObject = (name, doc, group, unit) => [
-    `    /** ${doc} */`,
+  const dimObject = (name, group, unit) => [
     `    object ${name} {`,
     ...dims(tokens, group).map(([n, v]) => `        val ${camel(n)} = ${v}.${unit}`),
     '    }',
   ];
   return [
-    `// ${HEADER}`,
     'package dev.oldtown.android.ui.theme',
     '',
     'import androidx.compose.ui.graphics.Color',
     'import androidx.compose.ui.unit.dp',
     'import androidx.compose.ui.unit.sp',
     '',
-    '/**',
-    ' * Jetons du système de design (`design/tokens.json`), mêmes valeurs que',
-    ' * l\'extension, lus par `Color.kt` et `Theme.kt`.',
-    ' */',
     'object OtTokens {',
-    ...theme('Dark', 'Rôles du thème sombre « nuit ».', 'dark'),
+    ...theme('Dark', 'dark'),
     '',
-    ...theme('Light', 'Rôles du thème clair « parchemin ».', 'light'),
+    ...theme('Light', 'light'),
     '',
-    '    /** Couleurs des avatars (ARGB), dans l\'ordre : les mêmes que l\'extension. */',
     '    val avatarColors = longArrayOf(',
     ...avatars(tokens).map((c) => `        ${argb(c)},`),
     '    )',
     '',
-    ...dimObject('Radius', 'Arrondis : contrôles, cartes, feuilles, pastilles.', 'radius', 'dp'),
+    ...dimObject('Radius', 'radius', 'dp'),
     '',
-    ...dimObject('Space', 'Espacements, au pas de 4.', 'space', 'dp'),
+    ...dimObject('Space', 'space', 'dp'),
     '',
-    ...dimObject('TextSize', 'Échelle typographique.', 'type.size', 'sp'),
+    ...dimObject('TextSize', 'type.size', 'sp'),
     '}',
     '',
   ].join('\n');
@@ -255,7 +247,6 @@ function androidRes(tokens, theme) {
   const all = new Map(roles(tokens, theme));
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
-    `<!-- ${HEADER} -->`,
     '<resources>',
     ...ANDROID_RES_ROLES.map((n) => {
       if (!all.has(n)) throw new Error(`rôle inconnu pour Android : ${n}`);
