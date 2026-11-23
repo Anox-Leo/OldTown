@@ -1439,15 +1439,16 @@ mod tests {
     }
 
     #[test]
-    fn a_second_device_of_the_group_adopts_the_root() {
-        let (mut phone, _core, _, relay, _) = admin_pair();
+    fn a_second_device_of_the_group_gets_the_anchor_from_its_sponsor() {
+        let (mut phone, _core, _, _relay, _) = admin_pair();
         let (vault, id) = extension();
         let mut second = CoreState::open(vault, &id).unwrap().0;
         let offer = second.offer("chrome-2").unwrap();
         second.process(1, welcome(&mut phone, &offer.qr));
-        let res = second.admin_root(relay.page(&second.admin_init_start().unwrap())).unwrap();
-        assert!(res.adopted && res.frame.is_none());
-        assert!(second.directory_start().is_some(), "ancre adoptée");
+        // L'ancre vient avec la bienvenue (note 0076) : rien à adopter.
+        assert!(second.awaits_directory(), "lecture de l'annuaire due");
+        assert!(second.admin_init_start().is_err(), "ancre déjà là");
+        assert!(second.directory_start().is_some());
     }
 
     #[test]
