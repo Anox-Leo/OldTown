@@ -77,4 +77,4 @@ journal de roster de chaque personne (étape 10, notes 0052 et 0053). Binaire
   `tailscale cert`, note 0015) ; relais public derrière Caddy
   (`deploy/Caddyfile`, `deploy/docker/`, note 0038), vérifié par
   `deploy/tests/compose-test.sh`. Toute nouvelle option se documente dans le
-  README (anglais) et dans `docs/readme-fr.md` (local).
+  README (anglais) et dans le sujet du relais de `docs/systeme/` (local).
