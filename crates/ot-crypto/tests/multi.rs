@@ -1,7 +1,3 @@
-//! Schéma `0x05` (étape 10, note 0052) : une clé de message scellée pour
-//! chaque appareil destinataire. Aller-retour, destinataire absent, table et
-//! `env.to` altérés, limites.
-
 use ot_crypto::{
     Body, CryptoError, ExchangeKeyPair, Header, OpenKey, SealKey, SigningKey, open, seal,
 };
@@ -63,7 +59,6 @@ fn every_recipient_opens_the_same_message() {
     };
     assert_eq!(recipients.len(), 3);
     assert_eq!(Header::parse(&env.payload).unwrap().recipients(), env.to);
-    // 64 octets par destinataire.
     let one = sealed(&dests(1));
     assert_eq!(env.payload.data.len() - one.payload.data.len(), 2 * 64);
 }
@@ -74,10 +69,8 @@ fn an_absent_recipient_cannot_open() {
     let env = sealed(&to);
     let stranger = &dests(1)[0];
     assert_eq!(open_as(&env, stranger), Err(CryptoError::Decrypt));
-    // Mon identifiant, mais pas ma clé.
     let thief = Dest { id: to[0].id.clone(), key: ExchangeKeyPair::generate() };
     assert_eq!(open_as(&env, &thief), Err(CryptoError::Decrypt));
-    // La signature est celle de l'expéditeur, pas d'un autre.
     let opened = open(&env, OpenKey::Multi { me: &to[0].id, key: &to[0].key }).unwrap();
     let other = SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes();
     assert_eq!(opened.verify(&other), Err(CryptoError::BadSignature));
@@ -88,15 +81,12 @@ fn an_altered_table_or_recipient_list_is_refused() {
     let to = dests(3);
     let env = sealed(&to);
 
-    // Une clé scellée altérée : son destinataire échoue, et les autres aussi
-    // (la table entière est dans les données associées).
     let mut bad = env.clone();
     bad.payload.data[34 + 16] ^= 1;
     for d in &to {
         assert!(open_as(&bad, d).is_err());
     }
 
-    // `env.to` réordonné ou amputé par le relais : refusé.
     let mut reordered = env.clone();
     reordered.to.swap(0, 1);
     for d in &to {
@@ -106,8 +96,6 @@ fn an_altered_table_or_recipient_list_is_refused() {
     shorter.to.pop();
     assert!(matches!(open_as(&shorter, &to[0]), Err(CryptoError::Malformed(_))));
 
-    // Le relais retire proprement un destinataire de la table et de `to` :
-    // les données associées changent, plus personne n'ouvre.
     let mut stripped = env.clone();
     let mut data = stripped.payload.data[..33].to_vec();
     data.push(2);
@@ -119,7 +107,6 @@ fn an_altered_table_or_recipient_list_is_refused() {
         assert_eq!(open_as(&stripped, d), Err(CryptoError::Decrypt));
     }
 
-    // Un destinataire ajouté à la table (copie d'une ligne) : en double.
     let mut dup = env.clone();
     let mut data = dup.payload.data[..33].to_vec();
     data.push(4);
@@ -134,21 +121,17 @@ fn an_altered_table_or_recipient_list_is_refused() {
 #[test]
 fn limits_and_shape() {
     let sk = signer();
-    // 33 destinataires : refusé.
     let many = dests(33);
     let env = envelope(&many);
     let res = seal(&env, SealKey::Multi { recipients: &table(&many) }, &sk, &body());
     assert!(matches!(res, Err(CryptoError::Malformed(_))));
-    // 32 : accepté.
     let env = sealed(&dests(32));
     assert!(Header::parse(&env.payload).is_ok());
-    // n = 0 ou 33 à la lecture.
     for n in [0u8, 33] {
         let mut bad = env.clone();
         bad.payload.data[33] = n;
         assert!(matches!(Header::parse(&bad.payload), Err(CryptoError::Malformed(_))));
     }
-    // En double, ou `env.to` différent de la table, au scellement.
     let to = dests(2);
     let twice = vec![table(&to)[0].clone(), table(&to)[0].clone()];
     let mut env = envelope(&to);
@@ -160,7 +143,6 @@ fn limits_and_shape() {
     assert!(matches!(res, Err(CryptoError::Malformed(_))));
     let res = seal(&envelope(&[]), SealKey::Multi { recipients: &[] }, &sk, &body());
     assert!(matches!(res, Err(CryptoError::Malformed(_))));
-    // Clé de faible ordre.
     let weak = vec![(to[0].id.clone(), [0u8; 32])];
     let env = envelope(&to[..1]);
     assert_eq!(
@@ -196,9 +178,6 @@ fn fresh_ephemeral_and_message_key_each_time() {
 
 #[test]
 fn a_replayed_ephemeral_does_not_reuse_wrapping_keys() {
-    // Aléa défaillant : même éphémère pour deux messages à A, avec deux clés
-    // de message. `msg_id` dans HKDF : les deux `k_A` diffèrent, et un autre
-    // destinataire du premier message ne déduit pas la clé du second.
     let to = dests(2);
     let rand = |k: u8| ot_crypto::Randomness {
         nonce: [k; 24],
@@ -234,16 +213,13 @@ fn the_message_key_commitment_is_bound_to_the_header() {
     let Header::Multi { commitment, .. } = Header::parse(&env.payload).unwrap() else {
         panic!("0x05 attendu")
     };
-    // L'engagement suit la table, avant le nonce.
     let at = 34 + 2 * 64;
     assert_eq!(env.payload.data[at..at + 32], commitment);
-    // Altéré par le relais : l'AEAD échoue pour tous.
     let mut bad = env.clone();
     bad.payload.data[at] ^= 1;
     for d in &to {
         assert_eq!(open_as(&bad, d), Err(CryptoError::Decrypt));
     }
-    // Tronqué juste après la table : refusé à la lecture.
     let mut short = env.clone();
     short.payload.data.truncate(at + 16);
     assert!(matches!(Header::parse(&short.payload), Err(CryptoError::Malformed(_))));

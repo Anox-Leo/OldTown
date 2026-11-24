@@ -1,16 +1,9 @@
-# Image du relais OldTown (étape 8e, note 0038), construite depuis la racine
-# du dépôt : docker build -f deploy/docker/Dockerfile .
-#
-# Le relais écoute en clair sur le réseau interne ; Caddy termine le TLS
-# devant lui (deploy/docker/compose.yaml).
-
 FROM rust:1.99-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked -p ot-server \
     && install -d -m 0700 /out/data
 
-# Sans shell ni gestionnaire de paquets ; utilisateur sans privilèges.
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /src/target/release/ot-server /usr/local/bin/ot-server
 COPY --from=build --chown=nonroot:nonroot /out/data /var/lib/ot-relay

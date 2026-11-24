@@ -1,7 +1,3 @@
-//! TLS du relais (`wss`, note 0015) : certificat et clé lus en PEM, rechargés
-//! sans redémarrage quand les fichiers changent (renouvellement par
-//! `tailscale cert`), et poignées de main faites hors de la boucle d'accueil.
-
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -20,9 +16,7 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 
-/// Délai maximal d'une poignée de main TLS.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Connexions chiffrées prêtes, en attente d'être servies.
 const READY_QUEUE: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -37,12 +31,10 @@ pub enum TlsError {
     Rustls(#[from] rustls::Error),
 }
 
-/// Fournisseur crypto du relais : `ring`, comme côté client.
 fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// Certificat et clé du relais, rechargeables à chaud.
 #[derive(Clone)]
 pub struct Tls {
     inner: Arc<TlsInner>,
@@ -53,7 +45,6 @@ struct TlsInner {
     key_path: PathBuf,
     resolver: Arc<Resolver>,
     config: Arc<ServerConfig>,
-    /// Dates de modification lues au dernier chargement.
     loaded: Mutex<(Option<SystemTime>, Option<SystemTime>)>,
 }
 
@@ -69,7 +60,6 @@ impl ResolvesServerCert for Resolver {
 }
 
 impl Tls {
-    /// Charge la chaîne de certificats et la clé privée (PEM).
     pub fn load(cert_path: &Path, key_path: &Path) -> Result<Self, TlsError> {
         let key = load_pair(cert_path, key_path)?;
         let resolver = Arc::new(Resolver { current: RwLock::new(Arc::new(key)) });
@@ -77,7 +67,6 @@ impl Tls {
             .with_safe_default_protocol_versions()?
             .with_no_client_auth()
             .with_cert_resolver(resolver.clone());
-        // WebSocket sur HTTP/1.1 seulement.
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
         Ok(Self {
             inner: Arc::new(TlsInner {
@@ -90,9 +79,6 @@ impl Tls {
         })
     }
 
-    /// Relit les fichiers s'ils ont changé depuis le dernier chargement.
-    /// Renvoie `true` si un nouveau certificat est en service. En cas
-    /// d'erreur (fichiers en cours d'écriture, par exemple), l'ancien reste.
     pub fn reload_if_changed(&self) -> Result<bool, TlsError> {
         let inner = &self.inner;
         let now = (modified(&inner.cert_path), modified(&inner.key_path));
@@ -132,8 +118,6 @@ fn load_pair(cert_path: &Path, key_path: &Path) -> Result<CertifiedKey, TlsError
     Ok(key)
 }
 
-/// [`axum::serve::Listener`] qui ne rend que des connexions dont la poignée
-/// de main TLS a réussi. Une connexion lente ne bloque pas les autres.
 pub struct TlsListener {
     ready: mpsc::Receiver<(TlsStream<TcpStream>, SocketAddr)>,
     local: SocketAddr,
@@ -164,7 +148,6 @@ async fn accept_loop(
         let (tcp, addr) = match listener.accept().await {
             Ok(ok) => ok,
             Err(e) => {
-                // Trop de fichiers ouverts, par exemple : on souffle un peu.
                 tracing::warn!(error = %e, "accept");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
@@ -190,7 +173,6 @@ impl axum::serve::Listener for TlsListener {
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         match self.ready.recv().await {
             Some(conn) => conn,
-            // La boucle d'accueil ne s'arrête qu'avec le listener lui-même.
             None => std::future::pending().await,
         }
     }

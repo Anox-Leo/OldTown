@@ -1,7 +1,3 @@
-//! Fichiers envoyés et reçus par la CLI (étape 5) : source et destination
-//! sur disque pour `ot-core`, type MIME d'après l'extension, nom libre dans
-//! le dossier de destination.
-
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -10,7 +6,6 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use ot_core::{ChunkSink, ChunkSource};
 
-/// Fichier à envoyer, lu par morceaux.
 pub struct FileSource {
     file: Mutex<File>,
     size: u64,
@@ -44,8 +39,6 @@ impl ChunkSource for FileSource {
     }
 }
 
-/// Identifiant de la source pour reprendre un envoi : chemin absolu et date
-/// de modification (la taille est vérifiée à part).
 pub fn source_id(path: &Path) -> Result<String> {
     let abs = fs::canonicalize(path).with_context(|| format!("chemin {}", path.display()))?;
     let modified = fs::metadata(&abs)?
@@ -56,19 +49,15 @@ pub fn source_id(path: &Path) -> Result<String> {
     Ok(format!("{}#{modified}", abs.display()))
 }
 
-/// Fichier reçu : écrit sous un nom caché `.<nom>.oldtown-part`, puis
-/// renommé à la fin sous un nom libre du dossier.
 pub struct FileSink {
     dir: PathBuf,
     name: String,
     part: PathBuf,
     file: Mutex<Option<File>>,
-    /// Chemin final, une fois le fichier vérifié et renommé.
     pub saved: Mutex<Option<PathBuf>>,
 }
 
 impl FileSink {
-    /// `name` est déjà nettoyé par `ot-core`.
     pub fn create(dir: &Path, name: &str) -> Result<Self> {
         fs::create_dir_all(dir).with_context(|| format!("dossier {}", dir.display()))?;
         let part = dir.join(format!(".{name}.oldtown-part"));
@@ -113,7 +102,6 @@ impl ChunkSink for FileSink {
     }
 }
 
-/// `dossier/nom`, ou `nom (2).ext`, `nom (3).ext`… s'il est déjà pris.
 pub fn free_path(dir: &Path, name: &str) -> PathBuf {
     let first = dir.join(name);
     if !first.exists() {
@@ -126,7 +114,6 @@ pub fn free_path(dir: &Path, name: &str) -> PathBuf {
     (2..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).unwrap_or(first)
 }
 
-/// Type MIME d'après l'extension ; `application/octet-stream` sinon.
 pub fn guess_mime(path: &Path) -> &'static str {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
     match ext.as_str() {
@@ -156,7 +143,6 @@ pub fn guess_mime(path: &Path) -> &'static str {
     }
 }
 
-/// Taille lisible : `1,5 Mo`.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["o", "Ko", "Mo", "Go"];
     let mut value = bytes as f64;

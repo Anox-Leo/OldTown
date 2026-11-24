@@ -1,15 +1,3 @@
-//! Cœur client OldTown : identité d'appareil, connexion au relais,
-//! authentification, reconnexion, file d'envoi, dédoublonnage, et, depuis
-//! l'étape 2, chiffrement de bout en bout, roster et appairage.
-//!
-//! La fonction `net` (par défaut) porte la connexion au relais ([`Client`],
-//! TLS, tokio). Sans elle, le cœur se compile en WebAssembly : identité,
-//! chiffrement, roster, appairage ([`Secure`]), pour l'extension (note 0023).
-//!
-//! L'API est volontairement simple (un handle [`Client`] clonable, un flux
-//! d'[`Event`], un trait [`Keyring`] fourni par l'appli) pour être exposée
-//! plus tard via UniFFI.
-
 #[cfg(feature = "net")]
 mod client;
 mod dedup;

@@ -5,7 +5,6 @@ use ot_proto::{
 };
 use sha2::{Digest, Sha256};
 
-/// Paire de clés Ed25519 de l'appareil.
 pub struct Identity(SigningKey);
 
 impl Identity {
@@ -15,7 +14,6 @@ impl Identity {
         Self::from_bytes(&seed)
     }
 
-    /// Clé privée (graine de 32 octets).
     pub fn from_bytes(seed: &[u8; 32]) -> Self {
         Self(SigningKey::from_bytes(seed))
     }
@@ -28,27 +26,22 @@ impl Identity {
         self.0.verifying_key().to_bytes()
     }
 
-    /// Clé publique en base64, à passer à `ot-server device add`.
     pub fn public_key_b64(&self) -> String {
         b64::encode(&self.public_key())
     }
 
-    /// Réponse au défi du serveur.
     pub fn sign_challenge(&self, nonce: &[u8; NONCE_LEN], device_id: &DeviceId) -> [u8; 64] {
         self.0.sign(&auth_message(nonce, device_id)).to_bytes()
     }
 
-    /// Signature de `pair_redeem` : preuve de possession de la clé.
     pub fn sign_pair_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
         self.0.sign(&pair_redeem_message(nonce, token_hash)).to_bytes()
     }
 
-    /// Signature de `invite_redeem` (étape 10) : même preuve, autre domaine.
     pub fn sign_invite_redeem(&self, nonce: &[u8; NONCE_LEN], token_hash: &[u8; 32]) -> [u8; 64] {
         self.0.sign(&invite_redeem_message(nonce, token_hash)).to_bytes()
     }
 
-    /// Signature d'une requête HTTP de fichiers (étape 5, note 0026).
     pub fn sign_http(
         &self,
         method: &str,

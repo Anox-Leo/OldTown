@@ -1,10 +1,3 @@
-//! Coffre en mémoire : le [`SecretStore`] du cœur dans le WebAssembly.
-//!
-//! Les API de stockage du navigateur sont asynchrones, le `Keyring` du cœur
-//! est synchrone : le coffre garde les valeurs ici et note les noms modifiés.
-//! Après chaque opération, le service worker relève les changements
-//! ([`VaultStore::take_changes`]), les chiffre et les range (note 0023).
-
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Mutex, MutexGuard};
 
@@ -12,12 +5,8 @@ use ot_core::{Identity, KeyringError, SecretStore};
 use ot_proto::b64;
 use zeroize::Zeroizing;
 
-/// Graine Ed25519 de l'appareil, en base64 (même format que la CLI et
-/// Android).
 pub const DEVICE_KEY: &str = "device.key";
-/// Offre du QR inversé en attente de la réponse du parrain.
 pub const PENDING_OFFER: &str = "pending_offer.json";
-/// Appairage par code en attente de la réponse du parrain.
 pub const PENDING_JOIN: &str = "pending_join.json";
 
 #[derive(Default)]
@@ -26,7 +15,6 @@ struct State {
     changed: BTreeSet<String>,
 }
 
-/// Valeur modifiée depuis le dernier relevé ; `None` : effacée.
 pub struct Change {
     pub name: String,
     pub value: Option<Zeroizing<Vec<u8>>>,
@@ -42,7 +30,6 @@ impl VaultStore {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Valeur relue du stockage au démarrage : pas un changement.
     pub fn load(&self, name: &str, value: &[u8]) {
         self.lock().values.insert(name.to_owned(), Zeroizing::new(value.to_vec()));
     }
@@ -51,7 +38,6 @@ impl VaultStore {
         self.lock().values.contains_key(name)
     }
 
-    /// Changements depuis le dernier relevé, par nom.
     pub fn take_changes(&self) -> Vec<Change> {
         let mut state = self.lock();
         let names = std::mem::take(&mut state.changed);
@@ -64,7 +50,6 @@ impl VaultStore {
             .collect()
     }
 
-    /// Efface tout ; chaque nom présent devient un changement.
     pub fn clear(&self) {
         let mut state = self.lock();
         let names: Vec<String> = state.values.keys().cloned().collect();
@@ -72,7 +57,6 @@ impl VaultStore {
         state.changed.extend(names);
     }
 
-    /// Identité de l'appareil, créée et rangée si elle manque.
     pub fn ensure_identity(&self) -> Result<Identity, String> {
         if let Some(identity) = self.identity()? {
             return Ok(identity);

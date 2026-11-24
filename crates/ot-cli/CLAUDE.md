@@ -44,4 +44,5 @@ Binaire `ot` : outil d'usage en terminal et banc d'essai du protocole
 - Messages pour l'utilisateur en français, erreurs avec une piste de
   correction (voir la section « Dépannage » du README).
 - Toute commande ou option nouvelle se documente dans le README, section
-  « CLI ».
+  « CLI ». Son aide s'écrit en attributs clap (`#[command(about = …)]`,
+  `#[arg(help = …)]`) : aucun commentaire dans le code (note 0077).

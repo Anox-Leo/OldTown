@@ -12,8 +12,6 @@ workspace = true
 
 [features]
 default = ["net"]
-# Connexion au relais (tokio, WebSocket, TLS). Sans elle, le cœur se compile
-# en WebAssembly pour l'extension (note 0023).
 net = [
     "dep:bytes",
     "dep:futures-util",

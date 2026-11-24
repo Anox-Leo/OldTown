@@ -1,8 +1,3 @@
-//! Pont otp-relay → groupe (note 0045) : lit les codes publiés sur le socket
-//! Unix d'otp-relay (une ligne JSON par message, contrat :
-//! `tools/otp-relay/PROTOCOL.md`) et décide lesquels envoyer.
-//! L'envoi lui-même passe par `ot_core::Client::send_otp`.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -11,27 +6,19 @@ use ot_core::Otp;
 use serde::Deserialize;
 use time::OffsetDateTime;
 
-/// Version du protocole du socket d'otp-relay comprise ici.
 pub const PROTOCOL: u32 = 1;
 
-/// Socket par défaut : `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`.
 pub fn default_socket() -> Result<PathBuf> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .context("XDG_RUNTIME_DIR absent : donner le socket avec --socket")?;
     Ok(PathBuf::from(dir).join("otp-relay").join("otp-relay.sock"))
 }
 
-/// Une ligne du socket, réduite à ce que le pont utilise.
 #[derive(Debug, PartialEq)]
 pub enum Line {
-    Hello {
-        protocol: u32,
-    },
-    Status {
-        state: String,
-    },
+    Hello { protocol: u32 },
+    Status { state: String },
     Otp(Box<OtpEvent>),
-    /// `heartbeat`, `consumed`, `expired`, réponses… : sans effet ici.
     Other,
 }
 
@@ -49,8 +36,6 @@ enum Raw {
     Other,
 }
 
-/// Événement `otp` d'otp-relay ; ses autres champs (sujet, adresse…) ne
-/// quittent jamais cette machine.
 #[derive(Deserialize, PartialEq)]
 pub struct OtpEvent {
     pub id: String,
@@ -63,7 +48,6 @@ pub struct OtpEvent {
     expires_at: OffsetDateTime,
 }
 
-/// Jamais le code dans un `Debug`.
 impl std::fmt::Debug for OtpEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OtpEvent")
@@ -98,17 +82,13 @@ impl OtpEvent {
     }
 }
 
-/// Ce que le pont fait d'un code.
 #[derive(Debug, PartialEq)]
 pub enum Verdict {
     Send(Otp),
-    /// Déjà envoyé : rejoué par le socket à chaque connexion, sans bruit.
     AlreadySent,
     Skip(&'static str),
 }
 
-/// Codes déjà envoyés (`id` d'otp-relay → fin de validité, secondes Unix),
-/// pour ne pas renvoyer ceux que le socket rejoue à chaque connexion.
 #[derive(Debug, Default, PartialEq)]
 pub struct Sent(HashMap<String, i64>);
 
@@ -125,15 +105,12 @@ impl Sent {
         self.0.insert(id, expires_at);
     }
 
-    /// Oublie les codes expirés.
     pub fn prune(&mut self, now: OffsetDateTime) {
         let now = now.unix_timestamp();
         self.0.retain(|_, exp| *exp > now);
     }
 }
 
-/// Décide de l'envoi d'un code : assez sûr, pas expiré, pas déjà envoyé,
-/// au format accepté par les autres appareils.
 pub fn judge(ev: &OtpEvent, now: OffsetDateTime, min_confidence: f64, sent: &Sent) -> Verdict {
     if sent.0.contains_key(&ev.id) {
         return Verdict::AlreadySent;
@@ -201,7 +178,6 @@ mod tests {
         let beat = r#"{"type":"heartbeat","at":"x","imap":"connected"}"#;
         assert_eq!(Line::parse(beat).unwrap(), Line::Other);
         assert!(Line::parse("pas du json").is_err());
-        // `replay` et tout champ inconnu sont acceptés.
         assert_eq!(parsed(r#","replay":true"#).id, "3f9c1a7e52b04d18");
     }
 

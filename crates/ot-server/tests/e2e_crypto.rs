@@ -1,7 +1,3 @@
-//! Étape 2, T6 à T9 et T11 : chiffrement de bout en bout, appairage et
-//! rotation, avec un relais en processus (parfois derrière un relais
-//! malveillant simulé par un proxy).
-
 mod common;
 
 use std::sync::Arc;
@@ -36,7 +32,6 @@ fn group_changed(ev: &Event) -> bool {
     matches!(ev, Event::GroupChanged { .. })
 }
 
-/// B s'enregistre avec le code puis envoie sa demande au parrain.
 async fn join(relay_url: &str, code: &str, name: &str) -> (TestDevice, Client, Events) {
     let identity = Identity::generate();
     let r = within(redeem_pairing(relay_url, &TlsRoots::default(), &identity, name, code))
@@ -71,11 +66,9 @@ async fn pairing_by_code() {
         }
         _ => unreachable!(),
     }
-    // Un troisième appareil apprend B par le message `roster`.
     wait_for(&mut ec, group_changed).await;
     assert!(within(cc.group()).await.unwrap().unwrap().member(&b.id).is_some());
 
-    // B écrit à A et à C, et ils lui répondent.
     within(cb.send(&Content::text("bonjour de B"), vec![])).await.unwrap();
     assert_eq!(next_message(&mut ea).await.content, Content::text("bonjour de B"));
     assert_eq!(next_message(&mut ec).await.content, Content::text("bonjour de B"));
@@ -134,7 +127,6 @@ async fn wrong_code_fails_at_relay() {
     let (ca, _ea) = online(&devs[0], &server.url()).await;
     let invitation = within(ca.pair_create()).await.unwrap();
 
-    // Même secret, autre jeton : le relais refuse.
     let mut forged = invitation.code.clone();
     let other = if &forged[5..6] == "a" { "b" } else { "a" };
     forged.replace_range(5..6, other);
@@ -151,7 +143,6 @@ async fn wrong_code_fails_at_relay() {
         matches!(err, ClientError::Rejected { code: ErrorCode::PairingInvalid, .. }),
         "{err:?}"
     );
-    // Un code mal formé échoue avant même de contacter le relais.
     let err = redeem_pairing(
         &server.url(),
         &TlsRoots::default(),
@@ -178,7 +169,6 @@ async fn relay_database_holds_no_plaintext() {
     within(ca.send(&Content::text(secret), vec![])).await.unwrap();
     within(ca.send(&Content::link(format!("https://example.org/{secret}")), vec![])).await.unwrap();
 
-    // B est hors ligne : les deux messages attendent en base.
     let pending = server.relay.store().pending(&b.id, 0, 10, now_ms()).await.unwrap();
     assert_eq!(pending.len(), 2);
     for p in &pending {
@@ -233,14 +223,12 @@ async fn plaintext_from_a_member_is_rejected_and_acked() {
 #[tokio::test]
 async fn targeted_send_only_to_roster_members() {
     let (server, devs) = group_server(&["mac", "windows"]).await;
-    // Ajouté par `ot-server device add`, sans appairage.
     let intruder = add_device(server.relay.store(), "intrus").await;
     let (ca, _ea) = online(&devs[0], &server.url()).await;
 
     let err = within(ca.send(&Content::text("x"), vec![intruder.id.clone()])).await.unwrap_err();
     assert_eq!(err, ClientError::NotMember(intruder.id.clone()));
 
-    // Il apparaît comme inconnu du roster.
     let devices = within(ca.list_devices()).await.unwrap();
     let group = within(ca.group()).await.unwrap().unwrap();
     let strangers = group.strangers(&devices);
@@ -254,7 +242,6 @@ async fn rotation_excludes_a_device() {
     let (ca, mut ea) = online(a, &server.url()).await;
     let (cc, mut ec) = online(c, &server.url()).await;
 
-    // B est hors ligne : un message de l'ancienne époque l'attend.
     within(ca.send(&Content::text("avant"), vec![])).await.unwrap();
     assert_eq!(next_message(&mut ec).await.content, Content::text("avant"));
 
@@ -262,11 +249,9 @@ async fn rotation_excludes_a_device() {
     assert_eq!(epoch, 2);
     within(ca.send(&Content::text("après"), vec![])).await.unwrap();
 
-    // C ne lit plus les nouveaux messages.
     no_message(&mut ec, Duration::from_millis(300)).await;
     assert_eq!(within(cc.group()).await.unwrap().unwrap().epoch, 1);
 
-    // B lit l'ancien message en retard, adopte la clé, puis lit le nouveau.
     let (cb, mut eb) = online(b, &server.url()).await;
     assert_eq!(next_message(&mut eb).await.content, Content::text("avant"));
     assert_eq!(next_message(&mut eb).await.content, Content::text("après"));
@@ -274,7 +259,6 @@ async fn rotation_excludes_a_device() {
     assert_eq!(group.epoch, 2);
     assert!(group.member(&c.id).is_none());
 
-    // C, exclu, n'est plus cru par A.
     within(cc.send(&Content::text("toujours là ?"), vec![])).await.unwrap();
     match wait_for(&mut ea, |e| matches!(e, Event::Rejected { .. } | Event::Message(_))).await {
         Event::Rejected { reason, .. } => assert_eq!(reason, "expéditeur hors roster"),

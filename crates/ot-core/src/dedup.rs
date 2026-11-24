@@ -2,8 +2,6 @@ use std::collections::{HashSet, VecDeque};
 
 use ot_proto::Ulid;
 
-/// Ensemble borné des derniers `msg_id` vus : le plus ancien sort quand la
-/// capacité est atteinte.
 #[derive(Debug, Clone)]
 pub struct Dedup {
     capacity: usize,
@@ -31,7 +29,6 @@ impl Dedup {
         d
     }
 
-    /// Ajoute `id` ; renvoie `false` s'il avait déjà été vu.
     pub fn insert(&mut self, id: Ulid) -> bool {
         if !self.set.insert(id) {
             return false;
@@ -45,7 +42,6 @@ impl Dedup {
         true
     }
 
-    /// Identifiants vus, du plus ancien au plus récent.
     pub fn iter(&self) -> impl Iterator<Item = &Ulid> {
         self.order.iter()
     }

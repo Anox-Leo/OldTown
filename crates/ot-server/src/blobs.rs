@@ -1,12 +1,3 @@
-//! API HTTP des fichiers (étape 5, note 0026) : dépôt et retrait de blobs
-//! chiffrés, par morceaux. Chaque requête est signée par l'appareil, sans
-//! session : un transfert ne coupe jamais la session WebSocket (note 0009).
-//!
-//! Les morceaux sont sur disque, un fichier par morceau
-//! (`<blob_dir>/<blob_id>/<index>`), écrits sous un nom temporaire puis
-//! renommés : un morceau est entier ou absent. La base ne note un morceau
-//! qu'une fois renommé.
-
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -33,14 +24,8 @@ use crate::metrics::Metrics;
 use crate::store::{Blob, NewBlob, StoreError};
 use crate::{Relay, now_ms};
 
-/// Surcoût d'un morceau chiffré (étiquette Poly1305), pour estimer la taille
-/// en clair d'un blob à partir de sa taille chiffrée.
 const CHUNK_TAG_LEN: u64 = 16;
 
-/// Routes de l'API, à fusionner dans le routeur du relais. Corps limité à un
-/// morceau chiffré, plus une marge pour le JSON de création. Une IP qui a
-/// épuisé ses échecs est refusée avant toute vérification, et chaque
-/// signature refusée lui compte un échec (étape 8e).
 pub fn router(relay: Relay) -> Router<Relay> {
     Router::new()
         .route(BLOBS_PATH, post(create))
@@ -69,7 +54,6 @@ async fn limit(
     res
 }
 
-/// Erreur de l'API : code et message lisible, sans contenu ni secret.
 #[derive(Debug)]
 pub struct ApiError {
     code: HttpErrorCode,
@@ -129,9 +113,6 @@ impl IntoResponse for ApiError {
 
 type ApiResult = Result<Response, ApiError>;
 
-/// Vérifie la signature de la requête et renvoie l'appareil qui l'a faite.
-/// Toujours le même message en cas d'échec, sauf pour l'horloge, que
-/// l'utilisateur peut corriger ; le détail ne va que dans les logs.
 async fn authenticate(
     relay: &Relay,
     method: &Method,
@@ -182,7 +163,6 @@ async fn authenticate(
     }
 }
 
-/// Blob vivant désigné par l'URL, ou `404`.
 async fn load(relay: &Relay, id: &str) -> Result<Blob, ApiError> {
     let id: BlobId = id.parse().map_err(|_| ApiError::not_found())?;
     relay.inner.store.blob(&id, now_ms()).await?.ok_or_else(ApiError::not_found)
@@ -203,8 +183,6 @@ fn rfc3339(ms: i64) -> OffsetDateTime {
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
 }
 
-/// `POST /v1/blobs` : crée un blob, si sa géométrie est cohérente, s'il
-/// tient dans la limite de taille et dans le quota.
 async fn create(
     State(relay): State<Relay>,
     method: Method,
@@ -222,7 +200,6 @@ async fn create(
     {
         return Err(ApiError::bad("tailles incohérentes"));
     }
-    // La limite porte sur le fichier en clair : on retire les étiquettes.
     let plain = req.size.saturating_sub(u64::from(req.chunks) * CHUNK_TAG_LEN);
     if plain > inner.config.max_file_size {
         Metrics::inc(&inner.metrics.blobs_rejected);
@@ -281,8 +258,6 @@ async fn create(
     Ok((StatusCode::CREATED, Json(created)).into_response())
 }
 
-/// `PUT /v1/blobs/{id}/chunks/{n}` : dépose un morceau (propriétaire
-/// seulement, idempotent).
 async fn upload(
     State(relay): State<Relay>,
     UrlPath((id, n)): UrlPath<(String, String)>,
@@ -298,7 +273,6 @@ async fn upload(
         return Err(forbidden("l'expéditeur"));
     }
     let idx = chunk_index(&blob, &n)?;
-    // Invariant : `idx` < `chunks`, donc le morceau existe.
     let expected = blob_chunk_len(blob.size, blob.chunk_size, idx).unwrap_or(0);
     if body.len() != expected as usize {
         return Err(ApiError::bad(format!(
@@ -324,7 +298,6 @@ async fn upload(
             Ok(StatusCode::NO_CONTENT.into_response())
         }
         Err(StoreError::UnknownBlob) => {
-            // Annulé ou purgé pendant l'écriture : ne rien laisser sur disque.
             inner.blob_dir.remove(&blob.id).await;
             Err(ApiError::not_found())
         }
@@ -332,8 +305,6 @@ async fn upload(
     }
 }
 
-/// `GET /v1/blobs/{id}` : état du dépôt, pour reprendre (propriétaire et
-/// destinataires).
 async fn status(
     State(relay): State<Relay>,
     UrlPath(id): UrlPath<String>,
@@ -361,8 +332,6 @@ async fn status(
     .into_response())
 }
 
-/// `GET /v1/blobs/{id}/chunks/{n}` : retire un morceau d'un blob complet
-/// (destinataires seulement).
 async fn download(
     State(relay): State<Relay>,
     UrlPath((id, n)): UrlPath<(String, String)>,
@@ -393,8 +362,6 @@ async fn download(
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], data).into_response())
 }
 
-/// `POST /v1/blobs/{id}/done` : un destinataire a tout reçu ; le blob est
-/// supprimé quand plus aucun destinataire actif ne l'attend.
 async fn done(
     State(relay): State<Relay>,
     UrlPath(id): UrlPath<String>,
@@ -421,7 +388,6 @@ async fn done(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// `DELETE /v1/blobs/{id}` : l'expéditeur annule son envoi.
 async fn cancel(
     State(relay): State<Relay>,
     UrlPath(id): UrlPath<String>,
@@ -439,7 +405,6 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// Dossier des morceaux sur disque.
 #[derive(Debug, Clone)]
 pub struct BlobDir {
     root: PathBuf,
@@ -451,13 +416,9 @@ impl BlobDir {
     }
 
     fn dir(&self, id: &BlobId) -> PathBuf {
-        // `BlobId` n'est fait que de `blob_` et d'un ULID : jamais de `/` ni `..`.
         self.root.join(id.as_str())
     }
 
-    /// Écrit le morceau sous un nom temporaire unique, le synchronise sur
-    /// disque, puis le renomme : après un arrêt brutal, il est entier ou
-    /// absent.
     pub async fn write_chunk(&self, id: &BlobId, idx: u32, data: Bytes) -> io::Result<()> {
         let dir = self.dir(id);
         tokio::task::spawn_blocking(move || {
@@ -484,8 +445,6 @@ impl BlobDir {
         tokio::fs::read(self.dir(id).join(idx.to_string())).await
     }
 
-    /// Efface les morceaux d'un blob ; une erreur est journalisée, pas
-    /// remontée (le nettoyage au démarrage rattrapera le dossier).
     pub async fn remove(&self, id: &BlobId) {
         match tokio::fs::remove_dir_all(self.dir(id)).await {
             Ok(()) => {}
@@ -494,9 +453,6 @@ impl BlobDir {
         }
     }
 
-    /// Au démarrage : efface les dossiers de blobs que la base ne connaît pas
-    /// (supprimés pendant un arrêt brutal) et les fichiers temporaires.
-    /// Seuls les noms de la forme `blob_<ULID>` sont touchés.
     pub async fn clean(&self, known: HashSet<BlobId>) -> io::Result<usize> {
         let root = self.root.clone();
         tokio::task::spawn_blocking(move || clean_dir(&root, &known))
@@ -535,7 +491,6 @@ fn clean_dir(root: &Path, known: &HashSet<BlobId>) -> io::Result<usize> {
     Ok(removed)
 }
 
-/// Dossier lisible par le seul relais (`0700` sous Unix).
 fn create_private_dir(dir: &Path) -> io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
@@ -544,7 +499,6 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
-/// Fichier lisible par le seul relais (`0600` sous Unix).
 fn create_private_file(path: &Path) -> io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);

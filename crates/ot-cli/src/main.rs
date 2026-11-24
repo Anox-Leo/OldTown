@@ -21,16 +21,14 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::files::{Config, Home};
 use crate::transfer::{FileSink, FileSource, guess_mime, human_size, source_id};
 
-/// Délai maximal d'une commande ponctuelle (send, devices).
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
-/// Durée de validité d'un code d'appairage (fixée par le relais).
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-/// OldTown : envoyer un texte d'un terminal à un autre.
 #[derive(Parser)]
+#[command(about = "OldTown : envoyer un texte d'un terminal à un autre")]
 #[command(name = "ot", version)]
 struct Cli {
-    /// Dossier de configuration (par défaut celui de l'OS).
+    #[arg(help = "Dossier de configuration (par défaut celui de l'OS)")]
     #[arg(long, env = "OT_HOME", global = true)]
     home: Option<PathBuf>,
     #[command(subcommand)]
@@ -39,112 +37,122 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Crée la clé de l'appareil et la configuration, ou les met à jour.
+    #[command(about = "Crée la clé de l'appareil et la configuration, ou les met à jour")]
     Init {
-        /// URL du relais, ex. ws://relais:7878.
+        #[arg(help = "URL du relais, ex. ws://relais:7878")]
         #[arg(long)]
         server: Option<String>,
-        /// Nom de cet appareil.
+        #[arg(help = "Nom de cet appareil")]
         #[arg(long)]
         name: Option<String>,
-        /// Identifiant renvoyé par `ot-server device add`.
+        #[arg(help = "Identifiant renvoyé par `ot-server device add`")]
         #[arg(long)]
         device_id: Option<String>,
-        /// Remplace la clé existante (l'appareil devra être réenregistré et
-        /// réappairé).
+        #[arg(
+            help = "Remplace la clé existante (l'appareil devra être réenregistré et réappairé)"
+        )]
         #[arg(long)]
         force: bool,
     },
-    /// Envoie un texte ou un lien (lu sur l'entrée standard si absent), ou
-    /// un fichier avec --file.
+    #[command(
+        about = "Envoie un texte ou un lien (lu sur l'entrée standard si absent), ou un fichier avec --file"
+    )]
     Send {
         text: Vec<String>,
-        /// Destinataire (nom d'un membre du groupe), répétable ; par défaut
-        /// tous les autres.
+        #[arg(
+            help = "Destinataire (nom d'un membre du groupe), répétable ; par défaut tous les autres"
+        )]
         #[arg(long = "to")]
         to: Vec<String>,
-        /// Une autre personne (nom ou identifiant), à ses appareils par
-        /// défaut ; une copie part vers mes appareils.
+        #[arg(
+            help = "Une autre personne (nom ou identifiant), à ses appareils par défaut ; une copie part vers mes appareils"
+        )]
         #[arg(long = "to-user", conflicts_with = "to")]
         to_user: Option<String>,
-        /// Avec --to-user : un seul de ses appareils (nom ou identifiant).
+        #[arg(help = "Avec --to-user : un seul de ses appareils (nom ou identifiant)")]
         #[arg(long, requires = "to_user")]
         device: Option<String>,
-        /// Fichier à envoyer. Relancer la même commande reprend un envoi
-        /// interrompu.
+        #[arg(help = "Fichier à envoyer. Relancer la même commande reprend un envoi interrompu")]
         #[arg(long, conflicts_with = "text")]
         file: Option<PathBuf>,
     },
-    /// Affiche les messages reçus au fil de l'eau.
+    #[command(about = "Affiche les messages reçus au fil de l'eau")]
     Listen {
-        /// Une ligne JSON par message.
+        #[arg(help = "Une ligne JSON par message")]
         #[arg(long)]
         json: bool,
-        /// Télécharge les fichiers reçus dans ce dossier ; sans cette option,
-        /// ils sont seulement annoncés (`ot download`).
+        #[arg(
+            help = "Télécharge les fichiers reçus dans ce dossier ; sans cette option, ils sont seulement annoncés (`ot download`)"
+        )]
         #[arg(long)]
         download_dir: Option<PathBuf>,
     },
-    /// Liste les fichiers reçus pas encore téléchargés.
+    #[command(about = "Liste les fichiers reçus pas encore téléchargés")]
     Files,
-    /// Télécharge un fichier reçu (identifiant donné par `ot files`).
+    #[command(about = "Télécharge un fichier reçu (identifiant donné par `ot files`)")]
     Download {
-        /// Identifiant `blob_…`.
+        #[arg(help = "Identifiant `blob_…`")]
         blob: String,
-        /// Dossier de destination (par défaut le dossier courant).
+        #[arg(help = "Dossier de destination (par défaut le dossier courant)")]
         #[arg(long)]
         to: Option<PathBuf>,
     },
-    /// Liste les appareils de ma personne enregistrés sur le relais et
-    /// signale ceux qui ne sont pas membres du groupe.
+    #[command(
+        about = "Liste les appareils de ma personne enregistrés sur le relais et signale ceux qui ne sont pas membres du groupe"
+    )]
     Devices,
-    /// Règle ou retire un appareil de ma personne (l'admin : de tous).
+    #[command(about = "Règle ou retire un appareil de ma personne (l'admin : de tous)")]
     #[command(subcommand)]
     Device(DeviceCommand),
-    /// Personnes que je peux joindre (annuaire vérifié) et leurs appareils.
+    #[command(about = "Personnes que je peux joindre (annuaire vérifié) et leurs appareils")]
     Users,
-    /// Coupe (`on`) ou rouvre (`off`) un service lié à ma personne : ses
-    /// codes et alertes ne m'arrivent plus.
+    #[command(
+        about = "Coupe (`on`) ou rouvre (`off`) un service lié à ma personne : ses codes et alertes ne m'arrivent plus"
+    )]
     Mute {
-        /// Service (nom ou identifiant).
+        #[arg(help = "Service (nom ou identifiant)")]
         service: String,
         state: OnOff,
     },
-    /// Rejoindre OldTown par l'invitation d'une personne.
+    #[command(about = "Rejoindre OldTown par l'invitation d'une personne")]
     #[command(subcommand)]
     Invite(InviteCommand),
-    /// Administration (appareil de l'admin) : annuaire, personnes, liens,
-    /// services.
+    #[command(
+        about = "Administration (appareil de l'admin) : annuaire, personnes, liens, services"
+    )]
     #[command(subcommand)]
     Admin(AdminCommand),
-    /// Groupe d'appareils et clé de groupe.
+    #[command(about = "Groupe d'appareils et clé de groupe")]
     #[command(subcommand)]
     Group(GroupCommand),
-    /// Appairage d'un nouvel appareil par code.
+    #[command(about = "Appairage d'un nouvel appareil par code")]
     #[command(subcommand)]
     Pair(PairCommand),
-    /// Relaie les codes à usage unique lus par otp-relay (socket Unix) vers
-    /// des membres du groupe, ou vers des personnes. Tourne jusqu'à l'arrêt
-    /// (service).
+    #[command(
+        about = "Relaie les codes à usage unique lus par otp-relay (socket Unix) vers des membres du groupe, ou vers des personnes. Tourne jusqu'à l'arrêt (service)"
+    )]
     OtpBridge {
-        /// Destinataire (nom d'un membre du groupe), répétable ; ou, dans
-        /// `OT_OTP_TO`, des noms séparés par des virgules.
+        #[arg(
+            help = "Destinataire (nom d'un membre du groupe), répétable ; ou, dans `OT_OTP_TO`, des noms séparés par des virgules"
+        )]
         #[arg(long = "to", env = "OT_OTP_TO", value_delimiter = ',')]
         to: Vec<String>,
-        /// Personne destinataire (nom ou identifiant), à ses appareils par
-        /// défaut, répétable ; ou, dans `OT_OTP_TO_USER`, séparées par des
-        /// virgules. Ne se combine pas avec --to.
+        #[arg(
+            help = "Personne destinataire (nom ou identifiant), à ses appareils par défaut, répétable ; ou, dans `OT_OTP_TO_USER`, séparées par des virgules. Ne se combine pas avec --to"
+        )]
         #[arg(long = "to-user", env = "OT_OTP_TO_USER", value_delimiter = ',')]
         to_user: Vec<String>,
-        /// Avec une seule personne dans --to-user : cet appareil (nom ou
-        /// identifiant) au lieu de ses appareils par défaut.
+        #[arg(
+            help = "Avec une seule personne dans --to-user : cet appareil (nom ou identifiant) au lieu de ses appareils par défaut"
+        )]
         #[arg(long, env = "OT_OTP_DEVICE", requires = "to_user")]
         device: Option<String>,
-        /// Socket d'otp-relay (par défaut
-        /// `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`).
+        #[arg(
+            help = "Socket d'otp-relay (par défaut `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`)"
+        )]
         #[arg(long)]
         socket: Option<PathBuf>,
-        /// Confiance minimale d'un code (0 à 1).
+        #[arg(help = "Confiance minimale d'un code (0 à 1)")]
         #[arg(long, default_value_t = 0.6)]
         min_confidence: f64,
     },
@@ -152,18 +160,17 @@ enum Command {
 
 #[derive(Subcommand)]
 enum GroupCommand {
-    /// Crée le groupe sur le premier appareil (époque 1, seul membre).
+    #[command(about = "Crée le groupe sur le premier appareil (époque 1, seul membre)")]
     Init {
-        /// Remplace un groupe existant : les autres appareils devront être
-        /// réappairés.
+        #[arg(help = "Remplace un groupe existant : les autres appareils devront être réappairés")]
         #[arg(long)]
         force: bool,
     },
-    /// Affiche l'époque, les membres et les empreintes de leurs clés.
+    #[command(about = "Affiche l'époque, les membres et les empreintes de leurs clés")]
     Show,
-    /// Tire une nouvelle clé de groupe et l'envoie aux membres restants.
+    #[command(about = "Tire une nouvelle clé de groupe et l'envoie aux membres restants")]
     Rotate {
-        /// Membre à exclure (nom), répétable.
+        #[arg(help = "Membre à exclure (nom), répétable")]
         #[arg(long = "exclude")]
         exclude: Vec<String>,
     },
@@ -171,59 +178,65 @@ enum GroupCommand {
 
 #[derive(Subcommand)]
 enum PairCommand {
-    /// Parraine un nouvel appareil : affiche un code et attend sa demande
-    /// (10 minutes au plus).
+    #[command(
+        about = "Parraine un nouvel appareil : affiche un code et attend sa demande (10 minutes au plus)"
+    )]
     New {
-        /// Affiche aussi le code en QR, à scanner par le téléphone.
+        #[arg(help = "Affiche aussi le code en QR, à scanner par le téléphone")]
         #[arg(long)]
         qr: bool,
     },
-    /// Rejoint le groupe avec le code affiché par `ot pair new`, ou, avec
-    /// --qr, en affichant un QR à scanner par un membre (le téléphone).
+    #[command(
+        about = "Rejoint le groupe avec le code affiché par `ot pair new`, ou, avec --qr, en affichant un QR à scanner par un membre (le téléphone)"
+    )]
     Join {
-        /// URL du relais, ex. wss://relais:7878.
+        #[arg(help = "URL du relais, ex. wss://relais:7878")]
         #[arg(long)]
         server: String,
-        /// Nom de cet appareil.
+        #[arg(help = "Nom de cet appareil")]
         #[arg(long)]
         name: String,
-        /// Code `ot1-…` (sans --qr).
+        #[arg(help = "Code `ot1-…` (sans --qr)")]
         #[arg(required_unless_present = "qr", conflicts_with = "qr")]
         code: Option<String>,
-        /// Affiche un QR que le parrain scanne : rien à taper ici.
+        #[arg(help = "Affiche un QR que le parrain scanne : rien à taper ici")]
         #[arg(long)]
         qr: bool,
-        /// Avec --qr : appareil d'une personne de service (codes, alertes),
-        /// sans groupe, ajouté par l'admin (`ot admin service add`).
+        #[arg(
+            help = "Avec --qr : appareil d'une personne de service (codes, alertes), sans groupe, ajouté par l'admin (`ot admin service add`)"
+        )]
         #[arg(long, requires = "qr")]
         service: bool,
-        /// Repart de zéro si cet appareil est déjà enregistré.
+        #[arg(help = "Repart de zéro si cet appareil est déjà enregistré")]
         #[arg(long)]
         force: bool,
     },
-    /// Parraine l'appareil dont on a copié le texte du QR (`oldtown://sponsor?…`),
-    /// affiché par `ot pair join --qr`.
+    #[command(
+        about = "Parraine l'appareil dont on a copié le texte du QR (`oldtown://sponsor?…`), affiché par `ot pair join --qr`"
+    )]
     Sponsor {
-        /// Texte du QR.
+        #[arg(help = "Texte du QR")]
         qr: String,
     },
 }
 
 #[derive(Subcommand)]
 enum DeviceCommand {
-    /// Nature d'un appareil : phone, laptop, desktop, browser ou cli (une
-    /// CLI n'est jamais joignable ni par défaut).
+    #[command(
+        about = "Nature d'un appareil : phone, laptop, desktop, browser ou cli (une CLI n'est jamais joignable ni par défaut)"
+    )]
     Kind {
-        /// Appareil (nom ou identifiant).
+        #[arg(help = "Appareil (nom ou identifiant)")]
         device: String,
         kind: String,
     },
-    /// Appareil par défaut de ma personne (reçoit ce qu'on m'envoie).
+    #[command(about = "Appareil par défaut de ma personne (reçoit ce qu'on m'envoie)")]
     Default { device: String, state: OnOff },
-    /// Appareil joignable par les autres personnes.
+    #[command(about = "Appareil joignable par les autres personnes")]
     Reachable { device: String, state: OnOff },
-    /// Retire un appareil : nouvelle clé de groupe sans lui, roster publié,
-    /// puis révocation par le relais.
+    #[command(
+        about = "Retire un appareil : nouvelle clé de groupe sans lui, roster publié, puis révocation par le relais"
+    )]
     Revoke { device: String },
 }
 
@@ -235,18 +248,19 @@ enum OnOff {
 
 #[derive(Subcommand)]
 enum InviteCommand {
-    /// Rejoint OldTown avec le code (`ot2-…`) ou le lien (`oldtown://invite?…`)
-    /// reçu de l'admin, comme premier appareil de sa personne.
+    #[command(
+        about = "Rejoint OldTown avec le code (`ot2-…`) ou le lien (`oldtown://invite?…`) reçu de l'admin, comme premier appareil de sa personne"
+    )]
     Join {
-        /// Code ou lien d'invitation.
+        #[arg(help = "Code ou lien d'invitation")]
         code: String,
-        /// Nom de cet appareil.
+        #[arg(help = "Nom de cet appareil")]
         #[arg(long)]
         name: String,
-        /// URL du relais (déjà dans un lien `oldtown://invite?…`).
+        #[arg(help = "URL du relais (déjà dans un lien `oldtown://invite?…`)")]
         #[arg(long)]
         server: Option<String>,
-        /// Repart de zéro si cet appareil est déjà enregistré.
+        #[arg(help = "Repart de zéro si cet appareil est déjà enregistré")]
         #[arg(long)]
         force: bool,
     },
@@ -254,67 +268,70 @@ enum InviteCommand {
 
 #[derive(Subcommand)]
 enum AdminCommand {
-    /// Publie le certificat de l'admin (son empreinte est l'ancre de
-    /// l'annuaire), ou adopte celui d'un autre appareil de l'admin.
+    #[command(
+        about = "Publie le certificat de l'admin (son empreinte est l'ancre de l'annuaire), ou adopte celui d'un autre appareil de l'admin"
+    )]
     Init,
-    /// Invite une personne : affiche le code (et le QR), puis attend sa
-    /// demande pour la certifier. Ctrl-C : l'invitation reste valable, un
-    /// prochain `ot listen` ici la mènera à son terme.
+    #[command(
+        about = "Invite une personne : affiche le code (et le QR), puis attend sa demande pour la certifier. Ctrl-C : l'invitation reste valable, un prochain `ot listen` ici la mènera à son terme"
+    )]
     Invite {
-        /// Nom de la personne.
+        #[arg(help = "Nom de la personne")]
         name: String,
-        /// Personne à lier dans les deux sens (nom ou identifiant), répétable.
+        #[arg(help = "Personne à lier dans les deux sens (nom ou identifiant), répétable")]
         #[arg(long = "link")]
         links: Vec<String>,
-        /// Affiche aussi l'invitation en QR.
+        #[arg(help = "Affiche aussi l'invitation en QR")]
         #[arg(long)]
         qr: bool,
     },
-    /// Nouvelle invitation pour une personne qui a perdu ses appareils
-    /// (révoqués ; ses liens restent).
+    #[command(
+        about = "Nouvelle invitation pour une personne qui a perdu ses appareils (révoqués ; ses liens restent)"
+    )]
     Reinvite {
         person: String,
         #[arg(long)]
         qr: bool,
     },
-    /// Toutes les personnes, leurs appareils et leurs liens, vus par le relais.
+    #[command(about = "Toutes les personnes, leurs appareils et leurs liens, vus par le relais")]
     Users,
-    /// Liens entre personnes (dans les deux sens ; d'un service vers une
-    /// personne, dans ce seul sens).
+    #[command(
+        about = "Liens entre personnes (dans les deux sens ; d'un service vers une personne, dans ce seul sens)"
+    )]
     #[command(subcommand)]
     Link(LinkCommand),
-    /// Révoque une personne : ses appareils, ses liens, son certificat.
+    #[command(about = "Révoque une personne : ses appareils, ses liens, son certificat")]
     Revoke { person: String },
-    /// Renomme une personne (son certificat est re-signé).
+    #[command(about = "Renomme une personne (son certificat est re-signé)")]
     Rename { person: String, name: String },
-    /// Personnes de service (codes, alertes).
+    #[command(about = "Personnes de service (codes, alertes)")]
     #[command(subcommand)]
     Service(ServiceCommand),
 }
 
 #[derive(Subcommand)]
 enum LinkCommand {
-    /// Pose le lien de `from` vers `to` (et retour, entre deux personnes).
+    #[command(about = "Pose le lien de `from` vers `to` (et retour, entre deux personnes)")]
     Add { from: String, to: String },
-    /// Retire le lien.
+    #[command(about = "Retire le lien")]
     Remove { from: String, to: String },
 }
 
 #[derive(Subcommand)]
 enum ServiceCommand {
-    /// Ajoute l'appareil de service affiché par `ot pair join --qr --service`
-    /// au service nommé, créé à son premier appareil.
+    #[command(
+        about = "Ajoute l'appareil de service affiché par `ot pair join --qr --service` au service nommé, créé à son premier appareil"
+    )]
     Add {
-        /// Nom du service.
+        #[arg(help = "Nom du service")]
         service: String,
-        /// Texte du QR (`oldtown://sponsor?…`).
+        #[arg(help = "Texte du QR (`oldtown://sponsor?…`)")]
         #[arg(long)]
         qr: String,
     },
 }
 
 fn main() -> Result<()> {
-    // L'heure locale doit être lue avant de démarrer des threads.
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
     let cli = Cli::parse();
     let home = Home::locate(cli.home)?;
@@ -390,7 +407,6 @@ fn init(
 
     let new_key = force || !home.has_key();
     let identity = if new_key {
-        // Nouvelle identité : l'ancien groupe ne la connaît pas.
         home.reset_group()?;
         let id = Identity::generate();
         home.save_key(&id)?;
@@ -437,12 +453,10 @@ fn start(home: &Home) -> Result<(Client, Events)> {
     Ok(Client::start(client))
 }
 
-/// État du groupe enregistré, ou une erreur qui dit comment en avoir un.
 fn group(home: &Home) -> Result<GroupInfo> {
     ot_core::group_info(&home.keyring())?.ok_or_else(|| anyhow!(ot_core::ClientError::NoGroup))
 }
 
-/// Attend la connexion, en échouant vite si l'authentification est refusée.
 async fn connected(events: &mut Events) -> Result<()> {
     let wait = async {
         loop {
@@ -478,7 +492,6 @@ async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
         bail!("texte vide");
     }
     let content = ot_core::classify(&body);
-    // Les destinataires sont choisis dans le roster, jamais dans la liste du relais.
     let group = group(home)?;
     let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
 
@@ -517,7 +530,6 @@ async fn send_file(home: &Home, path: &std::path::Path, to: Vec<String>) -> Resu
     Ok(())
 }
 
-/// Pourcentage sur la sortie d'erreur, si c'est un terminal.
 fn progress_bar() -> Arc<dyn ot_core::Progress> {
     let tty = std::io::stderr().is_terminal();
     Arc::new(move |done: u64, total: u64| {
@@ -559,7 +571,6 @@ async fn download(home: &Home, blob: &str, to: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Télécharge un fichier annoncé dans `dir` ; renvoie son chemin final.
 async fn fetch(client: &Client, blob: &BlobId, dir: &std::path::Path) -> Result<PathBuf> {
     let files = client.files().await?;
     let info = files
@@ -578,7 +589,6 @@ async fn within<T, E: std::error::Error + Send + Sync + 'static>(
     Ok(tokio::time::timeout(COMMAND_TIMEOUT, fut).await.context("pas de réponse du relais")??)
 }
 
-/// Membre du groupe désigné par son nom ou son identifiant.
 fn resolve(group: &GroupInfo, name: &str) -> Result<DeviceId> {
     group
         .members
@@ -591,13 +601,10 @@ fn resolve(group: &GroupInfo, name: &str) -> Result<DeviceId> {
         })
 }
 
-/// Nom d'affichage d'un appareil, tiré du roster.
 fn name_of<'a>(group: Option<&'a GroupInfo>, id: &'a DeviceId) -> &'a str {
     group.and_then(|g| g.member(id)).map_or(id.as_str(), |m| m.name.as_str())
 }
 
-/// Noms d'affichage des appareils et des personnes : mon roster d'abord,
-/// puis l'annuaire vérifié (étape 10).
 #[derive(Default)]
 struct Names {
     group: Option<GroupInfo>,
@@ -605,8 +612,6 @@ struct Names {
 }
 
 impl Names {
-    /// Appareil de mon groupe : son nom ; d'une autre personne :
-    /// `personne/appareil` ; inconnu : son identifiant.
     fn device(&self, id: &DeviceId) -> String {
         if let Some(m) = self.group.as_ref().and_then(|g| g.member(id)) {
             return m.name.clone();
@@ -621,8 +626,6 @@ impl Names {
         self.people.iter().find(|p| &p.id == id).map_or_else(|| id.to_string(), |p| p.name.clone())
     }
 
-    /// Origine d'un message (étape 10), en champs JSON ; rien pour un
-    /// message de mon groupe.
     fn origin(&self, o: &Origin, line: &mut serde_json::Value) {
         if let Some(u) = &o.from_user {
             line["from_user"] = u.to_string().into();
@@ -637,13 +640,11 @@ impl Names {
         }
     }
 
-    /// Préfixe d'affichage d'une copie d'un de mes envois (D43).
     fn copy(&self, o: &Origin) -> String {
         o.to_user.as_ref().map_or_else(String::new, |u| format!("(copie, à {}) ", self.user(u)))
     }
 }
 
-/// Affichage commun à `listen` et `pair new`. Renvoie `true` pour un message.
 fn print_event(event: &Event, names: &Names, json: bool, offset: UtcOffset) -> Result<bool> {
     match event {
         Event::Connected { pending } => eprintln!("connecté, {pending} message(s) en attente"),
@@ -686,7 +687,6 @@ fn print_event(event: &Event, names: &Names, json: bool, offset: UtcOffset) -> R
     Ok(false)
 }
 
-/// Relit les noms après un changement du groupe ou de l'annuaire.
 async fn refresh_names(client: &Client, event: &Event, names: &mut Names) {
     match event {
         Event::GroupChanged { .. } => {
@@ -703,8 +703,6 @@ async fn refresh_names(client: &Client, event: &Event, names: &mut Names) {
     }
 }
 
-/// Appareil d'une personne de service (`ot pair join --qr --service`) : pas
-/// de groupe, et c'est normal.
 fn is_service(home: &Home) -> bool {
     home.load_config().ok().flatten().is_some_and(|c| c.role == Some(ot_core::Role::Service))
 }
@@ -815,7 +813,6 @@ async fn listen(
         let Some(event) = event else { break };
         refresh_names(&client, &event, &mut names).await;
         if let (Event::File(f), Some(dir)) = (&event, &download_dir) {
-            // Téléchargement en tâche de fond : la réception continue.
             let (client, dir, blob) = (client.clone(), dir.clone(), f.file.blob_id.clone());
             tokio::spawn(async move {
                 match fetch(&client, &blob, &dir).await {
@@ -843,20 +840,13 @@ async fn listen(
     Ok(())
 }
 
-/// Délai maximal entre deux tentatives de connexion au socket d'otp-relay.
 const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
 
-/// Destinataires du pont : des membres de mon groupe, ou des personnes
-/// (étape 10, appareil de service ou membre).
 #[derive(Clone)]
 enum OtpTarget {
     Devices(Vec<String>),
     People(Vec<String>),
-    /// Un seul appareil d'une personne (`--to-user … --device …`).
-    Device {
-        user: String,
-        device: String,
-    },
+    Device { user: String, device: String },
 }
 
 async fn otp_bridge(
@@ -892,7 +882,6 @@ async fn otp_bridge(
         Some(path) => path,
         None => otp::default_socket()?,
     };
-    // Une faute dans un nom de destinataire se voit dès le démarrage.
     if let OtpTarget::Devices(to) = &target {
         let group = group(home)?;
         for name in to {
@@ -907,8 +896,6 @@ async fn otp_bridge(
         OtpTarget::Device { user, .. } => vec![user.clone()],
     };
     if !names.is_empty() {
-        // Les personnes se lisent dans l'annuaire vérifié : relais injoignable
-        // au démarrage, les noms seront vérifiés au premier code.
         match tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await {
             Ok(Ok(people)) => {
                 if people.is_empty() {
@@ -935,8 +922,6 @@ async fn otp_bridge(
             Err(_) => eprintln!("⚠ relais injoignable : les noms seront vérifiés au premier code"),
         }
     }
-    // Une seule session, tenue tant que le pont tourne ; il ne lit pas les
-    // messages qui lui arrivent.
     tokio::spawn(async move {
         while let Some(event) = events.next().await {
             match event {
@@ -989,7 +974,6 @@ async fn otp_connect(socket: &std::path::Path) -> Result<tokio::io::Empty> {
     bail!("socket {} : pas de socket Unix sous Windows", socket.display())
 }
 
-/// Une connexion au socket d'otp-relay, lue jusqu'à sa fermeture.
 async fn otp_session(
     home: &Home,
     client: &Client,
@@ -1006,7 +990,6 @@ async fn otp_session(
     let mut lines = tokio::io::BufReader::new(stream).lines();
     while let Some(line) = lines.next_line().await? {
         let ev = match otp::Line::parse(&line) {
-            // Jamais le texte de la ligne : il peut contenir un code.
             Err(e) => {
                 eprintln!("otp-relay : ligne illisible (colonne {})", e.column());
                 continue;
@@ -1037,8 +1020,6 @@ async fn otp_session(
                 continue;
             }
         };
-        // Retenu avant l'envoi : un code n'est jamais envoyé deux fois, même
-        // si le pont redémarre pendant l'envoi.
         sent.insert(ev.id.clone(), code.expires_at);
         if let Err(e) = home.save_otp_sent(sent) {
             eprintln!("⚠ codes envoyés non sauvegardés : {e:#}");
@@ -1048,9 +1029,6 @@ async fn otp_session(
     Ok(())
 }
 
-/// Envoie un code aux destinataires, résolus dans le roster (ou dans
-/// l'annuaire) du moment ; abandonne à son expiration (relais injoignable
-/// jusque-là).
 async fn send_otp(client: Client, target: OtpTarget, code: ot_core::Otp) {
     let domain = code.sender_domain.clone();
     let left = code.expires_at - OffsetDateTime::now_utc().unix_timestamp();
@@ -1091,8 +1069,6 @@ async fn devices(home: &Home) -> Result<()> {
     connected(&mut events).await?;
     let me = client.device_id().clone();
     let list = within(client.list_devices()).await;
-    // Étape 10 : ma personne et les profils de ses appareils, s'il y a un
-    // annuaire (sinon, vide tout de suite).
     let people = tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await;
     client.shutdown().await;
     let list = list?;
@@ -1189,8 +1165,6 @@ async fn group_rotate(home: &Home, exclude: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// QR à afficher dans un terminal sombre (modules clairs en caractères
-/// pleins), suivi d'une ligne vide.
 fn print_qr(text: &str) -> Result<()> {
     use qrcode::render::unicode::Dense1x2;
     let code = qrcode::QrCode::new(text.as_bytes()).context("texte trop long pour un QR")?;
@@ -1245,7 +1219,6 @@ async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
         };
         let Some(event) = event else { break Err(anyhow!("client arrêté")) };
         refresh_names(&client, &event, &mut names).await;
-        // Les messages reçus pendant l'attente sont affichés, pas perdus.
         if print_event(&event, &names, false, offset)?
             && let Event::Message(m) = &event
         {
@@ -1258,16 +1231,10 @@ async fn pair_new(home: &Home, qr: bool, offset: UtcOffset) -> Result<()> {
             break Ok(());
         }
     };
-    // pair_welcome et roster sont déjà écrits sur la connexion, avant
-    // l'arrêt : le relais les lit dans l'ordre.
     client.shutdown().await;
     result
 }
 
-/// Nouvel appareil, QR inversé (note 0022) : affiche le QR, puis attend
-/// que le parrain l'ait fait enregistrer et ait envoyé le groupe. Appareil
-/// de service (`service`) : l'admin l'ajoute à une personne de service, sans
-/// groupe (étape 10, § 6.2).
 async fn pair_join_qr(
     home: &Home,
     server: String,
@@ -1284,7 +1251,6 @@ async fn pair_join_qr(
     if !ot_core::valid_device_name(&name) {
         bail!("nom invalide : 1 à 64 caractères imprimables");
     }
-    // L'identifiant est choisi ici : le parrain le fait enregistrer tel quel.
     let identity = Identity::generate();
     let device_id = DeviceId::generate();
     home.reset_group()?;
@@ -1299,8 +1265,6 @@ async fn pair_join_qr(
     let (config, _) = registered(home)?;
     let mut client =
         ClientConfig::new(config.server_url, device_id, home.load_key()?, Arc::new(home.keyring()));
-    // Tant que le parrain n'a pas scanné, l'authentification échoue : on
-    // réessaie souvent.
     client.backoff =
         ot_core::Backoff { initial: Duration::from_secs(1), max: Duration::from_secs(3) };
     let (client, mut events) = Client::start(client);
@@ -1339,8 +1303,6 @@ async fn pair_join_qr(
     group_show(home)
 }
 
-/// Nouvel appareil : attend que la réponse du parrain apporte le groupe ;
-/// renvoie son époque.
 async fn group_received(events: &mut Events) -> Result<u32> {
     loop {
         match events.next().await {
@@ -1353,8 +1315,6 @@ async fn group_received(events: &mut Events) -> Result<u32> {
     }
 }
 
-/// Appareil de service : attend que la bienvenue de l'admin soit confirmée
-/// par l'annuaire ; renvoie sa personne de service.
 async fn service_received(events: &mut Events) -> Result<ot_core::UserId> {
     loop {
         match events.next().await {
@@ -1371,14 +1331,11 @@ async fn service_received(events: &mut Events) -> Result<ot_core::UserId> {
     }
 }
 
-/// Parrain, QR inversé, depuis un terminal : texte du QR collé.
 async fn pair_sponsor(home: &Home, qr: &str) -> Result<()> {
     group(home)?;
     let (client, mut events) = start(home)?;
     connected(&mut events).await?;
     let res = within(client.sponsor(qr)).await;
-    // La réponse et le roster sont déjà écrits sur la connexion : le relais
-    // les lit avant la fermeture.
     client.shutdown().await;
     let (id, name) = res?;
     println!("« {name} » ({id}) a rejoint le groupe.");

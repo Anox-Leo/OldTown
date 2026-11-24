@@ -1,49 +1,34 @@
-//! Fichiers (étape 5, note 0026) : Kotlin fournit la lecture et l'écriture
-//! (un `ContentResolver` : le Rust ne sait pas ouvrir une URI `content://`),
-//! le cœur fait le reste. Aucune clé de fichier ne traverse le pont.
-
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::StoreError;
 
-/// Fichier à envoyer, lu par Kotlin. Appelé hors du thread principal.
 #[uniffi::export(with_foreign)]
 pub trait FileSource: Send + Sync {
-    /// Taille du fichier, en octets.
     fn size(&self) -> u64;
-    /// `len` octets à partir de `offset` (moins seulement en fin de fichier).
     fn read_at(&self, offset: u64, len: u32) -> Result<Vec<u8>, StoreError>;
 }
 
-/// Fichier reçu, écrit par Kotlin (MediaStore, `IS_PENDING` jusqu'à
-/// `finish`). Les morceaux arrivent dans l'ordre.
 #[uniffi::export(with_foreign)]
 pub trait FileSink: Send + Sync {
     fn write_at(&self, offset: u64, data: Vec<u8>) -> Result<(), StoreError>;
-    /// SHA-256 vérifié : rendre le fichier visible. Renvoie son URI.
     fn finish(&self) -> Result<String, StoreError>;
-    /// Transfert abandonné : effacer ce qui a été écrit.
     fn abort(&self);
 }
 
-/// Progression d'un transfert, en octets.
 #[uniffi::export(with_foreign)]
 pub trait TransferListener: Send + Sync {
     fn on_progress(&self, done: u64, total: u64);
 }
 
-/// Fichier annoncé, tel qu'il est rangé dans l'historique.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FileItem {
     pub blob_id: String,
-    /// Nom nettoyé, sûr à écrire.
     pub name: String,
     pub mime: String,
     pub size: u64,
-    /// URI du fichier enregistré, une fois téléchargé.
     #[serde(default)]
     pub saved_uri: Option<String>,
 }
@@ -73,7 +58,6 @@ impl ot_core::ChunkSource for Source {
 
 pub(crate) struct Sink {
     pub inner: Arc<dyn FileSink>,
-    /// URI rendue par `finish`.
     pub uri: std::sync::Mutex<Option<String>>,
 }
 

@@ -1,7 +1,3 @@
-//! Étape 10, T8 et § 4.2 à 4.6 : invitation, publication du journal et
-//! administration de bout en bout, clients `ot-core` et relais en processus.
-//! Noms neutres : Alice (admin, deux appareils), Bob et Carol (invités).
-
 mod common;
 
 use std::sync::Arc;
@@ -22,8 +18,6 @@ struct Admin {
     a: Vec<TestDevice>,
 }
 
-/// Alice et ses deux appareils, racine publiée par `a1`, ancre adoptée
-/// par `a2`.
 async fn admin() -> Admin {
     let store = Store::in_memory().await.unwrap();
     let a1 = add_device(&store, "alice-phone").await;
@@ -50,8 +44,6 @@ async fn online(dev: &TestDevice, url: &str) -> (Client, Events) {
     (client, events)
 }
 
-/// Premier appareil d'une personne invitée : jeton racheté, invitation
-/// rangée ; son client n'est pas encore démarré.
 async fn redeem(url: &str, code: &str, name: &str) -> (TestDevice, InviteRedeemed) {
     let identity = ot_core::Identity::generate();
     let parsed = InviteCode::parse(code).unwrap();
@@ -63,7 +55,6 @@ async fn redeem(url: &str, code: &str, name: &str) -> (TestDevice, InviteRedeeme
     (dev, redeemed)
 }
 
-/// Attend un état de l'annuaire vérifié de `client`.
 async fn people_until(
     client: &Client,
     events: &mut Events,
@@ -85,7 +76,6 @@ fn person<'a>(people: &'a [Person], user: &UserId) -> Option<&'a Person> {
     people.iter().find(|p| &p.id == user)
 }
 
-/// `user` est vérifié avec `n` appareils à jour.
 fn ready(people: &[Person], user: &UserId, n: usize) -> bool {
     person(people, user).is_some_and(|p| p.devices.iter().filter(|d| d.up_to_date).count() == n)
 }
@@ -109,7 +99,6 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     let bob = redeemed.user.clone();
     let (cb1, mut eb1) = online(&b1, &url).await;
 
-    // L'admin certifie d'office ; l'invité crée son groupe.
     let joined = wait_for(&mut ea1, |e| matches!(e, Event::PersonJoined { .. })).await;
     let Event::PersonJoined { user, name, device_name, fingerprint } = joined else {
         unreachable!()
@@ -122,8 +111,6 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     assert!(b1.keyring.load_pending_invite().unwrap().is_none(), "invitation terminée");
     assert!(net.a[0].keyring.load_invites().unwrap().is_empty());
 
-    // Bob publie son journal (entrée 1) : les deux appareils d'Alice le
-    // voient, et lui les voit.
     people_until(&ca1, &mut ea1, |p| ready(p, &bob, 1)).await;
     people_until(&cb1, &mut eb1, |p| ready(p, &alice, 2) && ready(p, &bob, 1)).await;
 
@@ -133,7 +120,6 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     assert_eq!((m.content.body.as_str(), m.origin.from_user.as_ref()), ("bienvenue", Some(&alice)));
     let to_alice = Target::Person { user: alice.clone(), device: Some(net.a[1].id.clone()) };
     within(cb1.send_to(to_alice, &Content::text("merci"))).await.unwrap();
-    // a2 reçoit d'abord la copie de l'envoi de a1 (D43), puis la réponse.
     let copy = next_message(&mut ea2).await;
     assert_eq!(
         (copy.content.body.as_str(), copy.origin.to_user.as_ref()),
@@ -141,8 +127,6 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     );
     assert_eq!(next_message(&mut ea2).await.content.body, "merci");
 
-    // Le roster de l'admin a pris la version de son journal (note 0057,
-    // point 7) sur ses deux appareils : pas de fourche.
     let v1 = net.a[0].keyring.load_roster().unwrap().unwrap().version;
     let state = net.a[0].keyring.load_directory().unwrap();
     let chain = state.admin.unwrap().1.chain.unwrap();
@@ -157,7 +141,6 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     net.server.stop().await;
 }
 
-/// Aucun événement `pred` pendant `d`.
 async fn no_event(events: &mut Events, pred: impl Fn(&Event) -> bool, d: Duration) {
     let deadline = tokio::time::Instant::now() + d;
     while let Ok(Some(e)) = tokio::time::timeout_at(deadline, events.next()).await {
@@ -173,19 +156,14 @@ async fn request_waits_for_the_inviting_device_and_needs_the_secret() {
     let invitation = within(ca1.invite("Bob", vec![net.alice.clone()])).await.unwrap();
     within(ca1.shutdown()).await;
 
-    // Un faux code : bon jeton, mauvais `S`. La demande ne s'ouvre pas chez
-    // l'admin ; rien n'est certifié.
     let mut forged = InviteCode::parse(&invitation.code).unwrap();
     forged.secret = ot_core::crypto::PairingSecret::generate();
     let (b1, _) = redeem(&url, &forged.encode(), "bob-phone").await;
     let (_cb1, mut eb1) = online(&b1, &url).await;
-    // L'autre appareil de l'admin n'a pas `S` : la demande ne lui est pas
-    // adressée, il ne certifie rien.
     let (_ca2, mut ea2) = online(&net.a[1], &url).await;
     no_event(&mut ea2, |e| matches!(e, Event::PersonJoined { .. }), Duration::from_millis(300))
         .await;
 
-    // L'appareil qui a invité revient : il refuse la demande forgée.
     let (_ca1, mut ea1) = online(&net.a[0], &url).await;
     let ev = wait_for(&mut ea1, |e| matches!(e, Event::Rejected { .. })).await;
     assert!(matches!(ev, Event::Rejected { reason, .. } if reason == "déchiffrement impossible"));
@@ -204,7 +182,6 @@ async fn invitation_received_while_admin_offline_is_handled_on_return() {
 
     let (b1, redeemed) = redeem(&url, &invitation.code, "bob-phone").await;
     let (cb1, _) = online(&b1, &url).await;
-    // Bob redémarre avant la bienvenue : sa demande repart.
     within(cb1.shutdown()).await;
     let (cb1, mut eb1) = online(&b1, &url).await;
 
@@ -228,7 +205,6 @@ async fn a_new_device_of_a_person_is_published_and_seen_by_others() {
     wait_for(&mut eb1, |e| matches!(e, Event::Joined { .. })).await;
     people_until(&ca1, &mut ea1, |p| ready(p, &bob, 1)).await;
 
-    // Bob appaire un second appareil : le parrain publie le roster (§ 4.2).
     let pairing = within(cb1.pair_create()).await.unwrap();
     let identity = ot_core::Identity::generate();
     let redeemed =
@@ -241,15 +217,12 @@ async fn a_new_device_of_a_person_is_published_and_seen_by_others() {
         identity,
         keyring: Arc::new(MemoryKeyring::new()),
     };
-    // L'ancre arrive avec la bienvenue du parrain (note 0076).
     let (cb2, mut eb2) = online(&b2, &url).await;
     within(cb2.pair_join(&pairing.code, redeemed.sponsor, "bob-laptop")).await.unwrap();
     wait_for(&mut eb2, |e| matches!(e, Event::GroupChanged { .. })).await;
 
     let people = people_until(&ca1, &mut ea1, |p| ready(p, &bob, 2)).await;
     assert_eq!(person(&people, &bob).unwrap().roster.members.len(), 2);
-    // Alice écrit aux deux appareils de Bob (aucun par défaut sauf le
-    // premier : seul lui) ; b2 visé directement reçoit aussi.
     let target = Target::Person { user: bob.clone(), device: Some(b2.id.clone()) };
     within(ca1.send_to(target, &Content::text("au laptop"))).await.unwrap();
     assert_eq!(next_message(&mut eb2).await.content.body, "au laptop");
@@ -278,17 +251,14 @@ async fn admin_renames_revokes_and_reinvites() {
     let (bob, carol) = (rb.user.clone(), rc.user.clone());
     people_until(&ca1, &mut ea1, |p| ready(p, &bob, 1) && ready(p, &carol, 1)).await;
 
-    // Liens : Bob ↔ Carol posés par l'admin ; Carol voit Bob.
     within(ca1.link_set(&bob, &carol, true)).await.unwrap();
     people_until(&cc1, &mut ec1, |p| ready(p, &bob, 1)).await;
     let users = within(ca1.users()).await.unwrap();
     assert!(users.iter().any(|u| u.id == bob && u.links.contains(&carol)));
 
-    // Renommer : le nom vu par les autres est celui du certificat re-signé.
     within(ca1.rename_user(&bob, "Robert")).await.unwrap();
     people_until(&cc1, &mut ec1, |p| person(p, &bob).is_some_and(|b| b.name == "Robert")).await;
 
-    // Réinviter Bob (appareil perdu) : nouvelles clés, signalées.
     let again = within(ca1.reinvite(&bob)).await.unwrap();
     let (b1bis, _) = redeem(&url, &again.code, "bob-phone-2").await;
     let (_cb1bis, mut eb1bis) = online(&b1bis, &url).await;
@@ -298,7 +268,6 @@ async fn admin_renames_revokes_and_reinvites() {
     let people = people_until(&cc1, &mut ec1, |p| ready(p, &bob, 1)).await;
     assert_eq!(person(&people, &bob).unwrap().devices[0].id, b1bis.id);
 
-    // Révoquer Bob : il disparaît de l'annuaire de Carol et de l'admin.
     within(ca1.revoke_user(&bob)).await.unwrap();
     people_until(&cc1, &mut ec1, |p| person(p, &bob).is_none()).await;
     people_until(&ca1, &mut ea1, |p| person(p, &bob).is_none()).await;
@@ -313,7 +282,6 @@ async fn removing_an_admin_device_recertifies_what_it_signed() {
     let net = admin().await;
     let url = net.server.url();
     let alice = net.alice.clone();
-    // Carol est invitée par a2 : son certificat est signé par a2.
     let (ca1, mut ea1) = online(&net.a[0], &url).await;
     let (ca2, _ea2) = online(&net.a[1], &url).await;
     let inv = within(ca2.invite("Carol", vec![alice.clone()])).await.unwrap();
@@ -324,13 +292,10 @@ async fn removing_an_admin_device_recertifies_what_it_signed() {
     people_until(&ca1, &mut ea1, |p| ready(p, &carol, 1)).await;
     within(ca2.shutdown()).await;
 
-    // a1 retire a2 : rotation, roster publié, révocation, puis certificat
-    // de Carol re-signé par a1. Carol reste visible de tous.
     within(ca1.remove_device(&net.a[1].id)).await.unwrap();
     let state = net.a[0].keyring.load_directory().unwrap();
     let chain = state.admin.as_ref().unwrap().1.chain.as_ref().unwrap();
     assert!(chain.roster.member(&net.a[1].id).is_none(), "a2 hors du roster publié");
-    // Le certificat re-signé arrive à la relecture qui suit.
     let issuer = |dev: &TestDevice| {
         let state = dev.keyring.load_directory().unwrap();
         let cert = &state.people[&carol].cert;
@@ -342,8 +307,6 @@ async fn removing_an_admin_device_recertifies_what_it_signed() {
         }
     })
     .await;
-    // Carol peut lire le roster sans a2 avant son certificat re-signé : entre
-    // les deux, celui signé par a2 ne vaut plus. Elle attend les deux.
     people_until(&cc1, &mut ec1, |p| {
         person(p, &alice).is_some_and(|a| a.roster.member(&net.a[1].id).is_none())
             && ready(p, &carol, 1)
@@ -362,8 +325,6 @@ async fn invitee_refuses_an_admin_log_cut_short_by_the_relay() {
     let (ca1, mut ea1) = online(&net.a[0], &url).await;
     let invitation = within(ca1.invite("Bob", vec![alice.clone()])).await.unwrap();
 
-    // Le relais ne sert à l'invité que la première entrée de l'admin : pas
-    // celle qui engage son certificat (la tête de la bienvenue).
     let tamper: TamperFn = Arc::new(move |dir, frame| match (dir, frame) {
         (Dir::ToClient, ot_proto::Frame::Directory { me, admin, mut users, next }) => {
             for u in users.iter_mut().filter(|u| u.id == admin) {
@@ -378,8 +339,6 @@ async fn invitee_refuses_an_admin_log_cut_short_by_the_relay() {
     let (b1, _) = redeem(&url, &invitation.code, "bob-phone").await;
     let (cb1, mut eb1) = online(&b1, &hostile).await;
     wait_for(&mut ea1, |e| matches!(e, Event::PersonJoined { .. })).await;
-    // Avant la bienvenue, son propre certificat est déjà refusé (empreinte
-    // absente) ; après, c'est le journal de l'admin, plus court que la tête.
     let a = alice.clone();
     let ev =
         wait_for(&mut eb1, |e| matches!(e, Event::DirectoryRejected { user, .. } if *user == a))

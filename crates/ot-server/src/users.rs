@@ -1,8 +1,3 @@
-//! Personnes, réseau, invitations et journal de roster (étape 10, note
-//! 0052), côté base. Le relais tient l'autorisation (qui peut joindre qui) ;
-//! les certificats et les entrées du journal sont des octets opaques qu'il
-//! range et rend sans les lire : les clients les vérifient.
-
 use std::collections::HashSet;
 
 use ot_proto::{
@@ -16,25 +11,17 @@ use crate::store::{
     ensure_default, insert_device, parse_device, parse_role, parse_state, parse_user, revoke_in,
 };
 
-/// Taille JSON des personnes d'une trame `directory` (certificats, profils
-/// et journaux compris) : avec `me`, `admin`, `next` et la marge de `online`
-/// (rempli plus tard, `true` est plus court que `false`), la trame tient
-/// sous `MAX_FRAME_BYTES`.
 pub const DIRECTORY_FRAME_BUDGET: usize = ot_proto::MAX_FRAME_BYTES - 4 * 1024;
 
-/// Une page de l'annuaire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryPage {
     pub admin: UserId,
     pub users: Vec<DirectoryUser>,
-    /// D'autres personnes suivent : relire avec `after = next`.
     pub next: Option<UserId>,
 }
 
-/// Nom de la personne `admin` créée à la migration (`ot-server user rename`).
 pub const OWNER_NAME: &str = "owner";
 
-/// Une personne.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
     pub id: UserId,
@@ -46,8 +33,6 @@ pub struct User {
     pub revoked_at: Option<i64>,
 }
 
-/// L'appareil d'une session et sa personne, relus en base à chaque
-/// décision (une personne en attente devient active pendant sa session).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peer {
     pub device: DeviceId,
@@ -62,28 +47,20 @@ impl Peer {
     }
 }
 
-/// Premier appareil d'une personne invitée.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteRedeemed {
     pub device: Device,
     pub user: UserId,
-    /// Appareil de l'admin qui a créé l'invitation.
     pub inviter: DeviceId,
 }
 
-/// Ce qu'une révocation de personne laisse à faire hors de la base.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UserRevoked {
-    /// Appareils révoqués : sessions à fermer.
     pub devices: Vec<DeviceId>,
-    /// Blobs supprimés : morceaux à effacer du disque.
     pub blobs: Vec<BlobId>,
-    /// Appareils à prévenir (`directory_changed`), calculés avant de retirer
-    /// les liens.
     pub notify: Vec<DeviceId>,
 }
 
-/// Changements demandés par `device_update`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeviceChanges {
     pub kind: Option<DeviceKind>,
@@ -92,7 +69,6 @@ pub struct DeviceChanges {
     pub features: Option<Vec<Feature>>,
 }
 
-/// Lien entre deux personnes, tel que listé par `ot-server link list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub from: UserId,
@@ -101,12 +77,7 @@ pub struct Link {
 }
 
 impl Store {
-    /// Reprise de l'existant (étape 10) : sans admin, en crée un, `owner`,
-    /// lui rattache tout appareil sans personne et fait de son plus ancien
-    /// appareil joignable son appareil par défaut. Idempotent.
     pub(crate) async fn adopt_devices(&self, now: i64) -> Result<()> {
-        // Lecture d'abord : une ouverture ordinaire ne prend pas le verrou
-        // d'écriture (`ot-server device list` pendant que le relais écrit).
         let done: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM users WHERE role = 'admin' AND state != 'revoked')
                 AND NOT EXISTS (SELECT 1 FROM devices WHERE user_id IS NULL)
@@ -149,8 +120,6 @@ impl Store {
         Ok(())
     }
 
-    // --- Lecture ------------------------------------------------------------
-
     pub async fn user(&self, id: &UserId) -> Result<Option<User>> {
         let row = sqlx::query(
             "SELECT id, name, role, state, cert, created_at, revoked_at FROM users WHERE id = ?",
@@ -161,7 +130,6 @@ impl Store {
         row.map(user_from_row).transpose()
     }
 
-    /// Toutes les personnes, révoquées comprises, par date de création.
     pub async fn users(&self) -> Result<Vec<User>> {
         sqlx::query(
             "SELECT id, name, role, state, cert, created_at, revoked_at FROM users
@@ -174,8 +142,6 @@ impl Store {
         .collect()
     }
 
-    /// Personne non révoquée désignée par son nom ou son identifiant
-    /// (l'identifiant exact d'abord).
     pub async fn find_user(&self, name_or_id: &str) -> Result<User> {
         let row = sqlx::query(
             "SELECT id, name, role, state, cert, created_at, revoked_at FROM users
@@ -190,7 +156,6 @@ impl Store {
             .ok_or_else(|| StoreError::UnknownUser(name_or_id.to_owned()))
     }
 
-    /// La personne non révoquée de rôle `admin`.
     pub async fn admin(&self) -> Result<User> {
         let mut conn = self.pool.acquire().await?;
         let id = admin_id(&mut conn).await?;
@@ -198,7 +163,6 @@ impl Store {
         self.user(&id).await?.ok_or_else(|| StoreError::UnknownUser("admin".into()))
     }
 
-    /// Appareil actif et sa personne non révoquée.
     pub async fn peer(&self, device: &DeviceId) -> Result<Option<Peer>> {
         let row: Option<(String, String, String)> = sqlx::query_as(
             "SELECT u.id, u.role, u.state FROM devices d JOIN users u ON u.id = d.user_id
@@ -218,7 +182,6 @@ impl Store {
         .transpose()
     }
 
-    /// Tous les liens.
     pub async fn links(&self) -> Result<Vec<Link>> {
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
             "SELECT from_user, to_user, created_at FROM links ORDER BY created_at, from_user",
@@ -232,29 +195,11 @@ impl Store {
             .collect()
     }
 
-    /// Appareils actifs à prévenir quand quelque chose change pour `user` :
-    /// les siens, ceux des personnes liées dans un sens ou dans l'autre, et
-    /// ceux de l'admin.
     pub async fn concerned(&self, user: &UserId) -> Result<Vec<DeviceId>> {
         let mut conn = self.pool.acquire().await?;
         concerned_in(&mut conn, user).await
     }
 
-    /// Annuaire vu par `me` : ma personne (tous mes appareils actifs), l'admin
-    /// (l'ancre), et les personnes actives liées dans un sens ou dans l'autre
-    /// (leurs appareils joignables seulement). L'admin non lié n'y figure que
-    /// par son certificat et son journal, sans appareils ; l'admin voit de
-    /// même chaque service actif, dont il tient le journal (D47). `online`
-    /// reste à `false` : la session le remplit.
-    ///
-    /// Une page tient sous [`DIRECTORY_FRAME_BUDGET`], tout compris
-    /// (certificats, profils, journaux). Elle part de la personne qui suit
-    /// `after` (du début si `after` est absent ou inconnu) et rend, en
-    /// dernier, la personne à passer en `after` pour la page suivante. Le
-    /// journal d'une personne est coupé (`more`) quand la page est pleine,
-    /// mais la première personne d'une page a toujours au moins une entrée :
-    /// chaque page avance, et un long journal invérifiable ne retarde pas les
-    /// autres personnes, qui suivent par `next`.
     pub async fn directory(
         &self,
         me: &UserId,
@@ -284,8 +229,6 @@ impl Store {
         .fetch_all(&mut *conn)
         .await?;
 
-        // Reprise après `after` ; une personne disparue entre deux pages fait
-        // repartir du début (chaque page avance quand même).
         let skip = after
             .and_then(|a| rows.iter().position(|r| r.get::<&str, _>("id") == a.as_str()))
             .map_or(0, |i| i + 1);
@@ -334,10 +277,6 @@ impl Store {
                 devices,
             };
 
-            // Sans journal, la personne doit tenir ; sinon elle ouvre la page
-            // suivante. La première d'une page passe toujours (invariant :
-            // certificat ≤ 16 Kio et profils d'appareils bien en deçà du
-            // budget, sauf personne à plus d'une centaine d'appareils).
             let first = users.is_empty();
             let base = json_len(&entry) + 1;
             if !first && used + base > DIRECTORY_FRAME_BUDGET {
@@ -357,7 +296,6 @@ impl Store {
             for (seq, raw) in entries {
                 let log = LogEntry { seq: seq as u64, entry: decode_signed(&raw)? };
                 let len = json_len(&log) + 1;
-                // Une entrée au moins pour la première personne de la page.
                 if used + len > DIRECTORY_FRAME_BUDGET && !(first && entry.log.is_empty()) {
                     entry.more = true;
                     break;
@@ -368,7 +306,6 @@ impl Store {
             let full = entry.more;
             users.push(entry);
             if full && i + 1 < total {
-                // Page pleine : les personnes suivantes viennent par `next`.
                 next = users.last().map(|u| u.id.clone());
                 break;
             }
@@ -376,9 +313,6 @@ impl Store {
         Ok(DirectoryPage { admin, users, next })
     }
 
-    /// Toutes les personnes non révoquées vues par l'admin, avec tous leurs
-    /// appareils actifs, leurs liens et les services qu'elles ont coupés.
-    /// `online` reste à `false` : la session le remplit.
     pub async fn admin_users(&self) -> Result<Vec<AdminUser>> {
         let users: Vec<User> =
             self.users().await?.into_iter().filter(|u| u.state != UserState::Revoked).collect();
@@ -425,13 +359,11 @@ impl Store {
         Ok(out)
     }
 
-    /// Dernier `seq` du journal de roster d'une personne (0 : vide).
     pub async fn last_seq(&self, user: &UserId) -> Result<u64> {
         let mut conn = self.pool.acquire().await?;
         last_seq_in(&mut conn, user).await
     }
 
-    /// Invitations encore utilisables (ni utilisées, ni expirées).
     pub async fn open_invitations(&self, now: i64) -> Result<u64> {
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM invitations WHERE used_at IS NULL AND expires_at > ?",
@@ -442,7 +374,6 @@ impl Store {
         Ok(n as u64)
     }
 
-    /// Nombre de personnes par (rôle, état), pour `ot_users`.
     pub async fn user_counts(&self) -> Result<Vec<(Role, UserState, u64)>> {
         let rows: Vec<(String, String, i64)> =
             sqlx::query_as("SELECT role, state, COUNT(*) FROM users GROUP BY role, state")
@@ -453,10 +384,6 @@ impl Store {
             .collect()
     }
 
-    // --- Administration -----------------------------------------------------
-
-    /// Publie le certificat racine de l'admin et la première entrée de son
-    /// journal ; une seule fois.
     pub async fn admin_init(&self, cert: &SignedBlob, entry: &SignedBlob) -> Result<UserId> {
         check_signed(cert)?;
         check_signed(entry)?;
@@ -479,9 +406,6 @@ impl Store {
         Ok(admin)
     }
 
-    /// Crée une personne invitée (`pending`), ses liens symétriques vers
-    /// `links` et son jeton, haché. Au plus `max_open` invitations
-    /// utilisables à la fois.
     #[allow(clippy::too_many_arguments)]
     pub async fn invite_user(
         &self,
@@ -511,10 +435,6 @@ impl Store {
         Ok(user)
     }
 
-    /// Réinvite une personne : ses appareils sont révoqués, son certificat,
-    /// son journal et ses anciennes invitations oubliés, ses liens gardés ;
-    /// elle repasse en attente avec un nouveau jeton. Renvoie les appareils
-    /// révoqués.
     #[allow(clippy::too_many_arguments)]
     pub async fn reinvite_user(
         &self,
@@ -553,9 +473,6 @@ impl Store {
         Ok(devices)
     }
 
-    /// Consomme un jeton d'invitation et crée le premier appareil de la
-    /// personne, en une transaction. Un nom refusé laisse le jeton
-    /// utilisable.
     pub async fn redeem_invitation(
         &self,
         token_hash: &[u8; 32],
@@ -600,9 +517,6 @@ impl Store {
         Ok(InviteRedeemed { device, user, inviter })
     }
 
-    /// Enregistre le certificat d'un membre ou d'un service : une personne
-    /// en attente (avec au moins un appareil) devient active ; une personne
-    /// active reçoit un certificat re-signé.
     pub async fn certify_user(&self, user: &UserId, cert: &SignedBlob) -> Result<()> {
         check_signed(cert)?;
         let mut tx = self.begin_write().await?;
@@ -622,11 +536,6 @@ impl Store {
         Ok(())
     }
 
-    /// Ajoute une entrée au journal de roster de `user`, publiée par
-    /// `publisher` (appareil de cette personne, ou de l'admin pour un
-    /// service). `seq` doit suivre la dernière entrée. Le journal d'un membre
-    /// ou d'un service ne dépasse pas `log_quota` octets (celui de l'admin,
-    /// qui porte les empreintes des certificats, n'a pas de limite propre).
     pub async fn publish_entry(
         &self,
         publisher: &DeviceId,
@@ -675,8 +584,6 @@ impl Store {
         Ok(())
     }
 
-    /// Règle le profil d'un appareil actif de la personne de `actor` (de
-    /// n'importe qui pour l'admin). Renvoie la personne de l'appareil.
     pub async fn update_device(
         &self,
         actor: &DeviceId,
@@ -697,16 +604,12 @@ impl Store {
         }
         let owner = user_in(&mut tx, &device.user_id).await?;
 
-        // Une catégorie inconnue (version plus récente) ne change rien.
         let kind = match changes.kind {
             Some(DeviceKind::Unknown) | None => device.kind,
             Some(k) => Some(k),
         };
         let mut reachable = changes.reachable.unwrap_or(device.reachable);
         let mut is_default = changes.default.unwrap_or(device.is_default);
-        // Une CLI ou un appareil de service n'est jamais joignable ni par
-        // défaut : il cède sa place sans refus (un autre appareil joignable
-        // devient par défaut, `ensure_default`).
         let forced = kind == Some(DeviceKind::Cli) || owner.role == Role::Service;
         if forced {
             reachable = false;
@@ -749,8 +652,6 @@ impl Store {
         Ok(device.user_id)
     }
 
-    /// Révoque un appareil de la personne de `actor` (de n'importe qui pour
-    /// l'admin), jamais `actor` lui-même. Renvoie la personne de l'appareil.
     pub async fn revoke_device_by(
         &self,
         actor: &DeviceId,
@@ -772,8 +673,6 @@ impl Store {
         Ok(device.user_id)
     }
 
-    /// Pose ou retire un lien : entre deux personnes, les deux sens ; depuis
-    /// un service, le seul sens service → personne.
     pub async fn set_link(
         &self,
         from: &UserId,
@@ -810,7 +709,6 @@ impl Store {
         Ok(())
     }
 
-    /// Un membre coupe (`muted`) ou rouvre un service lié à lui.
     pub async fn mute_service(&self, user: &UserId, service: &UserId, muted: bool) -> Result<()> {
         let mut tx = self.begin_write().await?;
         let s = user_in(&mut tx, service).await?;
@@ -855,9 +753,6 @@ impl Store {
         Ok(())
     }
 
-    /// Révoque une personne (jamais l'admin) : ses appareils, ses liens, ses
-    /// invitations, ses services coupés, ses livraisons en attente et ses
-    /// blobs, en une transaction.
     pub async fn revoke_user(&self, user: &UserId, now: i64) -> Result<UserRevoked> {
         let mut tx = self.begin_write().await?;
         let target = user_in(&mut tx, user).await?;
@@ -901,8 +796,6 @@ impl Store {
         Ok(UserRevoked { devices, blobs, notify })
     }
 
-    /// Crée une personne de service, active, avec son certificat et son
-    /// premier appareil (QR inversé scanné par l'admin).
     #[allow(clippy::too_many_arguments)]
     pub async fn create_service(
         &self,
@@ -925,7 +818,6 @@ impl Store {
         Ok(d)
     }
 
-    /// Ajoute un appareil à une personne de service active.
     pub async fn add_service_device(
         &self,
         user: &UserId,
@@ -945,11 +837,6 @@ impl Store {
         Ok(d)
     }
 
-    /// Recours par SSH après la perte de tous les appareils de l'admin :
-    /// oublie son certificat et son journal ; toutes les autres personnes non
-    /// révoquées repassent en attente, sans certificat ni journal (à
-    /// réinviter ; un service est à recréer). Renvoie le nombre de personnes
-    /// remises en attente.
     pub async fn admin_reset(&self) -> Result<u64> {
         let mut tx = self.begin_write().await?;
         let admin = admin_id(&mut tx).await?;
@@ -971,7 +858,6 @@ impl Store {
     }
 }
 
-/// Profil d'annuaire d'un appareil ; `online` est rempli par la session.
 fn directory_device(d: Device) -> DirectoryDevice {
     DirectoryDevice {
         id: d.id,
@@ -997,9 +883,7 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> Result<User> {
     })
 }
 
-/// Taille JSON d'une valeur du protocole.
 fn json_len<T: serde::Serialize>(value: &T) -> usize {
-    // Invariant : les types du protocole sont toujours sérialisables.
     serde_json::to_vec(value).expect("type du protocole sérialisable").len()
 }
 

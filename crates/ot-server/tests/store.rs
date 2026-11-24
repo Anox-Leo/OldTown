@@ -33,7 +33,6 @@ async fn devices_add_list_revoke() {
     assert_eq!(revoked.revoked_at, Some(5));
     assert!(matches!(store.revoke_device("mac", 6).await, Err(StoreError::UnknownDevice(_))));
 
-    // Le nom redevient libre, la ligne révoquée reste pour l'audit.
     store.add_device("mac", &[4; 32], 7).await.unwrap();
     assert_eq!(store.devices().await.unwrap().len(), 4);
 }
@@ -101,19 +100,16 @@ async fn purge_acked_and_expired() {
     let s2 = store.insert_message(msg("m2", &a, &[]), 2).await.unwrap().seq;
     store.insert_message(NewMessage { expires_at: 100, ..msg("m3", &a, &[]) }, 3).await.unwrap();
 
-    // m1 acquitté par un seul des deux destinataires : il reste.
     store.ack(s1, &b, 10).await.unwrap();
     assert_eq!(store.purge(50).await.unwrap(), PurgeStats::default());
 
     store.ack(s1, &c, 60).await.unwrap();
     assert_eq!(store.purge(70).await.unwrap(), PurgeStats { acked: 1, ..PurgeStats::default() });
 
-    // m3 expire ; un message expiré n'est plus proposé même avant la purge.
     assert_eq!(store.pending(&b, 0, 100, 100).await.unwrap().len(), 1);
     assert_eq!(store.purge(100).await.unwrap(), PurgeStats { expired: 1, ..PurgeStats::default() });
     assert_eq!(store.pending(&b, 0, 100, 101).await.unwrap()[0].seq, s2);
 
-    // Un seq n'est jamais réutilisé après purge.
     store.ack(s2, &b, 102).await.unwrap();
     store.ack(s2, &c, 102).await.unwrap();
     store.purge(103).await.unwrap();
@@ -145,8 +141,6 @@ async fn data_survives_reopen() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_writes_do_not_fail() {
-    // Insertions et purges simultanées sur une base fichier (WAL, plusieurs
-    // connexions) : aucune ne doit échouer en SQLITE_BUSY.
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&dir.path().join("ot.db")).await.unwrap();
     let a = store.add_device("mac", &[1; 32], 0).await.unwrap().id;
@@ -175,10 +169,6 @@ async fn concurrent_writes_do_not_fail() {
 
 #[tokio::test]
 async fn open_while_another_connection_writes() {
-    // Une connexion neuve sur une base déjà en WAL, pendant qu'une autre tient
-    // le verrou d'écriture : `ots device list` pendant que le relais écrit, ou
-    // une connexion que le pool ouvre en pleine charge. Elle ne doit pas
-    // échouer en SQLITE_BUSY.
     use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
 
     let dir = tempfile::tempdir().unwrap();

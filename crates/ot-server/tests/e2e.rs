@@ -1,6 +1,3 @@
-//! Étape 1, T10 : scénarios de bout en bout, serveur dans le processus et
-//! clients ot-core (membres d'un même groupe depuis l'étape 2).
-
 mod common;
 
 use std::time::{Duration, Instant};
@@ -58,7 +55,6 @@ async fn sends_queued_while_offline_go_out_on_connect() {
     let a = add_device(&store, "windows").await;
     let b = add_device(&store, "mac").await;
     make_group(&[&a, &b]);
-    // Réserve un port, puis démarre le client avant le serveur.
     let addr = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let (ca, _ea) = a.client(&format!("ws://{addr}"));
     let send =
@@ -78,14 +74,11 @@ async fn interrupted_delivery_is_shown_once() {
     wait_connected(&mut ea).await;
     let sent = within(ca.send(&Content::text("une fois"), vec![])).await.unwrap();
 
-    // B reçoit la trame mais coupe avant d'acquitter.
     let (mut raw, pending) = Raw::login(&server, &b).await;
     assert_eq!(pending, 1);
     assert!(matches!(raw.recv().await, Some(Frame::Deliver { .. })));
     raw.close().await;
 
-    // À la reconnexion, le message est relivré ; un client qui l'a déjà vu
-    // (état persisté) l'acquitte sans l'afficher.
     let mut config = b.config(&server.url());
     config.seen = vec![sent.msg_id];
     let (_cb, mut eb) = ot_core::Client::start(config);
@@ -139,7 +132,6 @@ async fn pending_messages_survive_server_restart() {
     server.stop().await;
     assert!(matches!(next_event(&mut ea).await, Event::Disconnected { .. }));
 
-    // Même port, même base : A se reconnecte seul.
     let server = TestServer::start_on(addr, open_store(&path).await, test_config()).await;
     wait_connected(&mut ea).await;
     within(ca.send(&Content::text("après"), vec![])).await.unwrap();
@@ -152,8 +144,6 @@ async fn pending_messages_survive_server_restart() {
 
 #[tokio::test]
 async fn listener_reconnects_after_network_cut() {
-    // Base fichier : une base en mémoire disparaît si sa connexion se ferme
-    // pendant la coupure, ce qui n'a rien à voir avec ce qu'on teste.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ot.db");
     let store = open_store(&path).await;
@@ -165,7 +155,6 @@ async fn listener_reconnects_after_network_cut() {
     let (_cb, mut eb) = b.client(&server.url());
     wait_connected(&mut eb).await;
 
-    // Coupure : le serveur disparaît puis revient sur la même base.
     server.stop().await;
     assert!(matches!(next_event(&mut eb).await, Event::Disconnected { .. }));
     let server = TestServer::start_on(addr, open_store(&path).await, test_config()).await;
@@ -236,8 +225,6 @@ async fn shutdown_keeps_frames_already_sent() {
     let (cb, mut eb) = b.client(&server.url());
     wait_connected(&mut eb).await;
     for i in 0..20 {
-        // B acquitte puis s'arrête aussitôt : l'acquittement ne doit pas se
-        // perdre dans la fermeture.
         within(ca.send(&Content::text(format!("m{i}")), vec![])).await.unwrap();
     }
     for _ in 0..20 {
@@ -247,8 +234,6 @@ async fn shutdown_keeps_frames_already_sent() {
     assert_eq!(server.relay.store().pending_count(&b.id, now_ms()).await.unwrap(), 0);
 }
 
-/// Étape 3, T5 : un changement de réseau relance la connexion tout de suite,
-/// sans attendre le délai de reconnexion.
 #[tokio::test]
 async fn reconnect_now_skips_the_backoff() {
     let store = Store::in_memory().await.unwrap();
@@ -265,12 +250,9 @@ async fn reconnect_now_skips_the_backoff() {
         Event::Disconnected { reason } => assert_eq!(reason, "changement de réseau"),
         other => panic!("déconnexion attendue, reçu {other:?}"),
     }
-    // Bien moins que le délai de 30 s.
     wait_connected(&mut events).await;
 }
 
-/// Correctif (étape 3) : les pings du relais suffisent à garder une session
-/// calme ouverte ; avant, elle tombait toutes les 75 s.
 #[tokio::test]
 async fn quiet_session_stays_open_thanks_to_pings() {
     let store = Store::in_memory().await.unwrap();
@@ -281,7 +263,6 @@ async fn quiet_session_stays_open_thanks_to_pings() {
     client_config.idle_timeout = Duration::from_millis(700);
     let (_client, mut events) = ot_core::Client::start(client_config);
     wait_connected(&mut events).await;
-    // Trois fois le délai d'inactivité, sans aucune trame du protocole.
     let deadline = tokio::time::Instant::now() + Duration::from_millis(2_100);
     if let Ok(Some(ev)) = tokio::time::timeout_at(deadline, events.next()).await {
         panic!("la session devait rester ouverte, reçu {ev:?}");

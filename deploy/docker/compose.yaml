@@ -1,13 +1,3 @@
-# Relais OldTown public, sans VPN (étape 8e, note 0038) : le relais et Caddy,
-# qui obtient le certificat et sert le port 443. Même installation sur un
-# VPS ou sur une machine derrière la box (ports 80 et 443 redirigés).
-#
-#   echo "OT_DOMAIN=relay.example.org" > deploy/docker/.env
-#   docker compose -f deploy/docker/compose.yaml up -d --build
-#
-# Administration : docker compose -f deploy/docker/compose.yaml exec relay
-# ot-server device list ; métriques : curl http://127.0.0.1:7879/metrics.
-
 name: oldtown
 
 services:
@@ -17,15 +7,12 @@ services:
       dockerfile: deploy/docker/Dockerfile
     restart: unless-stopped
     environment:
-      # Seul Caddy (adresse fixe ci-dessous) est cru pour X-Forwarded-For.
       OT_TRUSTED_PROXY: 172.31.78.2
     volumes:
       - relay-data:/var/lib/ot-relay
     ports:
-      # /metrics, joignable depuis le serveur seulement.
       - "127.0.0.1:${OT_ADMIN_PORT:-7879}:7879"
     read_only: true
-    # Fichiers temporaires de SQLite (compactage de la base).
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

@@ -1,11 +1,3 @@
-"""Diffusion des événements sur un socket Unix, protocole JSON Lines.
-
-Chaque client connecté reçoit : `hello`, l'état IMAP courant, les codes encore
-valides (`replay: true`), puis les événements en direct et un `heartbeat`
-périodique. Un client peut envoyer `ping`, `list` et `consume`.
-Le contrat complet est décrit dans PROTOCOL.md.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -51,13 +43,11 @@ class Hub:
     def __init__(self, cfg: SocketConfig, code_ttl: int) -> None:
         self.cfg = cfg
         self.code_ttl = code_ttl
-        self.active: dict[str, tuple[float, dict[str, Any]]] = {}  # id → (expiration epoch, événement)
+        self.active: dict[str, tuple[float, dict[str, Any]]] = {}
         self.status: dict[str, Any] = {"type": "status", "state": "starting", "detail": "", "since": iso(time.time())}
         self._clients: set[_Client] = set()
         self._server: asyncio.AbstractServer | None = None
         self._heartbeat: asyncio.Task | None = None
-
-    # ------------------------------------------------------------------ serveur
 
     async def start(self) -> None:
         path = self.cfg.path
@@ -65,7 +55,7 @@ class Hub:
         if path.exists() or path.is_symlink():
             if not stat.S_ISSOCK(path.lstat().st_mode):
                 raise RuntimeError(f"{path} existe et n'est pas un socket")
-            path.unlink()  # socket orphelin d'une exécution précédente
+            path.unlink()
         old_umask = os.umask(0o177)
         try:
             self._server = await asyncio.start_unix_server(self._handle, path=str(path), limit=MAX_LINE)
@@ -88,12 +78,10 @@ class Hub:
         except FileNotFoundError:
             pass
 
-    # ------------------------------------------------------------------ publication
-
     def publish(self, event: dict[str, Any], expires_epoch: float) -> None:
         self._expire()
         if event["id"] in self.active or expires_epoch <= time.time():
-            return  # déjà diffusé (message re-signalé après reconnexion) ou périmé
+            return
         self.active[event["id"]] = (expires_epoch, event)
         self._broadcast(event)
 
@@ -135,8 +123,6 @@ class Hub:
             self._expire()
             self._broadcast({"type": "heartbeat", "at": iso(time.time()), "imap": self.status["state"]})
 
-    # ------------------------------------------------------------------ clients
-
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         sock: socket.socket = writer.get_extra_info("socket")
         pid, uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
@@ -147,7 +133,7 @@ class Hub:
             return
 
         client = _Client(writer, uid, pid)
-        replay = self._snapshot()  # avant l'ajout : le client ne reçoit pas les « expired » de ce nettoyage
+        replay = self._snapshot()
         client.send({"type": "hello", "protocol": PROTOCOL_VERSION, "daemon": f"otp-relay/{__version__}",
                      "code_ttl": self.code_ttl, "heartbeat": self.cfg.heartbeat})
         client.send(self.status)

@@ -1,9 +1,4 @@
 #!/bin/sh
-# Installe otp-relay pour l'utilisateur courant (sans root) :
-#   code       → ~/.local/lib/otp-relay
-#   commande   → ~/.local/bin/otp-relay
-#   config     → ~/.config/otp-relay/config.toml (créée seulement si absente)
-#   service    → ~/.config/systemd/user/otp-relay.service (non activé)
 set -eu
 
 SRC=$(cd "$(dirname "$0")" && pwd)

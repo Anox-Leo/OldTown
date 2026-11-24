@@ -1,7 +1,3 @@
-//! Étape 10, T6 : annuaire vérifié lu par le client (`ot-core`), avec un
-//! relais en processus, parfois derrière un relais malveillant simulé par un
-//! proxy. Noms neutres : Alice (admin, deux appareils).
-
 mod common;
 
 use std::sync::Arc;
@@ -13,8 +9,6 @@ use ot_core::{Client, Event, Events, Person};
 use ot_proto::{DirectoryDevice, Feature, Frame, Role, UserId};
 use ot_server::store::Store;
 
-/// `a1` et `a2` dans un même groupe (les appareils de l'admin à la
-/// migration) ; `x1`, seul dans le sien, sur le même relais.
 async fn server() -> (TestServer, Vec<TestDevice>) {
     let store = Store::in_memory().await.unwrap();
     let a1 = add_device(&store, "alice-phone").await;
@@ -31,7 +25,6 @@ async fn online(dev: &TestDevice, url: &str) -> (Client, Events) {
     (client, events)
 }
 
-/// Attend un tour complet de lecture : des personnes vérifiées.
 async fn read_people(client: &Client, events: &mut Events) -> Vec<Person> {
     loop {
         let people = within(client.directory()).await.unwrap();
@@ -68,23 +61,16 @@ async fn admin_init_sets_the_anchor_and_other_admin_devices_adopt_it() {
     assert_eq!(admin_seq(a1), Some(1));
     assert!(within(c1.admin_init()).await.is_err(), "une seule fois");
 
-    // L'autre appareil de l'admin adopte l'ancre : la racine a pour genesis
-    // un membre de son groupe.
     let (c2, mut e2) = online(a2, &server.url()).await;
     assert_eq!(within(c2.admin_init()).await.unwrap(), admin);
     assert_eq!(read_people(&c2, &mut e2).await[0].id, admin);
 
-    // Un appareil hors de ce groupe ne l'adopte pas (et n'est pas à l'admin
-    // ici : les trois appareils sont à l'admin à la migration, mais son
-    // groupe ne contient pas le genesis).
     let (cx, _ex) = online(x1, &server.url()).await;
     assert!(within(cx.admin_init()).await.is_err());
     assert!(within(cx.directory()).await.unwrap().is_empty());
     server.stop().await;
 }
 
-/// Entrée `seq` du journal de l'admin, signée par `by`, alourdie de
-/// `padding` empreintes pour remplir les pages.
 fn admin_entry(
     admin: &UserId,
     by: &TestDevice,
@@ -110,7 +96,6 @@ async fn a_long_admin_log_is_read_in_several_rounds_and_followed() {
     let admin = within(c1.admin_init()).await.unwrap();
     read_people(&c1, &mut e1).await;
 
-    // Le journal de l'admin dépasse plusieurs trames `directory` (`more`).
     let store = server.relay.store();
     let first = store.directory(&admin, &Default::default(), None).await.unwrap();
     let mut prev = entry_hash(&first.users[0].log[0].entry);
@@ -129,12 +114,9 @@ async fn a_long_admin_log_is_read_in_several_rounds_and_followed() {
     assert_eq!(people[0].id, admin);
     assert_eq!(admin_seq(a2), Some(last), "lu jusqu'au bout, en plusieurs tours");
 
-    // Une entrée publiée par un autre appareil : `directory_changed`, relu.
     let (mut raw, _) = Raw::login(&server, a1).await;
     let entry = admin_entry(&admin, a1, last + 1, prev, 0);
     raw.send(&Frame::RosterPublish { user: admin.clone(), seq: last + 1, entry }).await;
-    // Des `directory_changed` (profils déclarés par les clients) peuvent
-    // passer avant la réponse.
     let reply = loop {
         match raw.recv().await {
             Some(Frame::DirectoryChanged) => continue,
@@ -161,8 +143,6 @@ async fn a_hostile_relay_gets_no_fake_device_accepted() {
     read_people(&c1, &mut e1).await;
     within(c1.shutdown()).await;
 
-    // Le relais ajoute un appareil au profil de l'admin et une entrée de
-    // journal signée par une clé à lui, qui l'ajoute au roster.
     let intruder = add_device(server.relay.store(), "intrus").await;
     make_group(&[&intruder]);
     let first = server.relay.store().directory(&admin, &Default::default(), None).await.unwrap();

@@ -99,9 +99,22 @@ Android : `apps/android/app/src/test/kotlin/dev/oldtown/android/NoCommentsTest.k
 lexer sert aussi d'inventaire. Un fichier généré sort de sa liste quand son
 générateur cesse d'écrire des commentaires.
 
+Crates, `deploy/` et outils : `crates/ot-proto/tests/no_comments.rs`
+(Rust, TOML, shell, unités systemd…), `tools/otp-relay/tests/test_no_comments.py`
+(Python, docstrings comprises) et `tools/design-tokens/no-comments.test.mjs`.
+Leurs lexers servent aussi d'inventaire. Trois pièges (note 0077) :
+
+- les `///` d'une structure clap sont l'aide de la CLI : les convertir en
+  `#[command(about = …)]` ou `#[arg(help = …)]` (point final retiré, comme
+  clap), puis comparer `-h` et `--help` de chaque commande avant et après ;
+- une migration SQL déjà publiée ne se touche pas (somme de contrôle de
+  `sqlx::migrate!`) ;
+- un shebang dans un heredoc n'est pas un commentaire, une directive
+  `# shellcheck` reste (sans sa raison).
+
 Pour couvrir un autre composant : y brancher la même règle
-(`apps/extension/eslint-rules/no-comments.js`) ou son équivalent (detekt
-pour Kotlin, un test pour Rust), poser le cliquet, puis trier.
+(`apps/extension/eslint-rules/no-comments.js`) ou son équivalent, poser le
+cliquet, puis trier.
 
 ## 7. Valider et rendre compte
 

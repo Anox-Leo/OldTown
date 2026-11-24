@@ -1,11 +1,3 @@
-//! Protections d'un relais exposé à Internet (étape 8e) : connexions non
-//! authentifiées bornées par IP et au total, échecs d'authentification et
-//! d'appairage freinés par IP, IP réelle lue derrière un frontal de confiance
-//! seulement.
-//!
-//! Tout est en mémoire : aucune IP n'est écrite sur le disque, et un
-//! redémarrage remet les compteurs à zéro.
-
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -15,29 +7,19 @@ use axum::http::HeaderMap;
 use ot_proto::UserId;
 use tokio::time::Instant;
 
-/// Nombre maximal d'IP suivies pour leurs échecs ; au-delà, les nouvelles
-/// partagent un même compteur (borne la mémoire face à beaucoup d'adresses).
 const MAX_TRACKED: usize = 65_536;
 
 #[derive(Debug, Clone)]
 pub struct LimitsConfig {
-    /// Connexions WebSocket pas encore authentifiées, par IP.
     pub max_unauth_per_ip: usize,
-    /// Connexions WebSocket pas encore authentifiées, au total.
     pub max_unauth_total: usize,
-    /// Échecs tolérés d'affilée pour une IP avant de la refuser.
     pub failure_burst: u32,
-    /// Délai pour qu'une IP regagne un échec toléré.
     pub failure_refill: Duration,
-    /// Frontaux (Caddy…) dont on croit l'en-tête `X-Forwarded-For`.
     pub trusted_proxies: Vec<IpAddr>,
 }
 
 impl Default for LimitsConfig {
     fn default() -> Self {
-        // Un appareil révoqué qui réessaie toutes les 25 à 60 s (extension,
-        // `ot-core`) reste sous le rythme toléré : il ne bloque pas les
-        // autres appareils derrière la même box.
         Self {
             max_unauth_per_ip: 16,
             max_unauth_total: 256,
@@ -48,17 +30,12 @@ impl Default for LimitsConfig {
     }
 }
 
-/// Raison d'un refus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refused {
-    /// Trop de connexions non authentifiées.
     Busy,
-    /// Trop d'échecs récents depuis cette IP.
     Failures,
 }
 
-/// Clé de comptage : l'IPv4, ou le préfixe /64 d'une IPv6 (un /64 se
-/// distribue entier à un seul abonné).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct Key(IpAddr);
 
@@ -73,11 +50,9 @@ impl Key {
         }
     }
 
-    /// Compteur partagé quand la table est pleine.
     const OVERFLOW: Self = Self(IpAddr::V6(Ipv6Addr::UNSPECIFIED));
 }
 
-/// IPv4 écrite en IPv6 (`::ffff:a.b.c.d`) ramenée à l'IPv4.
 fn canonical(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
@@ -113,9 +88,6 @@ impl Limits {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// IP du client : celle de la connexion, ou, si la connexion vient d'un
-    /// frontal de confiance, la dernière adresse de `X-Forwarded-For` qui
-    /// n'est pas un frontal (celle que le frontal a ajoutée lui-même).
     pub fn client_ip(&self, peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
         let peer = canonical(peer.ip());
         if !self.trusted(peer) {
@@ -139,8 +111,6 @@ impl Limits {
         self.config.trusted_proxies.iter().any(|t| canonical(*t) == ip)
     }
 
-    /// Admet une connexion non authentifiée ; la place est rendue quand le
-    /// [`Permit`] est lâché (authentification finie ou connexion fermée).
     pub fn admit(self: &Arc<Self>, ip: IpAddr) -> Result<Permit, Refused> {
         let key = Key::of(ip);
         let mut state = self.state();
@@ -158,13 +128,11 @@ impl Limits {
         Ok(Permit { limits: self.clone(), key })
     }
 
-    /// L'IP a épuisé ses échecs tolérés.
     pub fn blocked(&self, ip: IpAddr) -> bool {
         let mut state = self.state();
         self.exhausted(&mut state, Key::of(ip))
     }
 
-    /// Compte un échec (authentification, appairage, signature HTTP).
     pub fn failed(&self, ip: IpAddr) {
         let mut key = Key::of(ip);
         let mut state = self.state();
@@ -183,7 +151,6 @@ impl Limits {
         bucket.tokens = (bucket.tokens - 1.0).max(0.0);
     }
 
-    /// Oublie les IP revenues à leur plein d'échecs tolérés.
     pub fn prune(&self) {
         let mut state = self.state();
         self.prune_locked(&mut state);
@@ -212,9 +179,6 @@ impl Limits {
     }
 }
 
-/// Débit des envois de chaque membre (étape 10) : seau de `per_minute`
-/// jetons, regagnés au fil de la minute (fenêtre glissante). En mémoire,
-/// comme le reste : un redémarrage remet les seaux à plein.
 #[derive(Debug)]
 pub struct SendRate {
     per_minute: u32,
@@ -238,7 +202,6 @@ impl SendRate {
         bucket.at = now;
     }
 
-    /// Prend un jeton pour un envoi de `user` ; `false` si le seau est vide.
     pub fn take(&self, user: &UserId) -> bool {
         let full = f64::from(self.per_minute);
         let mut buckets = self.lock();
@@ -253,7 +216,6 @@ impl SendRate {
         true
     }
 
-    /// Oublie les personnes revenues à un seau plein.
     pub fn prune(&self) {
         let full = f64::from(self.per_minute);
         let mut buckets = self.lock();
@@ -264,7 +226,6 @@ impl SendRate {
     }
 }
 
-/// Place d'une connexion non authentifiée.
 #[derive(Debug)]
 pub struct Permit {
     limits: Arc<Limits>,
@@ -365,7 +326,6 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_slow_retry_never_blocks() {
-        // Appareil révoqué qui se reconnecte toutes les 25 s, pendant 2 h.
         let l = limits(LimitsConfig::default());
         let home = ip("203.0.113.5");
         for _ in 0..(2 * 3600 / 25) {

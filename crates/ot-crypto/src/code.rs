@@ -1,7 +1,3 @@
-//! Code d'appairage : `ot1-` puis base32 (RFC 4648, sans remplissage, en
-//! minuscules) de `T (10 o) ‖ S (16 o)`, soit 46 caractères. Le relais ne voit
-//! que le jeton `T` ; le secret `S` ne quitte jamais le code.
-
 use std::fmt;
 
 use sha2::{Digest, Sha256};
@@ -9,14 +5,12 @@ use zeroize::Zeroizing;
 
 use crate::{CryptoError, PairingSecret, Result};
 
-/// Taille du jeton d'appairage tiré par le relais.
 pub const TOKEN_LEN: usize = ot_proto::PAIR_TOKEN_LEN;
 
 const PREFIX: &str = "ot1-";
 const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 const RAW_LEN: usize = TOKEN_LEN + 16;
 
-/// Code d'appairage : jeton du relais et secret du parrain.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PairingCode {
     pub token: [u8; TOKEN_LEN],
@@ -24,7 +18,6 @@ pub struct PairingCode {
 }
 
 impl PairingCode {
-    /// Texte à afficher au parrain et à saisir sur le nouvel appareil.
     pub fn encode(&self) -> Zeroizing<String> {
         let mut raw = Zeroizing::new([0u8; RAW_LEN]);
         raw[..TOKEN_LEN].copy_from_slice(&self.token);
@@ -32,8 +25,6 @@ impl PairingCode {
         base32_encode(PREFIX, &raw[..])
     }
 
-    /// Relit un code ; insensible à la casse, espaces et tirets ignorés après
-    /// le préfixe (pour un code recopié à la main).
     pub fn parse(text: &str) -> Result<Self> {
         let raw = base32_decode(text, PREFIX, RAW_LEN, "préfixe ot1- attendu")?;
         let mut token = [0; TOKEN_LEN];
@@ -43,13 +34,11 @@ impl PairingCode {
         Ok(Self { token, secret: PairingSecret::from_bytes(secret) })
     }
 
-    /// Identifiant du jeton porté par l'en-tête `0x02`.
     pub fn token_id(&self) -> [u8; 8] {
         token_id(&self.token)
     }
 }
 
-/// `préfixe ‖ base32(raw)` (RFC 4648, sans remplissage, en minuscules).
 fn base32_encode(prefix: &str, raw: &[u8]) -> Zeroizing<String> {
     let mut out = Zeroizing::new(String::with_capacity(prefix.len() + (raw.len() * 8).div_ceil(5)));
     out.push_str(prefix);
@@ -68,10 +57,6 @@ fn base32_encode(prefix: &str, raw: &[u8]) -> Zeroizing<String> {
     out
 }
 
-/// Relit `préfixe ‖ base32` d'exactement `len` octets ; insensible à la
-/// casse, espaces et tirets ignorés après le préfixe. Les bits de
-/// remplissage du dernier caractère doivent être nuls : un seul texte
-/// possible par code.
 fn base32_decode(
     text: &str,
     prefix: &str,
@@ -110,11 +95,6 @@ fn base32_decode(
     Ok(raw)
 }
 
-/// Code d'invitation d'une personne (étape 10, note 0052) : `ot2-` puis
-/// base32 de `version (0x01) ‖ T (10 o) ‖ S (16 o) ‖ ancre (16 o)`, soit 73
-/// caractères. Le relais ne voit que `T` ; `S` authentifie la demande de
-/// l'invité auprès de l'admin ; l'ancre est l'empreinte du certificat de
-/// l'admin, à laquelle l'invité vérifie tout l'annuaire.
 #[derive(Clone, PartialEq, Eq)]
 pub struct InviteCode {
     pub token: [u8; TOKEN_LEN],
@@ -150,7 +130,6 @@ impl InviteCode {
         Ok(Self { token, secret: PairingSecret::from_bytes(secret), anchor })
     }
 
-    /// Identifiant du jeton porté par l'en-tête `0x02`.
     pub fn token_id(&self) -> [u8; 8] {
         token_id(&self.token)
     }
@@ -168,12 +147,10 @@ impl fmt::Debug for PairingCode {
     }
 }
 
-/// `sha256(T)` : ce que le relais stocke et ce que signe `pair_redeem`.
 pub fn token_hash(token: &[u8; TOKEN_LEN]) -> [u8; 32] {
     Sha256::digest(token).into()
 }
 
-/// `sha256(T)[..8]` : identifiant du jeton dans l'en-tête `0x02`.
 pub fn token_id(token: &[u8; TOKEN_LEN]) -> [u8; 8] {
     let mut id = [0; 8];
     id.copy_from_slice(&token_hash(token)[..8]);
@@ -219,7 +196,6 @@ mod tests {
         ] {
             assert!(PairingCode::parse(bad).is_err(), "aurait dû être refusé : {bad}");
         }
-        // Dernier caractère avec des bits de remplissage non nuls.
         let mut tweaked = text.to_string();
         let last = tweaked.pop().unwrap();
         let idx = ALPHABET.iter().position(|&a| char::from(a) == last).unwrap();
@@ -244,10 +220,8 @@ mod tests {
         assert_eq!(InviteCode::parse(&text.to_uppercase()).unwrap(), invite());
         assert!(InviteCode::parse(&text[..72]).is_err());
         assert!(InviteCode::parse(&format!("ot1-{}", &text[4..])).is_err());
-        // Un code d'appairage n'est pas une invitation, et inversement.
         assert!(PairingCode::parse(&text).is_err());
         assert!(InviteCode::parse(&code().encode()).is_err());
-        // Version inconnue : premier octet 0x02 (deuxième caractère base32).
         let mut v2 = text.to_string();
         v2.replace_range(4..5, "a");
         v2.replace_range(5..6, "i");

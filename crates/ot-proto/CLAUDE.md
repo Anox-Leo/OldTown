@@ -26,3 +26,7 @@ l'annuaire de l'étape 10 dans `user.rs`), codes d'erreur, constantes
 - Le contenu applicatif (`Content`) et le format chiffré de `payload.data`
   n'appartiennent pas au relais ; à partir de l'étape 2, le format chiffré
   est défini et figé dans `ot-crypto`.
+- `tests/no_comments.rs` n'est pas un test du protocole : c'est le cliquet
+  « aucun commentaire » de tous les crates, des TOML de la racine, de
+  `deploy/` et des fichiers non Python d'`otp-relay` (note 0077). Une
+  exception s'y ajoute par une note de décision.

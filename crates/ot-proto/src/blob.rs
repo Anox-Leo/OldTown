@@ -4,8 +4,6 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-/// Identifiant d'un fichier déposé sur le relais (étape 5) : `blob_` suivi
-/// d'un ULID, tiré par le relais à la création.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct BlobId(String);
@@ -30,7 +28,6 @@ impl FromStr for BlobId {
     type Err = InvalidBlobId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Forme canonique seulement, comme `DeviceId`.
         match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
             Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidBlobId(s.to_owned())),
@@ -67,11 +64,9 @@ mod tests {
         let id = BlobId::generate();
         assert_eq!(id.as_str().parse::<BlobId>().unwrap(), id);
         assert!(id.to_string().starts_with("blob_"));
-        // Seul le préfixe `blob_` est accepté : un identifiant d'appareil non.
         assert!("dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<BlobId>().is_err());
         assert!("blob_pas-un-ulid".parse::<BlobId>().is_err());
         assert!("blob_01j9z3q5rt8yb6zk4c2d7e9f1g".parse::<BlobId>().is_err(), "minuscules");
-        // Un identifiant sert de nom de dossier sur le relais : jamais de `/`.
         assert!("blob_../../etc".parse::<BlobId>().is_err());
     }
 }

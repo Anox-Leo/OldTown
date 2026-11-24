@@ -1,7 +1,3 @@
-//! Étape 5, T4 : envoi et réception de fichiers par la CLI, contre un relais
-//! en processus. Deux appareils réels (`ot init`), enregistrés sur le relais
-//! et mis dans un même groupe.
-
 mod common;
 
 use std::time::Duration;
@@ -21,14 +17,12 @@ async fn file_between_two_cli_devices() {
     let (home_b, b) = device(&store, root.path(), &url, "windows").await;
     group(&[(&home_a, a), (&home_b, b)]);
 
-    // 3 Mio de contenu, envoyé de « mac » à « windows ».
     let data: Vec<u8> =
         (0..3u32 << 20).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
     let src = root.path().join("rapport final.pdf");
     std::fs::write(&src, &data).unwrap();
     ot(&home_a, &["send", "--file", src.to_str().unwrap(), "--to", "windows"]).await;
 
-    // `listen` annonce le fichier et la commande pour le télécharger.
     let mut listen = Command::new(env!("CARGO_BIN_EXE_ot"))
         .arg("--home")
         .arg(&home_b)
@@ -54,11 +48,9 @@ async fn file_between_two_cli_devices() {
     let out_dir = root.path().join("reçus");
     ot(&home_b, &["download", &blob, "--to", out_dir.to_str().unwrap()]).await;
     assert!(std::fs::read(out_dir.join("rapport final.pdf")).unwrap() == data);
-    // Plus rien en attente : l'offre est oubliée après le téléchargement.
     let listed = String::from_utf8(ot(&home_b, &["files"]).await.stdout).unwrap();
     assert!(listed.trim().is_empty(), "{listed}");
 
-    // `listen --download-dir` télécharge tout seul, sans écraser le premier.
     let mut listen = Command::new(env!("CARGO_BIN_EXE_ot"))
         .arg("--home")
         .arg(&home_b)

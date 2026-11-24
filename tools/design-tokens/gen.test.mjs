@@ -1,4 +1,3 @@
-// Tests du générateur : `node --test tools/design-tokens/`.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,7 +23,6 @@ import {
 
 const GEN = fileURLToPath(new URL('./gen.mjs', import.meta.url));
 
-/** Copie de la source et des sorties dans un dossier jetable. */
 function sandbox() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-tokens-'));
   for (const rel of [SOURCE, ...Object.values(OUTPUTS)]) {
@@ -57,7 +55,6 @@ test('--check échoue sur une sortie périmée, sans rien écrire', () => {
   assert.equal(r.code, 1);
   assert.match(r.stderr, /périmé : apps\/extension\/src\/tokens\.css/);
   assert.equal(fs.readFileSync(css, 'utf8'), before);
-  // Sans --check, il réécrit, puis --check passe.
   assert.equal(run('--root', root).code, 0);
   assert.equal(run('--check', '--root', root).code, 0);
 });
@@ -83,7 +80,6 @@ test('contraste WCAG : valeurs de la charte', () => {
   assert.equal(contrast('#ffffff', '#b4552a').toFixed(1), '4.9');
   assert.equal(contrast('#d27443', '#232841').toFixed(2), '4.35');
   assert.equal(contrast('#e39c75', '#0f1120').toFixed(1), '8.3');
-  // Ordre indifférent ; un premier plan translucide est composé sur le fond.
   assert.equal(contrast('#000000', '#ffffff'), contrast('#ffffff', '#000000'));
   assert.equal(contrast('#ffffff00', '#336699').toFixed(2), '1.00');
   assert.throws(() => contrast('#ffffff', '#33669980'), /translucide/);
@@ -95,7 +91,6 @@ test('chaque paire listée passe, dans chaque thème', () => {
   for (const p of all) {
     assert.ok(p.ok, `${p.theme} ${p.kind} ${p.fg} sur ${p.bg} : ${p.ratio.toFixed(2)}`);
   }
-  // Avatars : chacun mesuré sous le pictogramme.
   assert.equal(all.filter((p) => p.fg === 'on-avatar').length, 2 * avatars(load()).length);
 });
 
@@ -103,13 +98,11 @@ test('une paire sous le minimum est refusée', () => {
   const root = sandbox();
   const src = path.join(root, SOURCE);
   const tokens = JSON.parse(fs.readFileSync(src, 'utf8'));
-  // Blanc sur pierre-400 : 3,3:1, refusé pour du texte (charte, § 4).
   tokens.role.light.primary = { $value: '{color.pierre.400}' };
   fs.writeFileSync(src, JSON.stringify(tokens));
   const r = run('--root', root);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /contraste insuffisant \(light, text\) : on-primary sur primary = 3\.\d\d:1/);
-  // Rien n'est écrit quand un contraste échoue.
   assert.equal(
     fs.readFileSync(path.join(root, OUTPUTS.css), 'utf8'),
     fs.readFileSync(path.join(DEFAULT_ROOT, OUTPUTS.css), 'utf8'),
@@ -166,7 +159,6 @@ test('thème clair : celui du système, ou choisi par data-theme', () => {
   const css = render(load())[OUTPUTS.css];
   assert.match(css, /@media \(prefers-color-scheme: light\) \{\n {2}:root:not\(\[data-theme='dark'\]\) \{/);
   assert.match(css, /^:root\[data-theme='light'\] \{$/m);
-  // Mêmes rôles clairs aux deux endroits.
   const block = (start) => css.slice(css.indexOf(start)).split('}')[0].split('\n').slice(1).map((l) => l.trim());
   assert.deepEqual(block(":root:not([data-theme='dark'])"), block(":root[data-theme='light']"));
 });

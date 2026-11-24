@@ -1,12 +1,3 @@
-//! Transferts de fichiers (étape 5, note 0026) : dépôt et retrait par
-//! morceaux chiffrés, en parallèle, avec reprise. Les requêtes HTTP sont
-//! signées et n'ouvrent pas de session (note 0009) : un transfert ne coupe
-//! jamais la réception.
-//!
-//! L'appli fournit la source ([`ChunkSource`]) et la destination
-//! ([`ChunkSink`]) : un fichier pour la CLI, un `ContentResolver` pour
-//! Android. Leurs méthodes peuvent bloquer ; elles tournent hors du runtime.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,26 +20,17 @@ use crate::http::{HttpConn, HttpTarget};
 use crate::types::ClientError;
 use crate::{Identity, TlsRoots};
 
-/// Source d'un fichier à envoyer. Les lectures peuvent bloquer.
 pub trait ChunkSource: Send + Sync + 'static {
-    /// Taille du fichier, en octets.
     fn size(&self) -> u64;
-    /// Lit `len` octets à partir de `offset` (moins seulement en fin de
-    /// fichier).
     fn read_at(&self, offset: u64, len: u32) -> Result<Vec<u8>, String>;
 }
 
-/// Destination d'un fichier reçu. Les morceaux arrivent dans l'ordre ; le
-/// fichier ne doit devenir visible qu'à [`ChunkSink::finish`], appelé une
-/// fois le SHA-256 vérifié.
 pub trait ChunkSink: Send + Sync + 'static {
     fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), String>;
     fn finish(&self) -> Result<(), String>;
-    /// Transfert abandonné : effacer ce qui a été écrit.
     fn abort(&self);
 }
 
-/// Progression d'un transfert, en octets de clair.
 pub trait Progress: Send + Sync + 'static {
     fn progress(&self, done: u64, total: u64);
 }
@@ -59,21 +41,13 @@ impl<F: Fn(u64, u64) + Send + Sync + 'static> Progress for F {
     }
 }
 
-/// Réglages des transferts.
 #[derive(Debug, Clone)]
 pub struct TransferConfig {
-    /// Morceaux en vol en même temps.
     pub parallel: usize,
-    /// Taille des morceaux en clair des fichiers envoyés.
     pub chunk_size: u32,
-    /// Sans aucun progrès pendant ce délai, le transfert échoue (il se
-    /// reprendra en le relançant).
     pub stall_timeout: Duration,
-    /// Attente entre deux essais après une erreur passagère.
     pub retry: Backoff,
-    /// Durée maximale d'une requête.
     pub request_timeout: Duration,
-    /// Intervalle minimal entre deux rapports de progression.
     pub progress_interval: Duration,
 }
 
@@ -90,22 +64,15 @@ impl Default for TransferConfig {
     }
 }
 
-/// Fichier à envoyer.
 #[derive(Debug, Clone, Default)]
 pub struct OutgoingFile {
-    /// Identifie la source pour reprendre un dépôt interrompu (chemin, URI).
     pub source_id: String,
     pub name: String,
     pub mime: String,
-    /// Destinataires (membres du roster) ; vide : tous les autres. Avec
-    /// `to_user` : au plus un appareil de cette personne (vide : ses
-    /// appareils par défaut).
     pub to: Vec<DeviceId>,
-    /// Envoi à une autre personne (étape 10), en `0x05`.
     pub to_user: Option<UserId>,
 }
 
-/// Dernier progrès d'un transfert, partagé par ses tâches.
 #[derive(Clone)]
 struct Stall(Arc<Mutex<Instant>>);
 
@@ -121,8 +88,6 @@ impl Stall {
     }
 }
 
-/// Rapports de progression espacés d'au moins `progress_interval`, sauf le
-/// dernier.
 struct Reporter {
     progress: Arc<dyn Progress>,
     total: u64,
@@ -151,7 +116,6 @@ impl Reporter {
     }
 }
 
-/// Accès à l'API des fichiers pour un appareil.
 #[derive(Clone)]
 pub(crate) struct Transfers {
     target: Result<HttpTarget, String>,
@@ -175,8 +139,6 @@ impl Transfers {
         self.target.clone().map(HttpConn::new).map_err(ClientError::Invalid)
     }
 
-    /// Requête signée. Les erreurs passagères (réseau, `5xx`) sont réessayées
-    /// tant que le transfert a progressé depuis moins de `stall_timeout`.
     async fn call(
         &self,
         conn: &mut HttpConn,
@@ -239,7 +201,6 @@ impl Transfers {
             .map_err(|e| ClientError::Transfer(format!("réponse du relais illisible : {e}")))
     }
 
-    /// Crée le blob d'un fichier de `size` octets en clair.
     pub(crate) async fn create(
         &self,
         size: u64,
@@ -254,7 +215,6 @@ impl Transfers {
             chunks,
             to: to.to_vec(),
         };
-        // Invariant : `CreateBlob` est toujours sérialisable.
         let body = Bytes::from(serde_json::to_vec(&req).expect("CreateBlob sérialisable"));
         let mut conn = self.conn()?;
         let created = self.json(&mut conn, Method::POST, BLOBS_PATH, body, &Stall::new()).await?;
@@ -282,7 +242,6 @@ impl Transfers {
         self.call(&mut conn, Method::POST, &path, Bytes::new(), &Stall::new()).await.map(|_| ())
     }
 
-    /// Dépose les morceaux `missing`, `parallel` à la fois.
     pub(crate) async fn upload(
         &self,
         meta: &FileMeta,
@@ -348,8 +307,6 @@ impl Transfers {
         join_all(tasks).await
     }
 
-    /// Retire, déchiffre et écrit dans l'ordre tous les morceaux d'un
-    /// fichier, puis vérifie son SHA-256. Ne finalise pas la destination.
     pub(crate) async fn download(
         &self,
         file: &StoredFile,
@@ -359,8 +316,6 @@ impl Transfers {
         let parallel = self.config.parallel.max(1);
         let reporter = Reporter::new(progress, file.size, 0, self.config.progress_interval);
         reporter.start();
-        // Morceaux retirés mais pas encore écrits : la fenêtre borne la
-        // mémoire quand un morceau en retard bloque l'écriture.
         let window = Arc::new(Semaphore::new(parallel * 2));
         let next = Arc::new(Mutex::new(0u32));
         let cipher = Arc::new(file.cipher());
@@ -383,7 +338,6 @@ impl Transfers {
                 let run = async {
                     let mut conn = this.conn()?;
                     loop {
-                        // Invariant : le sémaphore n'est jamais fermé.
                         let permit = window.clone().acquire_owned().await.expect("fenêtre ouverte");
                         let idx = {
                             let mut n = next.lock().unwrap_or_else(|e| e.into_inner());
@@ -447,14 +401,12 @@ impl Transfers {
     }
 }
 
-/// Heure courante en millisecondes, pour signer les requêtes.
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// SHA-256 d'une source, lue dans l'ordre par morceaux.
 pub(crate) async fn hash_source(
     source: Arc<dyn ChunkSource>,
     chunk_size: u32,
@@ -478,7 +430,6 @@ pub(crate) async fn hash_source(
     .map_err(|e| ClientError::Transfer(format!("lecture du fichier : {e}")))
 }
 
-/// Exécute un appel bloquant (fichier, Kotlin) hors du runtime.
 pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ClientError> {
@@ -487,7 +438,6 @@ pub(crate) async fn blocking<T: Send + 'static>(
         .map_err(|e| ClientError::Transfer(format!("tâche interrompue : {e}")))
 }
 
-/// Attend toutes les tâches ; la première erreur arrête les autres.
 async fn join_all(mut tasks: JoinSet<Result<(), ClientError>>) -> Result<(), ClientError> {
     while let Some(res) = tasks.join_next().await {
         let res = res.map_err(|e| ClientError::Transfer(format!("tâche interrompue : {e}")))?;

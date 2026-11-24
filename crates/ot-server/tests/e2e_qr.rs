@@ -1,6 +1,3 @@
-//! Étape 3, T9 : appairage par QR inversé de bout en bout (note 0022), avec
-//! un relais honnête puis malveillant (proxy).
-
 mod common;
 
 use std::sync::Arc;
@@ -21,8 +18,6 @@ async fn group_server(names: &[&str]) -> (TestServer, Vec<TestDevice>) {
     (TestServer::start(store, test_config()).await, devs)
 }
 
-/// Nouvel appareil : identité et identifiant tirés localement, pas encore
-/// enregistré ; renvoie aussi le texte de son QR.
 async fn newcomer(url: &str, name: &str) -> (TestDevice, Client, Events, String) {
     let dev = TestDevice {
         id: DeviceId::generate(),
@@ -53,7 +48,6 @@ async fn phone_sponsors_a_pc_by_reverse_qr() {
     let (id, name) = within(ca.sponsor(&qr)).await.unwrap();
     assert_eq!((id, name.as_str()), (b.id.clone(), "windows"));
 
-    // B finit par s'authentifier, reçoit la réponse et adopte le groupe.
     wait_for(&mut eb, group_changed).await;
     wait_for(&mut ea, |e| matches!(e, Event::PairingCompleted { .. })).await;
     wait_for(&mut ec, group_changed).await;
@@ -66,14 +60,12 @@ async fn phone_sponsors_a_pc_by_reverse_qr() {
     within(ca.send(&Content::link("https://example.org/"), vec![b.id.clone()])).await.unwrap();
     assert_eq!(next_message(&mut eb).await.content, Content::link("https://example.org/"));
 
-    // Le même QR ne sert pas deux fois.
     assert!(within(ca.sponsor(&qr)).await.is_err());
 }
 
 #[tokio::test]
 async fn relay_tampering_with_reverse_qr_welcome_fails() {
     let (server, devs) = group_server(&["android"]).await;
-    // Le relais altère tout ce que le parrain envoie.
     let evil = proxy(
         &server,
         Arc::new(|dir, frame| if dir == Dir::ToServer { flip_payload(frame) } else { frame }),
@@ -94,7 +86,6 @@ async fn relay_tampering_with_reverse_qr_welcome_fails() {
 #[tokio::test]
 async fn relay_registering_another_key_fails() {
     let (server, devs) = group_server(&["android"]).await;
-    // Le relais remplace la clé de B par la sienne (signature refaite).
     let attacker = ed25519_dalek::SigningKey::from_bytes(&[66; 32]);
     let evil_key = attacker.clone();
     let evil = proxy(
@@ -117,13 +108,10 @@ async fn relay_registering_another_key_fails() {
     let (b, cb, mut eb, qr) = newcomer(&server.url(), "windows").await;
     within(ca.sponsor(&qr)).await.unwrap();
 
-    // B ne peut pas s'authentifier : le relais a enregistré une autre clé.
     wait_for(&mut eb, |e| matches!(e, Event::AuthFailed { .. })).await;
     no_message(&mut eb, Duration::from_millis(300)).await;
     assert!(within(cb.group()).await.unwrap().is_none());
 
-    // L'imposteur s'authentifie sous l'identifiant de B, reçoit la réponse,
-    // mais ne l'ouvre pas : il n'a ni `S` ni la clé X25519 de B.
     let impostor = TestDevice {
         id: b.id.clone(),
         name: "windows".into(),
@@ -135,8 +123,6 @@ async fn relay_registering_another_key_fails() {
     wait_for(&mut ei, |e| matches!(e, Event::Rejected { .. })).await;
     assert!(within(ci.group()).await.unwrap().is_none());
 
-    // Le roster du parrain porte la vraie clé de B : rien de signé par
-    // l'imposteur n'y sera accepté.
     let group = within(ca.group()).await.unwrap().unwrap();
     let member = group.member(&b.id).unwrap();
     let real = ot_core::crypto::fingerprint(&b.identity.public_key());

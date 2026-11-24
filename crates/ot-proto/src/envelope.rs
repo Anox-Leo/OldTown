@@ -7,7 +7,6 @@ use ulid::Ulid;
 
 use crate::b64;
 
-/// Identifiant d'appareil : `dev_` suivi d'un ULID.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct DeviceId(String);
@@ -27,9 +26,7 @@ impl DeviceId {
         Self(format!("{}{ulid}", Self::PREFIX))
     }
 
-    /// ULID de l'identifiant (forme binaire compacte, 16 octets).
     pub fn ulid(&self) -> Ulid {
-        // Invariant : un `DeviceId` n'est construit que d'un ULID valide.
         Ulid::from_string(&self.0[Self::PREFIX.len()..]).expect("DeviceId toujours valide")
     }
 
@@ -42,8 +39,6 @@ impl FromStr for DeviceId {
     type Err = InvalidDeviceId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Forme canonique seulement (majuscules, sans dépassement) : deux
-        // textes différents ne désignent jamais le même ULID (étape 10).
         match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
             Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidDeviceId(s.to_owned())),
@@ -71,17 +66,11 @@ impl fmt::Display for DeviceId {
     }
 }
 
-/// Enveloppe d'un message. `payload` est chiffré par les clients (format
-/// défini par `ot-crypto`) ; le serveur ne lit que les champs de routage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
-    /// ULID généré par l'expéditeur, sert à l'idempotence et au dédoublonnage.
     pub msg_id: Ulid,
     pub from: DeviceId,
-    /// Vide : tous les autres appareils de la personne de l'expéditeur
-    /// (étape 10 ; avant, tous les autres appareils du relais). Au plus
-    /// [`crate::MAX_RECIPIENTS`] appareils nommés.
     #[serde(default)]
     pub to: Vec<DeviceId>,
     #[serde(with = "time::serde::rfc3339")]
@@ -100,13 +89,10 @@ pub struct Payload {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
-    /// Contenu en clair (étape 1).
     None,
-    /// Contenu chiffré sous la clé de groupe (étape 2).
     Xchacha20poly1305,
 }
 
-/// Contenu applicatif, sérialisé dans `payload.data`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Content {
     pub kind: ContentKind,
@@ -131,7 +117,6 @@ impl Content {
 }
 
 impl Payload {
-    /// Payload en clair contenant `content` sérialisé en JSON.
     pub fn plain(content: &Content) -> Self {
         Self {
             enc: Encoding::None,
@@ -139,7 +124,6 @@ impl Payload {
         }
     }
 
-    /// Relit le contenu d'un payload en clair ; `None` s'il est chiffré ou invalide.
     pub fn plain_content(&self) -> Option<Content> {
         match self.enc {
             Encoding::None => serde_json::from_slice(&self.data).ok(),
@@ -149,14 +133,10 @@ impl Payload {
 }
 
 impl Envelope {
-    /// Nouvelle enveloppe en clair, horodatée maintenant, avec un `msg_id` neuf.
-    /// Depuis l'étape 2, les clients refusent le clair : ne sert qu'aux tests.
     pub fn new_plain(from: DeviceId, to: Vec<DeviceId>, content: &Content) -> Self {
         Self::new(from, to, Payload::plain(content))
     }
 
-    /// Nouvelle enveloppe horodatée maintenant (à la seconde), avec un
-    /// `msg_id` neuf.
     pub fn new(from: DeviceId, to: Vec<DeviceId>, payload: Payload) -> Self {
         Self {
             msg_id: Ulid::generate(),
@@ -167,7 +147,6 @@ impl Envelope {
         }
     }
 
-    /// Taille de l'enveloppe sérialisée, comparée à `MAX_ENVELOPE_BYTES`.
     pub fn encoded_len(&self) -> usize {
         serde_json::to_vec(self).map(|v| v.len()).unwrap_or(usize::MAX)
     }

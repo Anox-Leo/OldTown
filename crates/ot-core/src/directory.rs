@@ -1,28 +1,3 @@
-//! Annuaire vérifié (étape 10, notes 0052, 0053 et 0056) : ce que le client
-//! croit des autres personnes, vérifié jusqu'à l'ancre, jamais sur la parole
-//! du relais.
-//!
-//! - L'**ancre** (empreinte du certificat de l'admin, portée par le code
-//!   d'invitation) fixe le certificat racine.
-//! - Le **journal de l'admin** part du `genesis` de ce certificat ; chaque
-//!   entrée est signée par un membre de la précédente (règles de
-//!   `check_replacement`, sans exiger d'y être soi-même). Une tête reçue à
-//!   l'arrivée (`admin_head` des bienvenues) l'épingle : un journal plus
-//!   court ou différent est refusé.
-//! - Le **certificat d'une personne** ne vaut que si son empreinte est celle
-//!   de la dernière entrée vérifiée de l'admin (`certs`) et s'il est signé
-//!   par un appareil du roster *courant* de l'admin ; son journal part de son
-//!   `genesis`.
-//! - Le **journal d'un service** est signé par des appareils de l'admin :
-//!   chaque entrée par un appareil d'un roster vérifié de l'admin, la
-//!   dernière par un appareil de son roster courant (D47).
-//! - Les **profils** d'appareils (non signés) ne sont gardés que pour les
-//!   appareils du roster vérifié de leur personne.
-//!
-//! Aucune E/S ici : le client lit l'annuaire page par page
-//! ([`DirectoryRead`]), passe chaque tour complet à [`DirectoryState::apply`]
-//! et range [`DirectoryState`] dans son `Keyring`.
-
 use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
@@ -38,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::roster::check_keys_unchanged;
 
-/// Refus d'un objet de l'annuaire. Aucun ne porte de clé.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DirectoryError {
     #[error("certificat de l'admin absent ou différent de l'ancre")]
@@ -47,43 +21,31 @@ pub enum DirectoryError {
     BadCert(&'static str),
     #[error("entrée {seq} du journal refusée : {reason}")]
     BadEntry { seq: u64, reason: &'static str },
-    /// Journal de l'admin plus court que la tête reçue à l'arrivée, ou
-    /// différent d'elle : une fourche présentée par le relais.
     #[error("journal de l'admin {0} la tête reçue à l'arrivée")]
     AdminHead(&'static str),
 }
 
-/// Journal vérifié d'une personne : dernière entrée et son roster.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Chain {
     pub seq: u64,
-    /// `sha256(data)` de la dernière entrée : le `prev` de la suivante.
     #[serde(with = "b64::array")]
     pub head: [u8; 32],
-    /// Appareil qui a signé la dernière entrée.
     pub signer: DeviceId,
     pub roster: Roster,
-    /// Journal de l'admin : empreintes des certificats engagés par la
-    /// dernière entrée (note 0056) ; vide pour les autres personnes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub certs: Vec<CertRef>,
 }
 
 impl Chain {
-    /// Tête du journal (`seq` et hash de la dernière entrée).
     pub fn head(&self) -> LogHead {
         LogHead { seq: self.seq, hash: self.head }
     }
 }
 
-/// Qui signe les entrées d'un journal.
 #[derive(Debug, Clone, Copy)]
 pub enum Signers<'a> {
-    /// Les membres de l'entrée précédente (le `genesis` pour la première).
     Members,
-    /// Les appareils de l'admin, d'après tous ses rosters vérifiés
-    /// (personne de service).
     Admin(&'a BTreeMap<DeviceId, [u8; 32]>),
 }
 
@@ -95,9 +57,6 @@ fn duplicates(roster: &Roster) -> bool {
         .any(|(i, m)| roster.members[..i].iter().any(|o| o.device_id == m.device_id))
 }
 
-/// Vérifie la suite d'un journal à partir de `from` (ou de rien) : renvoie
-/// le plus long préfixe valide, et la raison qui l'arrête s'il y en a une.
-/// Une entrée invalide arrête tout : les suivantes en dépendent.
 pub fn verify_log(
     cert: &UserCert,
     from: Option<&Chain>,
@@ -175,7 +134,6 @@ pub fn verify_log(
     (chain, None)
 }
 
-/// Ce que le client garde d'une personne entre deux lectures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KnownPerson {
@@ -184,8 +142,6 @@ pub struct KnownPerson {
     pub chain: Option<Chain>,
 }
 
-/// État vérifié, rangé par le `Keyring` (`directory.json`). Sans ancre
-/// (installation à une personne), il reste vide.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryState {
@@ -195,18 +151,10 @@ pub struct DirectoryState {
     pub admin: Option<(UserId, KnownPerson)>,
     #[serde(default)]
     pub people: BTreeMap<UserId, KnownPerson>,
-    /// Tout appareil vu dans un roster vérifié de l'admin, avec sa clé.
     #[serde(default)]
     pub admin_history: BTreeMap<DeviceId, [u8; 32]>,
-    /// Tête du journal de l'admin reçue à l'arrivée (`admin_head` de
-    /// `invite_welcome` ou `service_welcome`), tant que le journal vérifié
-    /// ne l'a pas atteinte ; ensuite le chaînage par `prev` la garde.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admin_head: Option<LogHead>,
-    /// Clé du `genesis` des personnes que le relais ne montre plus (lien
-    /// retiré, révocation, réinvitation en cours) : à leur retour avec
-    /// d'autres clés, `KeysChanged` (une personne réinvitée passe par un
-    /// état où le relais la cache).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "keys_b64")]
     pub forgotten: BTreeMap<UserId, [u8; 32]>,
 }
@@ -260,33 +208,21 @@ mod anchor_b64 {
     }
 }
 
-/// Résultat d'un tour de lecture de l'annuaire.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Applied {
-    /// Personnes vérifiées (moi compris). `None` : le journal de l'admin
-    /// n'est pas encore lu jusqu'au bout, les autres personnes n'ont pas été
-    /// jugées ; garder la vue précédente.
     pub people: Option<Vec<Person>>,
     pub events: Vec<DirectoryEvent>,
-    /// Un autre tour est à faire, avec [`DirectoryState::known`] à jour : un
-    /// journal coupé (`more`) ou à relire depuis le début (`Refetch`).
     pub again: bool,
 }
 
-/// Événements d'une lecture de l'annuaire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectoryEvent {
-    /// Quelque chose de vérifié a changé.
     Changed,
-    /// Un objet a été refusé ; la personne reste à sa dernière entrée valide.
     Rejected { user: UserId, reason: DirectoryError },
-    /// La personne a de nouvelles clés (réinvitation) : à dire, comme Signal.
     KeysChanged { user: UserId },
-    /// Journal de cette personne à relire depuis le début (`known` sans elle).
     Refetch { user: UserId },
 }
 
-/// Profil d'un appareil d'une personne vérifiée.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceProfile {
     pub id: DeviceId,
@@ -294,41 +230,31 @@ pub struct DeviceProfile {
     pub kind: Option<DeviceKind>,
     pub reachable: bool,
     pub default: bool,
-    /// Annonce `users-v1` : sait ouvrir `0x05`.
     pub up_to_date: bool,
     pub online: bool,
-    /// Clé X25519, lue dans le roster vérifié (jamais dans le profil).
     pub exchange_key: [u8; 32],
     pub sign_key: [u8; 32],
 }
 
-/// Une personne vérifiée, telle que les applis la montrent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Person {
     pub id: UserId,
-    /// Nom du certificat (signé par l'admin), pas celui du relais.
     pub name: String,
     pub role: Role,
     pub roster: Roster,
-    /// Profils du relais, seulement pour les appareils du roster vérifié.
     pub devices: Vec<DeviceProfile>,
     pub muted: bool,
 }
 
 impl DirectoryState {
-    /// État d'un client qui connaît l'ancre (code d'invitation, ou admin
-    /// qui vient de publier son certificat).
     pub fn with_anchor(anchor: [u8; 16]) -> Self {
         Self { anchor: Some(anchor), ..Self::default() }
     }
 
-    /// État d'un nouvel appareil (invité, service) : l'ancre du code et la
-    /// tête du journal de l'admin qui engage son certificat.
     pub fn with_admin_head(anchor: [u8; 16], head: LogHead) -> Self {
         Self { anchor: Some(anchor), admin_head: Some(head), ..Self::default() }
     }
 
-    /// Dernier `seq` vérifié par personne, à envoyer dans `directory_get`.
     pub fn known(&self) -> ot_proto::Known {
         let mut known = ot_proto::Known::new();
         let all = self.admin.iter().map(|(id, p)| (id, p)).chain(self.people.iter());
@@ -340,12 +266,10 @@ impl DirectoryState {
         known
     }
 
-    /// Identifiant de l'admin, une fois sa racine vérifiée.
     pub fn admin_id(&self) -> Option<&UserId> {
         self.admin.as_ref().map(|(id, _)| id)
     }
 
-    /// Certificat (vérifié) et journal de `user`, l'admin compris.
     pub fn known_person(&self, user: &UserId) -> Option<&KnownPerson> {
         match &self.admin {
             Some((id, p)) if id == user => Some(p),
@@ -353,8 +277,6 @@ impl DirectoryState {
         }
     }
 
-    /// Ajoute à son journal une entrée que cet appareil vient de signer et
-    /// que le relais a acceptée : elle suit la dernière entrée vérifiée.
     pub fn extend_own(&mut self, user: &UserId, chain: Chain) {
         let admin = self.admin.as_ref().is_some_and(|(id, _)| id == user);
         if admin {
@@ -369,14 +291,10 @@ impl DirectoryState {
         }
     }
 
-    /// Roster courant vérifié de l'admin.
     pub fn admin_roster(&self) -> Option<&Roster> {
         self.admin.as_ref().and_then(|(_, p)| p.chain.as_ref()).map(|c| &c.roster)
     }
 
-    /// Applique un tour complet de lecture (toutes les pages, `next`
-    /// suivi) : vérifie ce qui est nouveau, garde le reste. Sans ancre, rien
-    /// n'est cru.
     pub fn apply(&mut self, admin_id: &UserId, users: &[DirectoryUser]) -> Applied {
         let mut events = Vec::new();
         let mut again = false;
@@ -385,7 +303,6 @@ impl DirectoryState {
             events.push(DirectoryEvent::Rejected { user: user.clone(), reason });
         };
 
-        // 1. La racine, contre l'ancre ; sans elle, rien d'autre ne vaut.
         let Some(admin_raw) = users.iter().find(|u| &u.id == admin_id) else {
             return Applied { people: None, events, again: false };
         };
@@ -397,25 +314,20 @@ impl DirectoryState {
             }
         };
         if self.admin.as_ref().is_some_and(|(id, _)| id != admin_id) {
-            // L'ancre est la même, l'identifiant non : impossible sans bug.
             reject(&mut events, admin_id, DirectoryError::BadAnchor);
             return Applied { people: None, events, again: false };
         }
 
-        // 2. Le journal de l'admin, et l'historique de ses appareils.
         let known_chain = self.admin.as_ref().and_then(|(_, p)| p.chain.clone());
         let (chain, error) =
             verify_log(&root.1, known_chain.as_ref(), &admin_raw.log, Signers::Members);
         if let Some(reason) = error {
             reject(&mut events, admin_id, reason);
         }
-        // 2 bis. La tête épinglée : l'entrée `seq` doit avoir ce hash.
         if let Some(pin) = self.admin_head {
             let at_pin = admin_raw.log.iter().find(|e| e.seq == pin.seq);
             match &chain {
                 Some(c) if c.seq >= pin.seq => {
-                    // Atteinte pendant ce tour (sinon la tête serait déjà
-                    // effacée) : l'entrée est dans ce journal, vérifiée.
                     if at_pin.is_none_or(|e| entry_hash(&e.entry) != pin.hash) {
                         reject(&mut events, admin_id, DirectoryError::AdminHead("diffère de"));
                         return Applied { people: None, events, again: false };
@@ -435,15 +347,12 @@ impl DirectoryState {
         self.record_admin_history(&root.1, known_chain.as_ref(), &admin_raw.log, chain.as_ref());
         self.admin = Some((admin_id.clone(), KnownPerson { cert: root.0, chain }));
         if admin_raw.more || self.admin_head.is_some() {
-            // Les certificats se jugent contre la dernière entrée de l'admin :
-            // pas avant de l'avoir lue.
             events.dedup();
             return Applied { people: None, events, again: true };
         }
         let admin_chain = self.admin.as_ref().and_then(|(_, p)| p.chain.clone());
         let admin_roster = admin_chain.as_ref().map(|c| &c.roster);
 
-        // 3. Les autres personnes.
         let mut people = Vec::new();
         if let Some(p) = person(admin_raw, &root.1, admin_roster) {
             people.push(p);
@@ -461,9 +370,6 @@ impl DirectoryState {
             };
             let stored = self.people.get(&u.id);
             let old = stored.and_then(|p| UserCert::read_unverified(&p.cert).ok());
-            // Contrôle secondaire (l'empreinte dans `certs` suffit déjà) : un
-            // certificat plus ancien que celui déjà vu est celui d'avant une
-            // réinvitation, rejoué par le relais.
             if old.as_ref().is_some_and(|o| cert.issued_at < o.issued_at) {
                 reject(
                     &mut events,
@@ -483,7 +389,6 @@ impl DirectoryState {
             if stored.is_some() && !same_genesis {
                 events.push(DirectoryEvent::KeysChanged { user: u.id.clone() });
                 if u.log.first().is_some_and(|e| e.seq != 1) {
-                    // Le relais a filtré avec l'ancien `known` : tout relire.
                     self.people
                         .insert(u.id.clone(), KnownPerson { cert: blob.clone(), chain: None });
                     events.push(DirectoryEvent::Refetch { user: u.id.clone() });
@@ -507,8 +412,6 @@ impl DirectoryState {
             }
             self.people
                 .insert(u.id.clone(), KnownPerson { cert: blob.clone(), chain: chain.clone() });
-            // Service : la tête doit être signée par un appareil d'admin actuel
-            // (D47) ; sinon il attend que l'admin republie.
             if cert.role == Role::Service {
                 let current = chain
                     .as_ref()
@@ -532,8 +435,6 @@ impl DirectoryState {
                 people.push(p);
             }
         }
-        // Les personnes que le relais ne montre plus (lien retiré,
-        // révocation) sont oubliées.
         let shown: Vec<&UserId> = users.iter().map(|u| &u.id).collect();
         let before = self.people.len();
         let gone: Vec<UserId> =
@@ -552,16 +453,6 @@ impl DirectoryState {
         Applied { people: Some(people), events, again }
     }
 
-    /// Remplacée dans le client par `Secure::next_entry` (§ 4.2, note 0060),
-    /// qui publie aussi mon roster local ; gardée pour ses tests de règles.
-    ///
-    /// Entrée suivante du journal de l'admin (note 0056) : même roster,
-    /// `version + 1`, `certs` mis à jour par `change`, signée par l'appareil
-    /// courant, membre du roster vérifié de l'admin. À publier
-    /// (`roster_publish`) après chaque `user_certify`, `service_create` et
-    /// `user_revoke`. Renvoie l'entrée et le roster qu'elle porte : l'appareil
-    /// l'adopte et l'envoie à son groupe, pour que la prochaine version locale
-    /// reste au-dessus de celle du journal.
     pub fn next_admin_entry(
         &self,
         signer: &DeviceId,
@@ -603,8 +494,6 @@ impl DirectoryState {
         Ok((LogEntry { seq, entry }, roster))
     }
 
-    /// Ajoute à l'historique les appareils de chaque roster de l'admin
-    /// vérifié pendant cette lecture.
     fn record_admin_history(
         &mut self,
         cert: &UserCert,
@@ -618,7 +507,6 @@ impl DirectoryState {
         };
         let first = from.map_or(1, |c| c.seq + 1);
         for e in log.iter().filter(|e| e.seq >= first && e.seq <= to.seq) {
-            // Invariant : ces entrées viennent d'être vérifiées par verify_log.
             if let Ok(entry) = RosterEntry::read_unverified(&e.entry) {
                 entry.roster.members.iter().for_each(&mut add);
             }
@@ -628,8 +516,6 @@ impl DirectoryState {
         }
     }
 
-    /// Fourche de ma personne : le journal publié par le relais porte, à
-    /// `(epoch, version)` égal, d'autres membres que mon roster local.
     pub fn is_fork(&self, me: &UserId, local: &Roster) -> bool {
         let chain = if self.admin.as_ref().is_some_and(|(id, _)| id == me) {
             self.admin.as_ref().and_then(|(_, p)| p.chain.as_ref())
@@ -647,18 +533,9 @@ impl DirectoryState {
     }
 }
 
-/// Tours de lecture au plus par lecture de l'annuaire (journaux coupés,
-/// relectures) : au-delà, on garde ce qui est vérifié et on attend le
-/// prochain `directory_changed`.
 pub const MAX_DIRECTORY_ROUNDS: u32 = 8;
-/// Pages au plus par lecture : un relais qui renvoie `next` sans fin ne fait
-/// pas tourner le client.
 pub const MAX_DIRECTORY_PAGES: u32 = 1024;
 
-/// Lecture de l'annuaire en cours (note 0056) : les pages d'un tour, en
-/// suivant `next`, puis d'autres tours, `known` à jour, tant qu'un journal
-/// est coupé (`more`). Le `known` d'un tour est figé à son début : toutes
-/// ses pages filtrent les journaux de la même façon.
 #[derive(Debug, Clone)]
 pub struct DirectoryRead {
     known: Known,
@@ -668,17 +545,13 @@ pub struct DirectoryRead {
     pages: u32,
 }
 
-/// Suite d'une page lue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadStep {
-    /// Trame `directory_get` à envoyer pour la page suivante.
     Request(Box<Frame>),
-    /// Tour complet, à passer à [`DirectoryState::apply`].
     Round { me: UserId, admin: UserId, users: Vec<DirectoryUser> },
 }
 
 impl DirectoryRead {
-    /// Commence une lecture ; renvoie la première demande.
     pub fn start(known: Known) -> (Self, Frame) {
         let read = Self { known, first: None, users: Vec::new(), rounds: 1, pages: 0 };
         let frame = read.request(None);
@@ -689,8 +562,6 @@ impl DirectoryRead {
         Frame::DirectoryGet { known: self.known.clone(), after }
     }
 
-    /// Range une page. Erreur : relais incohérent (autre `me` ou autre
-    /// `admin` d'une page à l'autre, pages sans fin) ; la lecture s'arrête.
     pub fn page(
         &mut self,
         me: UserId,
@@ -707,8 +578,6 @@ impl DirectoryRead {
             Some(_) => {}
             None => self.first = Some((me.clone(), admin.clone())),
         }
-        // Une personne déjà lue dans ce tour : le relais est reparti du début
-        // (personne disparue entre deux pages). On garde la dernière version.
         for u in users {
             self.users.retain(|o| o.id != u.id);
             self.users.push(u);
@@ -719,8 +588,6 @@ impl DirectoryRead {
         }
     }
 
-    /// Nouveau tour avec `known` à jour ; `None` au-delà de
-    /// [`MAX_DIRECTORY_ROUNDS`].
     pub fn next_round(&mut self, known: Known) -> Option<Frame> {
         if self.rounds >= MAX_DIRECTORY_ROUNDS {
             return None;
@@ -732,20 +599,13 @@ impl DirectoryRead {
     }
 }
 
-/// Changement des certificats engagés par le journal de l'admin.
 #[derive(Debug, Clone, Copy)]
 pub enum CertChange<'a> {
-    /// Certificat neuf ou re-signé de cette personne.
     Certify(&'a UserId, &'a SignedBlob),
-    /// Personne révoquée : son empreinte sort de `certs`.
     Revoke(&'a UserId),
-    /// Republication sans changement (service après une rotation, D47).
     None,
 }
 
-/// Certificat d'une personne autre que l'admin : son empreinte est celle de
-/// la dernière entrée vérifiée de l'admin, il est signé par un appareil du
-/// roster courant de l'admin, pour cette personne, jamais `admin`.
 fn check_cert(
     blob: &SignedBlob,
     user: &UserId,
@@ -773,8 +633,6 @@ fn check_cert(
         .map_err(|_| DirectoryError::BadCert("signature invalide"))
 }
 
-/// Vue d'une personne : profils gardés pour les seuls appareils de son
-/// roster vérifié, clés lues dans le roster.
 fn person(raw: &DirectoryUser, cert: &UserCert, roster: Option<&Roster>) -> Option<Person> {
     let roster = roster?;
     let devices = raw
@@ -812,7 +670,6 @@ mod tests {
     use ot_crypto::{ExchangeKeyPair, SigningKey};
     use ot_proto::{DirectoryDevice, Feature};
 
-    /// Un appareil de test : identité et membre de roster.
     struct Dev {
         id: DeviceId,
         sign: SigningKey,
@@ -841,7 +698,6 @@ mod tests {
         }
     }
 
-    /// Journal en construction : entrées signées et chaînées.
     struct Log {
         user: UserId,
         entries: Vec<LogEntry>,
@@ -861,7 +717,6 @@ mod tests {
             self.push_certs(by, epoch, version, members, &[]);
         }
 
-        /// Entrée qui engage `certs` (journal de l'admin, note 0056).
         fn push_certs(
             &mut self,
             by: &Dev,
@@ -921,8 +776,6 @@ mod tests {
         }
     }
 
-    /// Alice (admin, deux appareils), Bob (membre, deux appareils), Notifier
-    /// (service, signé par Alice).
     struct World {
         alice: UserId,
         a1: Dev,
@@ -1025,8 +878,6 @@ mod tests {
             self.alice_log.copy()
         }
 
-        /// Entrée de l'admin qui engage ces certificats (même roster `[a1, a2]`
-        /// sauf `members`).
         fn commit(
             &self,
             log: &mut Log,
@@ -1049,7 +900,6 @@ mod tests {
         (out.people.unwrap_or_default(), out.events)
     }
 
-    /// Entrées d'un journal après `known`, comme le relais les sert.
     fn since(log: &Log, known: u64) -> Vec<LogEntry> {
         log.entries.iter().filter(|e| e.seq > known).cloned().collect()
     }
@@ -1077,7 +927,6 @@ mod tests {
         assert_eq!(bob.devices[0].exchange_key, w.b1.member.exchange_key);
         assert_eq!(state.known().get(&w.bob), Some(&2));
 
-        // Relire sans rien de nouveau ne change rien.
         let mut again = w.users();
         for u in &mut again {
             u.log.clear();
@@ -1112,7 +961,6 @@ mod tests {
     fn a_device_injected_in_the_log_is_refused() {
         let w = world();
         let intruder = dev("intrus", 9);
-        // Le relais signe une entrée avec une clé à lui.
         let mut forged =
             Log { user: w.bob.clone(), entries: w.bob_log.entries.clone(), head: w.bob_log.head };
         forged.push(&intruder, 1, 3, &[&w.b1, &w.b2, &intruder]);
@@ -1138,7 +986,6 @@ mod tests {
 
         let mut state = w.state();
         apply(&mut state, &w.alice, &w.users());
-        // Rejeu d'une vieille entrée après la dernière connue.
         let mut users = w.users();
         users[1].log = vec![w.bob_log.entries[0].clone()];
         let (_, events) = apply(&mut state, &w.alice, &users);
@@ -1151,7 +998,6 @@ mod tests {
         let w = world();
         let mut log =
             Log { user: w.bob.clone(), entries: w.bob_log.entries.clone(), head: w.bob_log.head };
-        // Rotation qui exclut b2, puis b2 (volé) tente de se remettre.
         log.push(&w.b1, 2, 3, &[&w.b1]);
         log.push(&w.b2, 2, 4, &[&w.b1, &w.b2]);
         let mut users = w.users();
@@ -1168,20 +1014,14 @@ mod tests {
         let w = world();
         let both = [(&w.bob, &w.bob_cert), (&w.notifier, &w.notifier_cert)];
         let mut alice_log = w.alice_log();
-        // Alice retire a1, qui avait signé le certificat de Bob ; son journal
-        // engage toujours ce certificat.
         w.commit(&mut alice_log, &w.a2, 2, &[&w.a2], &both);
         let mut users = w.users();
         users[0].log = alice_log.entries.clone();
         let (people, events) = apply(&mut w.state(), &w.alice, &users);
         assert!(rejected(&events, &w.bob));
         assert!(people.iter().all(|p| p.id != w.bob));
-        // La racine, elle, tient toujours (signée par a1, hors roster).
         assert!(people.iter().any(|p| p.id == w.alice));
 
-        // a2 re-signe le certificat de Bob (même genesis) : refusé tant que
-        // le journal de l'admin n'engage pas sa nouvelle empreinte, puis Bob
-        // revient, sans « clés changées ».
         let resigned = UserCert::read_unverified(&w.bob_cert).unwrap();
         let resigned = UserCert { issuer: w.a2.id.clone(), ..resigned }.sign(&w.a2.sign).unwrap();
         let mut state = w.state();
@@ -1212,9 +1052,6 @@ mod tests {
         let (people, _) = apply(&mut state, &w.alice, &w.users());
         assert!(people.iter().any(|p| p.id == w.notifier));
 
-        // a2, qui a signé le journal du service, est retiré : le service
-        // attend la republication par un appareil actuel de l'admin. a1
-        // re-signe aussi son certificat, engagé par la même entrée.
         let cert = UserCert::read_unverified(&w.notifier_cert).unwrap();
         let cert = UserCert { issuer: w.a1.id.clone(), ..cert }.sign(&w.a1.sign).unwrap();
         let mut alice_log = w.alice_log();
@@ -1234,8 +1071,6 @@ mod tests {
         assert!(people.iter().all(|p| p.id != w.notifier), "{events:?}");
         assert!(rejected(&events, &w.notifier));
 
-        // a1 republie une entrée (même roster, version + 1) : il revient,
-        // l'entrée 1 signée par a2 (historique) reste valide.
         let mut log = w.notifier_log.copy();
         log.push(&w.a1, 0, 2, &[&w.n1]);
         users[0].log.clear();
@@ -1243,7 +1078,6 @@ mod tests {
         let (people, events) = apply(&mut state, &w.alice, &users);
         assert!(people.iter().any(|p| p.id == w.notifier), "{events:?}");
 
-        // Un appareil qui n'a jamais été à l'admin ne signe rien pour lui.
         let intruder = dev("intrus", 9);
         log.push(&intruder, 0, 3, &[&w.n1, &intruder]);
         users[2].log = log.entries[2..].to_vec();
@@ -1278,7 +1112,6 @@ mod tests {
         assert_eq!(bob.devices[0].id, b3.id);
         assert_eq!(state.known().get(&w.bob), Some(&1));
 
-        // Le relais rejoue l'ancien certificat et l'ancien journal : refusé.
         let mut replay = w.users();
         replay[0].log.clear();
         replay[2].log.clear();
@@ -1290,16 +1123,12 @@ mod tests {
             b3.id
         );
 
-        // Un client qui n'a jamais vu le nouveau certificat ne prend pas
-        // l'ancien non plus (note 0056, point 13).
         let mut fresh = w.users();
         fresh[0].log = alice_log.entries.clone();
         let (people, events) = apply(&mut w.state(), &w.alice, &fresh);
         assert!(rejected(&events, &w.bob));
         assert!(people.iter().all(|p| p.id != w.bob));
 
-        // Si le relais filtre encore avec l'ancien `known` : tout relire,
-        // au tour suivant.
         let mut state = w.state();
         apply(&mut state, &w.alice, &w.users());
         log.push(&b3, 1, 2, &[&b3]);
@@ -1319,11 +1148,9 @@ mod tests {
     fn certificates_for_someone_else_or_a_second_admin_are_refused() {
         let w = world();
         let mut users = w.users();
-        // Le relais présente le certificat de Bob sous un autre identifiant.
         users[2].cert = Some(w.bob_cert.clone());
         let (_, events) = apply(&mut w.state(), &w.alice, &users);
         assert!(rejected(&events, &w.notifier));
-        // Un « admin » de plus, même signé par l'admin.
         let fake =
             UserCert::new(w.bob.clone(), "Bob", Role::Admin, genesis(&w.b1), 5, w.a1.id.clone())
                 .sign(&w.a1.sign)
@@ -1367,15 +1194,12 @@ mod tests {
     #[test]
     fn an_uncommitted_or_revoked_certificate_is_refused() {
         let w = world();
-        // Journal de l'admin sans l'entrée qui engage les certificats.
         let mut users = w.users();
         users[0].log.truncate(2);
         let (people, events) = apply(&mut w.state(), &w.alice, &users);
         assert!(rejected(&events, &w.bob) && rejected(&events, &w.notifier));
         assert_eq!(ids(&people), vec![w.alice.clone()]);
 
-        // Révocation de Bob : l'entrée suivante de l'admin ne l'engage plus,
-        // même si le relais le sert encore, à un client ancien ou neuf.
         let mut state = w.state();
         apply(&mut state, &w.alice, &w.users());
         let (entry, roster) =
@@ -1422,7 +1246,6 @@ mod tests {
         let certs = &state.admin.as_ref().unwrap().1.chain.as_ref().unwrap().certs;
         assert_eq!(certs.len(), 3, "Bob et le service restent engagés");
 
-        // Seul un appareil du roster de l'admin, avec sa clé, signe l'entrée.
         let other = dev("autre", 8);
         assert!(state.next_admin_entry(&other.id, &other.sign, CertChange::None).is_err());
         assert!(state.next_admin_entry(&w.a1.id, &w.a2.sign, CertChange::None).is_err());
@@ -1456,13 +1279,11 @@ mod tests {
         let head = log_head(&w.alice_log.entries[2].entry).unwrap();
         let pinned = || DirectoryState::with_admin_head(anchor(&w.root), head);
 
-        // Journal complet : accepté, la tête n'est plus nécessaire.
         let mut state = pinned();
         let (people, events) = apply(&mut state, &w.alice, &w.users());
         assert_eq!(people.len(), 3, "{events:?}");
         assert_eq!(state.admin_head, None);
 
-        // Journal plus court (le relais cache les dernières entrées) : rien.
         let mut users = w.users();
         users[0].log.truncate(2);
         let mut state = pinned();
@@ -1474,8 +1295,6 @@ mod tests {
         }));
         assert_eq!(state.admin_head, Some(head), "toujours épinglé");
 
-        // Fourche : une autre entrée 3, bien signée par un ancien appareil
-        // de l'admin allié au relais.
         let mut fork = Log {
             user: w.alice.clone(),
             entries: w.alice_log.entries[..2].to_vec(),
@@ -1494,7 +1313,6 @@ mod tests {
     #[test]
     fn cut_logs_ask_for_another_round() {
         let w = world();
-        // Journal de l'admin coupé : les certificats attendent sa fin.
         let mut users = w.users();
         users[0].log.truncate(2);
         users[0].more = true;
@@ -1509,8 +1327,6 @@ mod tests {
         assert!(!out.again);
         assert_eq!(out.people.unwrap().len(), 3);
 
-        // Journal d'une autre personne coupé : elle est montrée à sa dernière
-        // entrée lue, et un autre tour suit.
         let mut users = w.users();
         users[1].log.truncate(1);
         users[1].more = true;
@@ -1535,7 +1351,6 @@ mod tests {
         let step = read
             .page(w.bob.clone(), w.alice.clone(), page(&all[..2]), Some(w.bob.clone()))
             .unwrap();
-        // Même `known` pour toutes les pages d'un tour.
         assert_eq!(
             step,
             ReadStep::Request(Box::new(Frame::DirectoryGet {
@@ -1543,18 +1358,15 @@ mod tests {
                 after: Some(w.bob.clone())
             }))
         );
-        // Une personne servie deux fois (le relais repart du début) : une seule.
         let step = read.page(w.bob.clone(), w.alice.clone(), page(&all[1..]), None).unwrap();
         let ReadStep::Round { me, admin, users } = step else { panic!("tour attendu") };
         assert_eq!((me, admin), (w.bob.clone(), w.alice.clone()));
         assert_eq!(users.iter().map(|u| u.id.clone()).collect::<Vec<_>>(), ids_of(&all));
 
-        // Un relais qui change `me` ou `admin` en cours de lecture : arrêt.
         let (mut read, _) = DirectoryRead::start(Known::new());
         read.page(w.bob.clone(), w.alice.clone(), page(&all[..1]), Some(w.alice.clone())).unwrap();
         assert!(read.page(w.alice.clone(), w.alice.clone(), Vec::new(), None).is_err());
 
-        // Tours bornés.
         let (mut read, _) = DirectoryRead::start(Known::new());
         let mut rounds = 1;
         while read.next_round(Known::new()).is_some() {
@@ -1562,7 +1374,6 @@ mod tests {
         }
         assert_eq!(rounds, MAX_DIRECTORY_ROUNDS);
 
-        // Pages bornées.
         let (mut read, _) = DirectoryRead::start(Known::new());
         let mut res = Ok(ReadStep::Request(Box::new(Frame::DirectoryChanged)));
         for _ in 0..=MAX_DIRECTORY_PAGES {

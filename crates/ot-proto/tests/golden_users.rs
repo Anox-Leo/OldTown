@@ -1,7 +1,3 @@
-//! Tests « golden » des trames de l'étape 10 (personnes, annuaire, réseau,
-//! note 0052). Mêmes règles que `golden.rs` : un changement de format casse
-//! ces tests volontairement. Noms neutres seulement (Alice, Bob, Notifier).
-
 use std::collections::BTreeMap;
 
 use ot_proto::{
@@ -201,12 +197,10 @@ fn new_error_codes() {
 
 #[test]
 fn optional_fields_may_be_absent() {
-    // `known` absent : tout le journal.
     assert_eq!(
         Frame::from_json(r#"{"v":1,"t":"directory_get"}"#).unwrap(),
         Frame::DirectoryGet { known: BTreeMap::new(), after: None }
     );
-    // `device_update` ne porte que ce qui change.
     let only_kind =
         format!(r#"{{"v":1,"t":"device_update","device":"{ALICE_PHONE}","kind":"cli"}}"#);
     assert_eq!(
@@ -219,14 +213,12 @@ fn optional_fields_may_be_absent() {
             features: None,
         }
     );
-    // Une catégorie inconnue (version future) se lit, sans erreur.
     let future =
         format!(r#"{{"v":1,"t":"device_update","device":"{ALICE_PHONE}","kind":"tablet"}}"#);
     assert!(matches!(
         Frame::from_json(&future).unwrap(),
         Frame::DeviceUpdate { kind: Some(DeviceKind::Unknown), .. }
     ));
-    // Un champ inconnu reste une erreur.
     let extra = format!(r#"{{"v":1,"t":"device_revoke","device":"{ALICE_PHONE}","x":1}}"#);
     assert!(Frame::from_json(&extra).is_err());
 }

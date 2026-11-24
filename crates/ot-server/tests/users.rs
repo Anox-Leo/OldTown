@@ -1,7 +1,3 @@
-//! Étape 10 (note 0052) : personnes, réseau, invitation, quotas et annuaire
-//! côté relais. Noms neutres : Alice (admin), Bob et Carol (membres),
-//! Notifier (service).
-
 mod common;
 
 use std::sync::Arc;
@@ -44,9 +40,6 @@ fn msg<'a>(id: &'a str, from: &'a DeviceId, to: &'a [DeviceId]) -> NewMessage<'a
     }
 }
 
-/// Alice (admin, deux appareils), Bob (membre, deux appareils), Carol
-/// (membre), Notifier (service). Liens : Alice ↔ Bob, Alice ↔ Carol,
-/// Notifier → Alice, Notifier → Bob. Pas de lien Bob ↔ Carol.
 struct Net {
     store: Store,
     alice: UserId,
@@ -61,7 +54,6 @@ struct Net {
     notifier_1: TestDevice,
 }
 
-/// Invite, fait rejoindre et certifie un membre, lié à `links`.
 async fn member(
     store: &Store,
     by: &TestDevice,
@@ -76,7 +68,6 @@ async fn member(
     let r = store.redeem_invitation(&hash, device_name, &identity.public_key(), 1).await.unwrap();
     assert_eq!((&r.user, &r.inviter), (&user, &by.id));
     store.certify_user(&user, &blob(10)).await.unwrap();
-    // Fin de l'échange d'invitation : le premier roster est publié.
     store.publish_entry(&r.device.id, &user, 1, &blob(11), u64::MAX).await.unwrap();
     (user, device(r.device.id, device_name, identity))
 }
@@ -134,7 +125,6 @@ async fn net() -> Net {
     }
 }
 
-/// Base au format v1.0.0 (migrations 0001 à 0003), remplie à la main.
 async fn v1_database(path: &std::path::Path) {
     use sqlx::ConnectOptions;
     let old = tempfile::tempdir().unwrap();
@@ -206,7 +196,6 @@ async fn migration_from_v1_0_0_keeps_everything_under_the_owner() {
         assert_eq!(d.user_id, admin.id);
         assert!(d.reachable && d.kind.is_none() && d.features.is_empty());
     }
-    // Un seul appareil par défaut : le plus ancien des actifs (note 0056).
     let defaults: Vec<_> = devices.iter().filter(|d| d.is_default).collect();
     assert_eq!(defaults.len(), 1);
     assert!(defaults[0].revoked_at.is_none());
@@ -215,12 +204,10 @@ async fn migration_from_v1_0_0_keeps_everything_under_the_owner() {
     let blob: BlobId = "blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V".parse().unwrap();
     assert!(store.blob(&blob, 2).await.unwrap().is_some(), "fichier intact");
 
-    // Une installation à une personne continue comme avant : `to: []`.
     let phone: DeviceId = "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H0".parse().unwrap();
     let ins = store.insert_message(msg("m2", &phone, &[]), 3).await.unwrap();
     assert_eq!(ins.recipients, vec![laptop]);
 
-    // Rouvrir ne recrée rien.
     store.close().await;
     let again = Store::open(&path).await.unwrap();
     assert_eq!(again.users().await.unwrap().len(), 1);
@@ -234,7 +221,6 @@ async fn device_names_are_unique_per_person_only() {
     extra_device(&n.store, &n.carol, "tel").await;
     let dup = n.store.add_device_for(&n.bob, "tel", &[42; 32], 5).await;
     assert!(matches!(dup, Err(StoreError::NameTaken(_))));
-    // Recours SSH : un nom porté par deux personnes est ambigu.
     assert!(matches!(n.store.revoke_device("tel", 6).await, Err(StoreError::Ambiguous(_))));
 }
 
@@ -248,7 +234,6 @@ async fn routing_follows_the_network() {
         other => panic!("not_allowed attendu pour {id}, reçu {other:?}"),
     };
 
-    // Ma personne : `to: []`, sans changement.
     assert_eq!(
         ok(s.insert_message(msg("a0", &n.alice_phone.id, &[]), 10).await),
         vec![n.alice_laptop.id.clone()]
@@ -257,12 +242,10 @@ async fn routing_follows_the_network() {
         ok(s.insert_message(msg("b0", &n.bob_phone.id, &[]), 10).await),
         vec![n.bob_laptop.id.clone()]
     );
-    // Personnes liées.
     let to = [n.bob_phone.id.clone(), n.alice_laptop.id.clone()];
     assert_eq!(ok(s.insert_message(msg("a1", &n.alice_phone.id, &to), 10).await).len(), 2);
     ok(s.insert_message(msg("b1", &n.bob_phone.id, std::slice::from_ref(&n.alice_phone.id)), 10)
         .await);
-    // Pas de lien Bob ↔ Carol : tout l'envoi est refusé, rien n'est stocké.
     let to = [n.alice_phone.id.clone(), n.carol_phone.id.clone()];
     refused(s.insert_message(msg("b2", &n.bob_phone.id, &to), 10).await, &n.carol_phone.id);
     refused(
@@ -273,7 +256,6 @@ async fn routing_follows_the_network() {
     let alice_pending = s.pending_count(&n.alice_phone.id, 11).await.unwrap();
     assert_eq!(alice_pending, 1, "seul b1 attend : b2 n'a rien laissé");
 
-    // Appareil non joignable : refusé aux autres, pas à sa personne.
     let off = DeviceChanges { reachable: Some(false), ..DeviceChanges::default() };
     s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &off).await.unwrap();
     refused(
@@ -284,8 +266,6 @@ async fn routing_follows_the_network() {
     ok(s.insert_message(msg("b3", &n.bob_phone.id, std::slice::from_ref(&n.bob_laptop.id)), 12)
         .await);
 
-    // Service : sens unique, destinataire de l'admin seul (bienvenue de ses
-    // appareils), coupé par le membre.
     ok(s.insert_message(msg("n1", &n.notifier_1.id, std::slice::from_ref(&n.bob_phone.id)), 13)
         .await);
     refused(
@@ -310,7 +290,6 @@ async fn routing_follows_the_network() {
             .await,
         &n.bob_phone.id,
     );
-    // L'admin repose le lien : le service reste coupé tant que Bob ne le rouvre pas.
     s.set_link(&n.notifier, &n.bob, true, 15).await.unwrap();
     refused(
         s.insert_message(msg("n5", &n.notifier_1.id, std::slice::from_ref(&n.bob_phone.id)), 15)
@@ -321,14 +300,12 @@ async fn routing_follows_the_network() {
     ok(s.insert_message(msg("n6", &n.notifier_1.id, std::slice::from_ref(&n.bob_phone.id)), 16)
         .await);
 
-    // Plus de 32 destinataires.
     let many: Vec<DeviceId> = (0..33).map(|_| DeviceId::generate()).collect();
     assert!(matches!(
         s.insert_message(msg("a4", &n.alice_phone.id, &many), 17).await,
         Err(StoreError::Invalid(_))
     ));
 
-    // Lien retiré : refusé dans les deux sens.
     s.set_link(&n.alice, &n.carol, false, 18).await.unwrap();
     refused(
         s.insert_message(msg("a5", &n.alice_phone.id, std::slice::from_ref(&n.carol_phone.id)), 18)
@@ -341,7 +318,6 @@ async fn routing_follows_the_network() {
         &n.alice_phone.id,
     );
 
-    // Personne révoquée : ses appareils n'existent plus pour le relais.
     s.revoke_user(&n.carol, 19).await.unwrap();
     assert!(matches!(
         s.insert_message(msg("a6", &n.alice_phone.id, std::slice::from_ref(&n.carol_phone.id)), 19)
@@ -361,7 +337,6 @@ async fn a_pending_person_only_reaches_its_inviter() {
     let dave_phone =
         s.redeem_invitation(&hash, "dave-phone", &id.public_key(), 21).await.unwrap().device.id;
 
-    // L'invitation relie ses deux appareils, même sans lien entre personnes.
     s.insert_message(msg("d1", &dave_phone, std::slice::from_ref(&n.alice_phone.id)), 22)
         .await
         .unwrap();
@@ -379,8 +354,6 @@ async fn a_pending_person_only_reaches_its_inviter() {
         .await;
     assert!(matches!(r, Err(StoreError::NotAllowed(_))), "personne en attente : {r:?}");
 
-    // Certifiée mais sans lien : l'invitation reste le seul chemin, le temps
-    // que l'admin envoie sa réponse.
     s.certify_user(&dave, &blob(11)).await.unwrap();
     s.insert_message(msg("a3", &n.alice_phone.id, std::slice::from_ref(&dave_phone)), 23)
         .await
@@ -392,7 +365,6 @@ async fn a_pending_person_only_reaches_its_inviter() {
         .insert_message(msg("d5", &dave_phone, std::slice::from_ref(&n.alice_laptop.id)), 23)
         .await;
     assert!(matches!(r, Err(StoreError::NotAllowed(_))), "{r:?}");
-    // Dave publie son premier roster : l'échange est fini, plus de chemin.
     s.publish_entry(&dave_phone, &dave, 1, &blob(12), u64::MAX).await.unwrap();
     for (id, from, to) in
         [("d6", &dave_phone, &n.alice_phone.id), ("a4", &n.alice_phone.id, &dave_phone)]
@@ -423,12 +395,10 @@ async fn blobs_follow_the_network_and_member_quota() {
         s.create_blob(new(&b2, &n.bob_phone, &to_carol, 10), 10_000, 1_000, 1).await,
         Err(StoreError::NotAllowed(_))
     ));
-    // Quota du membre : sa somme, tous appareils confondus.
     assert!(matches!(
         s.create_blob(new(&b3, &n.bob_laptop, &to_alice, 500), 10_000, 1_000, 1).await,
         Err(StoreError::UserQuota(_))
     ));
-    // Sans effet sur l'admin, qui n'a que le quota global.
     let to_bob = [n.bob_phone.id.clone()];
     s.create_blob(new(&b4, &n.alice_phone, &to_bob, 5_000), 10_000, 1_000, 1).await.unwrap();
 }
@@ -449,7 +419,6 @@ async fn blob_creation_out_of_network_is_403_not_allowed() {
 async fn member_quotas_devices_and_invitations() {
     let n = net().await;
     let s = &n.store;
-    // Bob a deux appareils : six de plus avec une limite de 8.
     for i in 0..6 {
         let token = [100 + i; 10];
         s.create_pairing(&n.bob_phone.id, &token_hash(&token), 30, 40 * HOUR).await.unwrap();
@@ -463,12 +432,10 @@ async fn member_quotas_devices_and_invitations() {
         s.redeem_pairing(&token_hash(&token), "bob-9", &[250; 32], 8, 31).await,
         Err(StoreError::UserQuota(_))
     ));
-    // Même chemin par QR inversé.
     let r = s
         .register_device(&n.bob_phone.id, &DeviceId::generate(), "bob-qr", &[251; 32], 8, 32)
         .await;
     assert!(matches!(r, Err(StoreError::UserQuota(_))));
-    // L'admin n'a que la limite globale.
     for i in 0..8 {
         s.register_device(
             &n.alice_phone.id,
@@ -481,12 +448,10 @@ async fn member_quotas_devices_and_invitations() {
         .await
         .unwrap();
     }
-    // Un service ne parraine aucun appareil (pas de groupe).
     let r =
         s.register_device(&n.notifier_1.id, &DeviceId::generate(), "x", &[252; 32], 8, 33).await;
     assert!(matches!(r, Err(StoreError::Forbidden(_))));
 
-    // Invitations utilisables : 5 au plus (deux déjà utilisées par Bob et Carol).
     for i in 0..5 {
         let hash = token_hash(&[i; 10]);
         s.invite_user(&n.alice_phone.id, &format!("p{i}"), &[], &hash, 5, 40, 48 * HOUR)
@@ -517,7 +482,6 @@ async fn invitation_tokens_expire_are_single_use_and_cancelled_by_revocation() {
     let frank =
         s.invite_user(&n.alice_phone.id, "Frank", &[], &h2, 5, 100, 100 + HOUR).await.unwrap();
     s.invite_user(&n.alice_phone.id, "Grace", &[], &h3, 5, 100, 100 + HOUR).await.unwrap();
-    // Nom déjà pris par une personne.
     let dup = s
         .invite_user(&n.alice_phone.id, "Bob", &[], &token_hash(&[4; 10]), 5, 100, 100 + HOUR)
         .await;
@@ -546,7 +510,6 @@ async fn invitation_tokens_expire_are_single_use_and_cancelled_by_revocation() {
         ),
         "annulée par la révocation"
     );
-    // Une clé déjà connue ne consomme pas le jeton.
     let h5 = token_hash(&[5; 10]);
     s.invite_user(&n.alice_phone.id, "Heidi", &[], &h5, 5, 105, 105 + HOUR).await.unwrap();
     let taken = n.bob_phone.identity.public_key();
@@ -591,7 +554,6 @@ async fn reinvite_revokes_devices_and_forgets_keys_but_keeps_links() {
 async fn roster_log_is_append_only_and_owned() {
     let n = net().await;
     let s = &n.store;
-    // Le journal de l'admin commence à admin_init (seq 1).
     assert!(matches!(
         s.publish_entry(&n.alice_phone.id, &n.alice, 1, &blob(30), u64::MAX).await,
         Err(StoreError::Conflict(2))
@@ -606,7 +568,6 @@ async fn roster_log_is_append_only_and_owned() {
         s.publish_entry(&n.bob_phone.id, &n.carol, 2, &blob(34), u64::MAX).await,
         Err(StoreError::Forbidden(_))
     ));
-    // L'admin publie pour un service, pas pour un membre ; le service jamais.
     s.publish_entry(&n.alice_phone.id, &n.notifier, 1, &blob(35), u64::MAX).await.unwrap();
     assert!(matches!(
         s.publish_entry(&n.alice_phone.id, &n.bob, 3, &blob(36), u64::MAX).await,
@@ -630,7 +591,6 @@ async fn device_profiles_follow_their_rules() {
     let mine =
         |kind, reachable, default| DeviceChanges { kind, reachable, default, features: None };
 
-    // `cli` n'est jamais joignable ni par défaut.
     s.update_device(
         &n.alice_phone.id,
         &n.alice_laptop.id,
@@ -643,7 +603,6 @@ async fn device_profiles_follow_their_rules() {
         (laptop.kind, laptop.reachable, laptop.is_default),
         (Some(DeviceKind::Cli), false, false)
     );
-    // Une catégorie inconnue ne change rien.
     s.update_device(
         &n.alice_phone.id,
         &n.alice_laptop.id,
@@ -653,7 +612,6 @@ async fn device_profiles_follow_their_rules() {
     .unwrap();
     assert_eq!(s.device(&n.alice_laptop.id).await.unwrap().unwrap().kind, Some(DeviceKind::Cli));
 
-    // Bob a un appareil par défaut (son premier) : il ne peut pas le perdre.
     let r = s.update_device(&n.bob_phone.id, &n.bob_phone.id, &mine(None, None, Some(false))).await;
     assert!(matches!(r, Err(StoreError::Invalid(_))), "{r:?}");
     s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &mine(None, None, Some(true)))
@@ -663,7 +621,6 @@ async fn device_profiles_follow_their_rules() {
         .await
         .unwrap();
 
-    // Seul l'appareil déclare ses capacités ; personne ne règle ceux d'un autre.
     let features =
         DeviceChanges { features: Some(vec![Feature::users_v1()]), ..DeviceChanges::default() };
     assert!(matches!(
@@ -679,7 +636,6 @@ async fn device_profiles_follow_their_rules() {
         s.update_device(&n.carol_phone.id, &n.bob_phone.id, &mine(None, Some(false), None)).await,
         Err(StoreError::Forbidden(_))
     ));
-    // L'admin règle tous les appareils.
     s.update_device(
         &n.alice_phone.id,
         &n.carol_phone.id,
@@ -688,7 +644,6 @@ async fn device_profiles_follow_their_rules() {
     .await
     .unwrap();
 
-    // Retrait : sa personne (l'admin : tous), jamais soi-même.
     assert!(matches!(
         s.revoke_device_by(&n.bob_phone.id, &n.bob_phone.id, 60).await,
         Err(StoreError::Invalid(_))
@@ -712,21 +667,18 @@ async fn directory_is_filtered_by_the_network() {
     let ids =
         |users: &[ot_proto::DirectoryUser]| users.iter().map(|u| u.id.clone()).collect::<Vec<_>>();
 
-    // Carol : elle-même, l'admin ; ni Bob ni le service.
     let DirectoryPage { admin, users, .. } =
         s.directory(&n.carol, &Known::new(), None).await.unwrap();
     assert_eq!(admin, n.alice);
     assert_eq!(ids(&users), vec![n.carol.clone(), n.alice.clone()]);
     assert_eq!(users[1].devices.len(), 2, "Alice est liée à Carol");
 
-    // Bob : lui-même (tous ses appareils), Alice, le service.
     let DirectoryPage { users, .. } = s.directory(&n.bob, &Known::new(), None).await.unwrap();
     assert_eq!(ids(&users), vec![n.bob.clone(), n.alice.clone(), n.notifier.clone()]);
     assert_eq!(users[0].devices.len(), 2, "mes appareils, non joignables compris");
     assert_eq!(users[0].log.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2]);
     assert!(users[2].devices.is_empty(), "un service n'a aucun appareil joignable");
 
-    // Alice voit seulement l'appareil joignable de Bob, et la suite du journal.
     let known = Known::from([(n.bob.clone(), 1)]);
     let DirectoryPage { users, .. } = s.directory(&n.alice, &known, None).await.unwrap();
     let bob = users.iter().find(|u| u.id == n.bob).unwrap();
@@ -737,14 +689,11 @@ async fn directory_is_filtered_by_the_network() {
     assert_eq!(bob.log.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![2]);
     assert!(users.iter().any(|u| u.id == n.carol), "Alice est liée à Carol");
 
-    // Un admin non lié n'apparaît que par son certificat et son journal.
     s.set_link(&n.alice, &n.carol, false, 70).await.unwrap();
     let DirectoryPage { users, .. } = s.directory(&n.carol, &Known::new(), None).await.unwrap();
     assert_eq!(ids(&users), vec![n.carol.clone(), n.alice.clone()]);
     assert!(users[1].devices.is_empty() && users[1].cert.is_some() && !users[1].log.is_empty());
 
-    // L'admin voit chaque service, dont il tient le journal, même sans lien
-    // (sans ses appareils alors).
     s.set_link(&n.notifier, &n.alice, false, 71).await.unwrap();
     let DirectoryPage { users, .. } = s.directory(&n.alice, &Known::new(), None).await.unwrap();
     let seen = users.iter().find(|u| u.id == n.notifier).expect("service vu par l'admin");
@@ -752,7 +701,6 @@ async fn directory_is_filtered_by_the_network() {
     let DirectoryPage { users, .. } = s.directory(&n.carol, &Known::new(), None).await.unwrap();
     assert!(!users.iter().any(|u| u.id == n.notifier), "un membre non lié ne le voit pas");
 
-    // Le service voit la coupure du point de vue du membre.
     s.mute_service(&n.bob, &n.notifier, true).await.unwrap();
     let DirectoryPage { users, .. } = s.directory(&n.notifier, &Known::new(), None).await.unwrap();
     assert!(users.iter().find(|u| u.id == n.bob).unwrap().muted);
@@ -828,7 +776,6 @@ async fn revoking_a_person_cleans_up_everything() {
     assert!(s.links().await.unwrap().iter().all(|l| l.from != n.bob && l.to != n.bob));
     assert_eq!(s.user(&n.bob).await.unwrap().unwrap().state, UserState::Revoked);
     assert!(s.peer(&n.bob_phone.id).await.unwrap().is_none());
-    // Son nom redevient libre ; l'admin ne se révoque pas.
     s.invite_user(&n.alice_phone.id, "Bob", &[], &token_hash(&[8; 10]), 5, 83, 83 + HOUR)
         .await
         .unwrap();
@@ -847,16 +794,12 @@ async fn admin_reset_puts_everyone_back_to_pending() {
         .insert_message(msg("b1", &n.bob_phone.id, std::slice::from_ref(&n.alice_phone.id)), 90)
         .await;
     assert!(matches!(r, Err(StoreError::Forbidden(_))), "{r:?}");
-    // L'admin réinitialise son ancre, puis réinvite.
     s.admin_init(&blob(1), &blob(2)).await.unwrap();
     s.reinvite_user(&n.alice_phone.id, &n.bob, &token_hash(&[9; 10]), 5, 91, 91 + HOUR)
         .await
         .unwrap();
 }
 
-// --- Par WebSocket -----------------------------------------------------------
-
-/// Prochaine trame, en sautant les `directory_changed` poussés entre-temps.
 async fn reply(raw: &mut Raw) -> Option<Frame> {
     loop {
         match raw.recv().await {
@@ -917,11 +860,9 @@ async fn admin_frames_are_forbidden_to_members_and_services() {
                 dev.name
             );
         }
-        // La session continue.
         raw.send(&Frame::Ping).await;
         assert_eq!(raw.recv().await, Some(Frame::Pong));
     }
-    // Un service ne crée pas de jeton d'appairage, ne coupe pas de service.
     let (mut raw, _) = Raw::login(&server, &notifier).await;
     raw.send(&Frame::PairCreate).await;
     assert_eq!(error_code(&mut raw).await, ErrorCode::Forbidden);
@@ -929,8 +870,6 @@ async fn admin_frames_are_forbidden_to_members_and_services() {
     assert_eq!(error_code(&mut raw).await, ErrorCode::Forbidden);
 }
 
-/// Parcours complet d'une invitation entre deux clients bruts : jeton,
-/// premier appareil, session en attente, certification, session active.
 #[tokio::test]
 async fn invitation_round_trip_over_websocket() {
     let store = Store::in_memory().await.unwrap();
@@ -955,7 +894,6 @@ async fn invitation_round_trip_over_websocket() {
         panic!("user_invited attendu")
     };
 
-    // Premier appareil de Bob : signature de l'invitation, puis fermeture.
     let identity = Identity::generate();
     let mut raw = Raw::connect(&server).await;
     let nonce = raw.challenge().await;
@@ -985,7 +923,6 @@ async fn invitation_round_trip_over_websocket() {
     assert_eq!((user, &inviter), (bob_user.clone(), &alice.id));
     assert_eq!(raw.recv().await, None, "fermée après la réponse");
 
-    // Réutilisé : refusé.
     let mut again = Raw::connect(&server).await;
     let nonce3 = again.challenge().await;
     let other = Identity::generate();
@@ -1000,7 +937,6 @@ async fn invitation_round_trip_over_websocket() {
         .await;
     assert_eq!(error_code(&mut again).await, ErrorCode::PairingInvalid);
 
-    // Session en attente : seulement l'invitant, l'annuaire, ack, ping.
     let bob = device(bob_id.clone(), "bob-phone", identity);
     let (mut b, _) = Raw::login(&server, &bob).await;
     b.send(&Frame::DeviceUpdate {
@@ -1028,10 +964,8 @@ async fn invitation_round_trip_over_websocket() {
     assert!(matches!(b.recv().await, Some(Frame::Accepted { .. })));
     assert!(matches!(admin.recv().await, Some(Frame::Deliver { .. })));
 
-    // Certification : la même session devient active.
     admin.send(&Frame::UserCertify { user: bob_user.clone(), cert: blob(6) }).await;
     assert_eq!(admin.recv().await, Some(Frame::UserCertified { user: bob_user.clone() }));
-    // Bob est prévenu que son annuaire a changé.
     assert_eq!(b.recv().await, Some(Frame::DirectoryChanged));
     b.send(&Frame::RosterPublish { user: bob_user.clone(), seq: 1, entry: blob(7) }).await;
     assert_eq!(b.recv().await, Some(Frame::RosterPublished { user: bob_user.clone(), seq: 1 }));
@@ -1047,7 +981,6 @@ async fn invitation_round_trip_over_websocket() {
     .await;
     assert_eq!(b.recv().await, Some(Frame::DeviceUpdated { device: bob_id.clone() }));
 
-    // L'admin voit tout ; `list_devices` ne montre que sa personne.
     admin.send(&Frame::UsersGet).await;
     let Some(Frame::Users { users }) = reply(&mut admin).await else { panic!("users attendu") };
     let bob_seen = users.iter().find(|u| u.id == bob_user).unwrap();
@@ -1063,7 +996,6 @@ async fn invitation_round_trip_over_websocket() {
     };
     assert_eq!(devices.iter().map(|d| d.id.clone()).collect::<Vec<_>>(), vec![alice.id.clone()]);
 
-    // Révocation : la session de Bob est fermée, sa reconnexion refusée.
     admin.send(&Frame::UserRevoke { user: bob_user.clone() }).await;
     assert_eq!(reply(&mut admin).await, Some(Frame::UserRevoked { user: bob_user }));
     within(async {
@@ -1109,7 +1041,6 @@ async fn expired_invitation_is_refused_over_websocket() {
     })
     .await;
     assert_eq!(error_code(&mut raw).await, ErrorCode::PairingInvalid);
-    // `role` autre que `member` : refusé.
     admin.send(&Frame::UserInvite { name: "Root".into(), role: Role::Admin, links: vec![] }).await;
     assert_eq!(error_code(&mut admin).await, ErrorCode::BadFrame);
 }
@@ -1139,17 +1070,14 @@ async fn send_rate_limits_members_and_services_not_the_admin() {
         }
         other => panic!("quota_exceeded attendu, reçu {other:?}"),
     }
-    // Les publications de journal prennent dans le même seau.
     rb.send(&Frame::RosterPublish { user: n.bob.clone(), seq: 2, entry: blob(60) }).await;
     assert_eq!(error_code(&mut rb).await, ErrorCode::QuotaExceeded);
-    // Un service est limité comme un membre.
     for _ in 0..3 {
         rn.send(&Frame::Send { env: send(&notifier, &alice) }).await;
         assert!(matches!(rn.recv().await, Some(Frame::Accepted { .. })));
     }
     rn.send(&Frame::Send { env: send(&notifier, &alice) }).await;
     assert_eq!(error_code(&mut rn).await, ErrorCode::QuotaExceeded);
-    // L'admin n'a pas de limite propre.
     for _ in 0..10 {
         ra.send(&Frame::Send { env: send(&alice, &bob) }).await;
         loop {
@@ -1204,7 +1132,6 @@ async fn link_changes_and_device_revocation_are_pushed() {
     rb.send(&Frame::Send { env }).await;
     assert!(matches!(rb.recv().await, Some(Frame::Accepted { .. })));
 
-    // Bob retire son portable : session fermée, ses autres appareils prévenus.
     assert_eq!(rl.recv().await, Some(Frame::DirectoryChanged));
     rb.send(&Frame::DeviceRevoke { device: bob_laptop.id.clone() }).await;
     loop {
@@ -1272,14 +1199,11 @@ async fn services_are_created_by_the_admin_with_a_signed_qr() {
     let env = Envelope::new_plain(id.clone(), vec![], &Content::text("à qui ?"));
     rn.send(&Frame::Send { env }).await;
     assert_eq!(error_code(&mut rn).await, ErrorCode::BadFrame);
-    // Le service lit l'annuaire de qui il peut joindre.
     rn.send(&Frame::DirectoryGet { known: Known::new(), after: None }).await;
     let Some(Frame::Directory { users, .. }) = rn.recv().await else { panic!() };
     let alice_seen = users.iter().find(|u| u.id == alice_user).unwrap();
     assert!(alice_seen.devices.iter().any(|d| d.id == alice.id && d.online));
 }
-
-// --- Corrections de la relecture (note 0056) ----------------------------------
 
 #[tokio::test]
 async fn a_member_log_has_a_quota_but_the_admin_log_does_not() {
@@ -1301,7 +1225,6 @@ async fn a_member_log_has_a_quota_but_the_admin_log_does_not() {
     }
 }
 
-/// Message de 1000 octets, quota de 2500 octets en attente.
 fn capped<'a>(id: &'a str, from: &'a DeviceId, to: &'a [DeviceId]) -> NewMessage<'a> {
     NewMessage { envelope: &[b'x'; 1000], pending_quota: 2500, ..msg(id, from, to) }
 }
@@ -1319,12 +1242,10 @@ async fn pending_bytes_are_capped_for_members_and_services() {
     let refused = s.insert_message(capped("01J9Z3Q5RT8YB6ZK4C2D7E9F12", bob, to_alice), 1).await;
     assert!(matches!(refused, Err(StoreError::UserQuota(_))), "{refused:?}");
 
-    // Acquitté : la place revient.
     let pending = s.pending(alice, 0, 10, 2).await.unwrap();
     assert!(s.ack(pending[0].seq, alice, 2).await.unwrap());
     s.insert_message(capped("01J9Z3Q5RT8YB6ZK4C2D7E9F13", bob, to_alice), 3).await.unwrap();
 
-    // Un service compte aussi ; l'admin, jamais.
     s.insert_message(capped("01J9Z3Q5RT8YB6ZK4C2D7E9F14", notifier, to_alice), 4).await.unwrap();
     s.insert_message(capped("01J9Z3Q5RT8YB6ZK4C2D7E9F15", notifier, to_alice), 4).await.unwrap();
     let refused =
@@ -1357,7 +1278,6 @@ async fn a_used_invitation_links_its_devices_for_48_hours_after_use() {
     let identity = Identity::generate();
     let hash = token_hash(&[5; 10]);
     s.invite_user(&phone.id, "Bob", &[], &hash, 5, 0, 48 * HOUR).await.unwrap();
-    // Utilisée juste avant d'expirer ; l'admin ne répond que deux heures après.
     let r =
         s.redeem_invitation(&hash, "bob-phone", &identity.public_key(), 47 * HOUR).await.unwrap();
     let to_admin = std::slice::from_ref(&phone.id);
@@ -1369,7 +1289,6 @@ async fn a_used_invitation_links_its_devices_for_48_hours_after_use() {
     s.insert_message(msg("01J9Z3Q5RT8YB6ZK4C2D7E9F1H", &phone.id, to_bob), 49 * HOUR)
         .await
         .unwrap();
-    // 48 h après l'usage, l'échange est fini.
     let stats = s.purge(95 * HOUR + 1).await.unwrap();
     assert_eq!(stats.invitations, 1);
     let res =
@@ -1381,18 +1300,15 @@ async fn a_used_invitation_links_its_devices_for_48_hours_after_use() {
 async fn the_cli_revokes_by_exact_id_before_names() {
     let n = net().await;
     let target = n.alice_phone.id.as_str();
-    // Carol nomme un appareil comme l'identifiant du téléphone de l'admin.
     let decoy = extra_device(&n.store, &n.carol, target).await;
     let revoked = n.store.revoke_device(target, 10).await.unwrap();
     assert_eq!(revoked.id, n.alice_phone.id);
-    // Le nom seul désigne ensuite l'appareil de Carol.
     assert_eq!(n.store.revoke_device(target, 11).await.unwrap().id, decoy.id);
     assert_eq!(n.store.find_user(n.bob.as_str()).await.unwrap().id, n.bob);
 }
 
 #[tokio::test]
 async fn everyone_keeps_a_default_device() {
-    // Après la migration, le plus ancien appareil de l'admin est par défaut.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ot.db");
     v1_database(&path).await;
@@ -1402,7 +1318,6 @@ async fn everyone_keeps_a_default_device() {
     assert_eq!(devices.iter().filter(|d| d.is_default).count(), 1);
     assert!(devices[0].is_default);
 
-    // Révoquer le seul appareil par défaut en promeut un autre.
     let n = net().await;
     let s = &n.store;
     let defaults = |u: Vec<ot_server::store::Device>| {
@@ -1412,12 +1327,10 @@ async fn everyone_keeps_a_default_device() {
     s.revoke_device_by(&n.bob_laptop.id, &n.bob_phone.id, 10).await.unwrap();
     assert_eq!(defaults(s.user_devices(&n.bob).await.unwrap()), vec![n.bob_laptop.id.clone()]);
 
-    // Une CLI qui se déclare cède sa place sans refus.
     let cli = DeviceChanges { kind: Some(DeviceKind::Cli), ..DeviceChanges::default() };
     let carol_laptop = extra_device(s, &n.carol, "carol-laptop").await;
     s.update_device(&n.carol_phone.id, &n.carol_phone.id, &cli).await.unwrap();
     assert_eq!(defaults(s.user_devices(&n.carol).await.unwrap()), vec![carol_laptop.id]);
-    // Un service n'a jamais d'appareil par défaut.
     assert!(defaults(s.user_devices(&n.notifier).await.unwrap()).is_empty());
 }
 
@@ -1430,7 +1343,6 @@ async fn an_unverifiable_log_does_not_starve_other_people() {
         s.publish_entry(&n.bob_phone.id, &n.bob, seq, &e, u64::MAX).await.unwrap();
     }
     s.publish_entry(&n.carol_phone.id, &n.carol, 2, &blob(42), u64::MAX).await.unwrap();
-    // Alice n'avance jamais sur Bob (entrées invérifiables), mais suit `next`.
     let known = Known::from([(n.alice.clone(), 1), (n.bob.clone(), 1), (n.carol.clone(), 1)]);
     let mut after = None;
     let mut carol_log = None;

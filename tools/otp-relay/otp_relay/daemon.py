@@ -1,5 +1,3 @@
-"""Assemblage : watcher IMAP (thread) → extraction → hub (boucle asyncio)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -57,7 +55,6 @@ def build_event(raw: bytes, received_at: float, uid: int, cfg: Config) -> tuple[
 
 
 def sd_notify(state: str) -> None:
-    """Protocole sd_notify de systemd (Type=notify), sans dépendance."""
     addr = os.environ.get("NOTIFY_SOCKET")
     if not addr:
         return

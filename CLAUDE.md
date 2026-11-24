@@ -6,8 +6,7 @@ que j'invite, via un relais auto-hébergé, joignable par Tailscale ou
 publiquement derrière un frontal TLS. Le contenu est chiffré de bout en
 bout : le relais ne voit jamais le clair.
 
-Réponses, documentation interne et commentaires de code en français ;
-`README.md`, `SECURITY.md`, identifiants, messages de commit et noms de
+Réponses et documentation interne en français ; `README.md`, `SECURITY.md`, identifiants, messages de commit et noms de
 branches en anglais.
 
 Le dépôt est public : `README.md` (simplifié) et le code en sont la
@@ -69,7 +68,20 @@ l'archive.
   construction maison sans note de décision ; secrets effacés de la mémoire
   (`zeroize`).
 - Ne pas capturer d'erreur sans la traiter ou la remonter ; pas de `unwrap()`
-  hors tests et invariants commentés.
+  hors tests : un invariant se dit dans le message d'un `expect`.
+- **Pas de commentaires** dans le code (notes 0066, 0072 et 0077) : le
+  pourquoi va dans une note de `docs/decisions/`, le quoi dans les noms et
+  les tests, un raccourci dans une issue. Des tests-cliquets échouent sur
+  tout commentaire : `crates/ot-proto/tests/no_comments.rs` (Rust, TOML,
+  `deploy/`, scripts et unités d'`otp-relay`),
+  `tools/otp-relay/tests/test_no_comments.py` (Python, docstrings
+  comprises), `tools/design-tokens/no-comments.test.mjs`, la règle ESLint
+  `local/no-comments` (extension) et `NoCommentsTest` (Android). Restent
+  permis : les directives (`# shellcheck`, `@ts-expect-error`…), les
+  migrations SQL (sqlx vérifie leur somme de contrôle : jamais retouchées)
+  et le modèle `tools/otp-relay/contrib/config.example.toml`. L'aide des
+  CLI s'écrit en attributs clap (`#[command(about = …)]`,
+  `#[arg(help = …)]`), pas en `///`. Pour trier : `/delete-comment`.
 - Nouvelle dépendance : justifiée, licence compatible avec `deny.toml`.
 - Toute action que je dois faire moi-même sur mes machines (installation,
   commande sur le relais, réglage d'un appareil) va dans

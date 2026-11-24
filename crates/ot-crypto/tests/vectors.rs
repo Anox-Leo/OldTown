@@ -1,11 +1,3 @@
-//! Vecteurs figés : chaque fichier de `tests/vectors` fixe clés, aléa et
-//! entrées, et donne l'enveloppe chiffrée attendue. Un vecteur qui casse
-//! signale un changement du format chiffré : il doit être délibéré et
-//! accompagné d'une note de décision.
-//!
-//! Pour régénérer (changement de format voulu seulement) :
-//! `OT_REGENERATE_VECTORS=1 cargo test -p ot-crypto --test vectors`.
-
 use ot_crypto::directory::{
     CertRef, GENESIS_PREV, Genesis, RosterEntry, UserCert, anchor, cert_hash, entry_hash, log_head,
 };
@@ -23,7 +15,6 @@ const A: &str = "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5";
 const B: &str = "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0";
 const C: &str = "dev_01J9Z3P0A2B4C6D8E0F2G4H6J8";
 const MSG: &str = "01J9Z3Q5RT8YB6ZK4C2D7E9F1G";
-/// Étape 10 : deux personnes (Alice, l'admin, et Bob) et un service.
 const ALICE: &str = "usr_01J9Z4A1B2C3D4E5F6G7H8J9K0";
 const BOB: &str = "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0";
 const NOTIFIER: &str = "usr_01J9Z4C1D2E3F4G5H6J7K8M9N0";
@@ -58,7 +49,6 @@ fn roster(epoch: u32, version: u64) -> Roster {
     Roster { epoch, version, members: vec![member(A, "mac", 1, 1), member(B, "windows", 2, 1)] }
 }
 
-/// Vecteur : nom, clé de chiffrement, enveloppe (destinataires), corps.
 struct Vector {
     name: &'static str,
     key: Value,
@@ -147,7 +137,6 @@ fn vectors() -> Vec<Vector> {
                 sha256: bytes(140),
             },
         },
-        // --- Étape 10 (note 0052) ---------------------------------------------
         Vector {
             name: "multi_text",
             key: multi_key(&[(B, 102), (C, 103), (D, 104)]),
@@ -221,8 +210,6 @@ fn vectors() -> Vec<Vector> {
 
 const D: &str = "dev_01J9Z3R1S3T5V7W9X1Y3Z5A7B9";
 
-/// Clé `0x05` : destinataires (appareil, graine de sa clé X25519), clé
-/// éphémère et clé de message fixées.
 fn multi_key(recipients: &[(&str, u8)]) -> Value {
     let list: Vec<Value> = recipients
         .iter()
@@ -233,7 +220,6 @@ fn multi_key(recipients: &[(&str, u8)]) -> Value {
            "message_key": b64::encode(&bytes::<32>(90))})
 }
 
-/// Certificat racine d'Alice : signé par son premier appareil `A` (graine 1).
 fn admin_cert() -> SignedBlob {
     let key = SigningKey::from_bytes(&bytes(1));
     let genesis = Genesis {
@@ -247,7 +233,6 @@ fn admin_cert() -> SignedBlob {
         .unwrap()
 }
 
-/// Certificat de Bob (premier appareil `B`, graine 2), signé par `A`.
 fn member_cert() -> SignedBlob {
     let genesis = Genesis {
         device_id: dev(B),
@@ -260,8 +245,6 @@ fn member_cert() -> SignedBlob {
         .unwrap()
 }
 
-/// Certificat du service Notifier (premier appareil `C`, graine 3), signé
-/// par `A`.
 fn service_cert() -> SignedBlob {
     let genesis = Genesis {
         device_id: dev(C),
@@ -281,8 +264,6 @@ fn service_cert() -> SignedBlob {
     .unwrap()
 }
 
-/// Membre d'un roster : appareil, nom, graine de sa clé de signature (sa
-/// clé X25519 a la graine + 100).
 fn member(id: &str, name: &str, seed: u8) -> Member {
     Member {
         device_id: dev(id),
@@ -293,8 +274,6 @@ fn member(id: &str, name: &str, seed: u8) -> Member {
     }
 }
 
-/// Journal d'Alice (note 0056) : l'entrée 1 (son roster), puis l'entrée 2,
-/// même roster en version 2, qui engage les certificats de Bob et du service.
 fn admin_log() -> Vec<SignedBlob> {
     let alice = SigningKey::from_bytes(&bytes(1));
     let user: UserId = ALICE.parse().unwrap();
@@ -312,7 +291,6 @@ fn admin_log() -> Vec<SignedBlob> {
     vec![e1, e2]
 }
 
-/// Tête du journal d'Alice, portée par `invite_welcome` et `service_welcome`.
 fn admin_head() -> ot_crypto::directory::LogHead {
     log_head(admin_log().last().unwrap()).unwrap()
 }
@@ -393,7 +371,6 @@ fn open_vector(v: &Vector, env: &Envelope) -> Body {
     let k = &v.key;
     let arr = |field: &str| b64::decode(k[field].as_str().unwrap()).unwrap();
     if k["scheme"] == "multi" {
-        // Chaque destinataire ouvre le même message et lit le même corps.
         let signer = SigningKey::from_bytes(&bytes(SIGNING_SEED)).verifying_key().to_bytes();
         let bodies: Vec<Body> = multi_recipients(k)
             .iter()
@@ -466,7 +443,6 @@ fn frozen_vectors() {
             std::fs::read_to_string(path(v.name)).unwrap_or_else(|e| panic!("{} : {e}", v.name));
         assert_eq!(text, expected, "vecteur {} modifié : le format chiffré a changé", v.name);
 
-        // Le fichier figé s'ouvre et redonne le corps attendu.
         let doc: Value = serde_json::from_str(&expected).unwrap();
         let frozen: Envelope = serde_json::from_value(doc["envelope"].clone()).unwrap();
         assert_eq!(open_vector(&v, &frozen), v.body, "{}", v.name);
@@ -521,8 +497,6 @@ fn frozen_invite_code() {
     assert_eq!(InviteCode::parse(doc["code"].as_str().unwrap()).unwrap(), code);
 }
 
-/// Annuaire signé (note 0052) : certificats d'Alice (racine), de Bob et du
-/// service, ancre, et deux entrées du journal de Bob chaînées par hash.
 #[test]
 fn frozen_directory_objects() {
     let alice = SigningKey::from_bytes(&bytes(1));
@@ -559,7 +533,6 @@ fn frozen_directory_objects() {
         return;
     }
     assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "format de l'annuaire signé modifié");
-    // Les objets figés se vérifient.
     let alice_pub = alice.verifying_key().to_bytes();
     let root = ot_crypto::directory::verify_root(&admin_cert(), &anchor(&admin_cert())).unwrap();
     assert_eq!(root.genesis.sign_key, alice_pub);
@@ -601,9 +574,6 @@ fn frozen_pairing_offer() {
     assert_eq!(PairingOffer::parse(doc["qr"].as_str().unwrap()).unwrap(), offer);
 }
 
-/// Morceaux d'un fichier (note 0026) : STREAM `StreamBE32<XChaCha20Poly1305>`,
-/// données associées `"ot-file-v1"`. Morceaux de 16 octets pour garder le
-/// vecteur lisible : le format ne dépend pas de la taille des morceaux.
 #[test]
 fn frozen_file_chunks() {
     const CHUNK: u32 = 16;

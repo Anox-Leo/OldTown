@@ -1,5 +1,3 @@
-//! Étape 2, T4 : appairage côté relais (jetons à usage unique).
-
 mod common;
 
 use std::time::Duration;
@@ -16,7 +14,6 @@ async fn setup(config: Config) -> (TestServer, TestDevice) {
     (TestServer::start(store, config).await, sponsor)
 }
 
-/// Le parrain demande un jeton.
 async fn create_token(server: &TestServer, sponsor: &TestDevice) -> [u8; PAIR_TOKEN_LEN] {
     let (mut raw, _) = Raw::login(server, sponsor).await;
     raw.send(&Frame::PairCreate).await;
@@ -29,8 +26,6 @@ async fn create_token(server: &TestServer, sponsor: &TestDevice) -> [u8; PAIR_TO
     }
 }
 
-/// Le nouvel appareil présente le jeton ; renvoie la réponse, puis vérifie
-/// que la connexion est fermée.
 async fn redeem(
     server: &TestServer,
     token: &[u8; PAIR_TOKEN_LEN],
@@ -74,7 +69,6 @@ async fn valid_token_registers_device() {
     let stored = server.relay.store().device(&device_id).await.unwrap().unwrap();
     assert_eq!((stored.name.as_str(), stored.public_key), ("windows", id.public_key()));
 
-    // L'appareil s'authentifie ensuite comme n'importe quel autre.
     let dev = TestDevice {
         id: device_id,
         name: "windows".into(),
@@ -111,7 +105,6 @@ async fn expired_token_is_refused() {
         ErrorCode::PairingInvalid,
     );
 
-    // La purge supprime le jeton expiré.
     let stats = server.relay.purge_once().await.unwrap();
     assert_eq!(stats.pairings, 1);
 }
@@ -132,7 +125,6 @@ async fn wrong_signature_is_refused() {
     let id = Identity::generate();
     let mut raw = Raw::connect(&server).await;
     let nonce = raw.challenge().await;
-    // Signée par une autre clé que celle présentée.
     let sig = Identity::generate().sign_pair_redeem(&nonce, &token_hash(&token));
     raw.send(&Frame::PairRedeem {
         token,
@@ -144,7 +136,6 @@ async fn wrong_signature_is_refused() {
     assert_error(raw.recv().await.unwrap(), ErrorCode::PairingInvalid);
     assert_eq!(raw.recv().await, None);
 
-    // Le jeton n'est pas consommé.
     assert!(matches!(redeem(&server, &token, "windows", &id).await, Frame::PairRedeemed { .. }));
 }
 
@@ -218,7 +209,6 @@ async fn store_never_keeps_token_in_clear() {
     assert!(bytes.windows(hash.len()).any(|w| w == hash), "le hash doit y être");
 }
 
-/// Étape 3, T9 : enregistrement par le parrain (QR inversé, note 0022).
 fn register_frame(id: &ot_proto::DeviceId, name: &str, key: &ed25519_dalek::SigningKey) -> Frame {
     use ed25519_dalek::Signer;
     let public_key = key.verifying_key().to_bytes();
@@ -241,7 +231,6 @@ async fn sponsor_registers_a_device_by_reverse_qr() {
         ("windows", key.verifying_key().to_bytes())
     );
 
-    // Le nouvel appareil s'authentifie sous l'identifiant qu'il a choisi.
     let nonce_dev = TestDevice {
         id: id.clone(),
         name: "windows".into(),
@@ -251,7 +240,6 @@ async fn sponsor_registers_a_device_by_reverse_qr() {
     let (_b, pending) = Raw::login(&server, &nonce_dev).await;
     assert_eq!(pending, 0);
 
-    // Rejeu : identifiant et clé déjà pris ; la session du parrain reste ouverte.
     raw.send(&register_frame(&id, "autre", &key)).await;
     match raw.recv().await {
         Some(Frame::Error { code: ErrorCode::PairingInvalid, reference, .. }) => {
@@ -270,7 +258,6 @@ async fn reverse_qr_registration_is_checked() {
     let key = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
     let id = ot_proto::DeviceId::generate();
 
-    // Nom changé après signature (relais ou proxy qui triche).
     let Frame::PairRegister { device_id, public_key, sig, .. } =
         register_frame(&id, "windows", &key)
     else {
@@ -278,14 +265,12 @@ async fn reverse_qr_registration_is_checked() {
     };
     raw.send(&Frame::PairRegister { device_id, name: "intrus".into(), public_key, sig }).await;
     assert_error(raw.recv().await.unwrap(), ErrorCode::PairingInvalid);
-    // Nom déjà pris, nom invalide.
     raw.send(&register_frame(&id, "mac", &key)).await;
     assert_error(raw.recv().await.unwrap(), ErrorCode::NameTaken);
     raw.send(&register_frame(&id, " windows", &key)).await;
     assert_error(raw.recv().await.unwrap(), ErrorCode::BadFrame);
     assert!(server.relay.store().device(&id).await.unwrap().is_none());
 
-    // Hors session authentifiée : refusé avant `auth`.
     let mut anon = Raw::connect(&server).await;
     anon.challenge().await;
     anon.send(&register_frame(&id, "windows", &key)).await;

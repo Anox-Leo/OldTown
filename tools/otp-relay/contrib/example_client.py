@@ -1,22 +1,17 @@
-"""Client minimal d'otp-relay : reconnexion, détection de daemon muet, dédoublonnage."""
-
 import asyncio
 import json
 import os
 import time
 
 SOCKET = f"/run/user/{os.getuid()}/otp-relay/otp-relay.sock"
-SILENCE_LIMIT = 75  # 2,5 heartbeats
+SILENCE_LIMIT = 75
 
 
 async def handle(event: dict, seen: set[str], writer: asyncio.StreamWriter) -> None:
     if event["id"] in seen:
         return
     seen.add(event["id"])
-    # À remplacer par l'envoi chiffré vers les appareils.
     print(f"{event['code']} de {event['sender']['domain']} (vérifié : {event['sender_verified']})")
-    # Une fois le code utilisé sur un appareil :
-    # writer.write(json.dumps({"cmd": "consume", "id": event["id"], "by": "pixel-8"}).encode() + b"\n")
 
 
 async def session(seen: set[str]) -> None:
@@ -35,7 +30,7 @@ async def session(seen: set[str]) -> None:
                 case "status":
                     print(f"IMAP : {msg['state']} {msg['detail']}")
                 case "consumed" | "expired":
-                    pass  # retirer le code des appareils
+                    pass
                 case "error":
                     raise ConnectionError(msg["error"])
     finally:

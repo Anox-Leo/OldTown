@@ -1,5 +1,3 @@
-//! Compteurs du relais, exposés au format texte Prometheus sur `/metrics`.
-
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
@@ -14,28 +12,21 @@ pub struct Metrics {
     pub purged_expired: AtomicU64,
     pub pairings_created: AtomicU64,
     pub pairings_redeemed: AtomicU64,
-    /// Appareils enregistrés par un parrain (QR inversé).
     pub pairings_registered: AtomicU64,
     pub pairings_rejected: AtomicU64,
-    /// Requêtes HTTP (fichiers) dont la signature est refusée.
     pub http_auth_failures: AtomicU64,
     pub blobs_created: AtomicU64,
-    /// Fichiers refusés : trop gros ou quota atteint.
     pub blobs_rejected: AtomicU64,
     pub blob_chunks_uploaded: AtomicU64,
     pub blob_chunks_downloaded: AtomicU64,
-    /// Fichiers supprimés : retirés par tous, annulés, purgés.
     pub blobs_done: AtomicU64,
     pub blobs_cancelled: AtomicU64,
     pub blobs_purged: AtomicU64,
-    /// Connexions et requêtes refusées par les limites (étape 8e).
     pub limited_busy: AtomicU64,
     pub limited_failures: AtomicU64,
-    /// Trames et fichiers refusés par le réseau ou les quotas (étape 10).
     pub refused_forbidden: AtomicU64,
     pub refused_not_allowed: AtomicU64,
     pub refused_quota: AtomicU64,
-    /// Invitations : créées, utilisées, refusées, certifiées.
     pub invitations_created: AtomicU64,
     pub invitations_redeemed: AtomicU64,
     pub invitations_rejected: AtomicU64,

@@ -9,61 +9,47 @@ use crate::{
     PAIR_TOKEN_LEN, PROTOCOL_VERSION, Role, SignedBlob, UserId, b64,
 };
 
-/// Trame échangée sur la connexion WebSocket. Le type est porté par `t`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Frame {
-    /// Serveur → client, à l'ouverture de la connexion.
     Challenge {
         #[serde(with = "b64::array")]
         nonce: [u8; NONCE_LEN],
     },
-    /// Client → serveur : signature Ed25519 de [`crate::auth_message`].
     Auth {
         device_id: DeviceId,
         #[serde(with = "b64::array")]
         sig: [u8; 64],
     },
-    /// Serveur → client : session ouverte, `pending` messages en attente.
     Welcome {
         device_id: DeviceId,
         pending: u64,
     },
-    /// Client → serveur : envoi d'une enveloppe.
     Send {
         env: Envelope,
     },
-    /// Serveur → client : l'enveloppe est stockée.
     Accepted {
         msg_id: Ulid,
         seq: i64,
     },
-    /// Serveur → client : livraison d'un message.
     Deliver {
         seq: i64,
         env: Envelope,
     },
-    /// Client → serveur : message `seq` reçu et traité.
     Ack {
         seq: i64,
     },
-    /// Client → serveur : demande la liste des appareils.
     ListDevices,
-    /// Serveur → client : réponse à `list_devices`.
     Devices {
         devices: Vec<DeviceInfo>,
     },
-    /// Client → serveur, session authentifiée : demande un jeton d'appairage.
     PairCreate,
-    /// Serveur → client : jeton à usage unique, valable jusqu'à `expires_at`.
     PairCreated {
         #[serde(with = "b64::array")]
         token: [u8; PAIR_TOKEN_LEN],
         #[serde(with = "time::serde::rfc3339")]
         expires_at: OffsetDateTime,
     },
-    /// Nouvel appareil → serveur, à la place de `auth` : s'enregistre avec un
-    /// jeton. `sig` signe [`crate::pair_redeem_message`] avec `public_key`.
     PairRedeem {
         #[serde(with = "b64::array")]
         token: [u8; PAIR_TOKEN_LEN],
@@ -73,14 +59,10 @@ pub enum Frame {
         #[serde(with = "b64::array")]
         sig: [u8; 64],
     },
-    /// Serveur → nouvel appareil : enregistré ; la connexion est ensuite fermée.
     PairRedeemed {
         device_id: DeviceId,
         sponsor: DeviceId,
     },
-    /// Parrain, session authentifiée → serveur (QR inversé, note 0022) :
-    /// enregistre le nouvel appareil dont il a scanné le QR. `sig` signe
-    /// [`crate::pair_register_message`] avec `public_key`.
     PairRegister {
         device_id: DeviceId,
         name: String,
@@ -89,26 +71,15 @@ pub enum Frame {
         #[serde(with = "b64::array")]
         sig: [u8; 64],
     },
-    /// Serveur → parrain : appareil enregistré. Une erreur porte en `ref`
-    /// l'identifiant demandé et laisse la session ouverte.
     PairRegistered {
         device_id: DeviceId,
     },
-    // --- Étape 10 : personnes, annuaire et réseau (note 0052) ---------------
-    /// Client → serveur : demande l'annuaire. `known` : dernier `seq` du
-    /// journal déjà vérifié, par personne ; absent, tout le journal.
     DirectoryGet {
         #[serde(default, skip_serializing_if = "Known::is_empty")]
         known: Known,
-        /// Page suivante : les personnes après celle-ci (le `next` de la
-        /// trame `directory` précédente) ; absent, depuis le début.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<UserId>,
     },
-    /// Serveur → client : ma personne, l'admin (ancre), et les personnes
-    /// liées dans un sens ou dans l'autre, filtrées par le réseau. Une
-    /// trame ne dépasse jamais `MAX_FRAME_BYTES` : `next` présent, d'autres
-    /// personnes suivent (relire avec `after = next`).
     Directory {
         me: UserId,
         admin: UserId,
@@ -116,22 +87,16 @@ pub enum Frame {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<UserId>,
     },
-    /// Serveur → client : l'annuaire a changé, le relire.
     DirectoryChanged,
-    /// Client → serveur : publie l'entrée `seq` du journal de roster de
-    /// `user` (sa personne ; l'admin aussi pour une personne de service).
     RosterPublish {
         user: UserId,
         seq: u64,
         entry: SignedBlob,
     },
-    /// Serveur → client : entrée enregistrée.
     RosterPublished {
         user: UserId,
         seq: u64,
     },
-    /// Client → serveur : règle le profil d'un appareil de sa personne
-    /// (l'admin : tous). Seul l'appareil lui-même déclare ses `features`.
     DeviceUpdate {
         device: DeviceId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,16 +111,12 @@ pub enum Frame {
     DeviceUpdated {
         device: DeviceId,
     },
-    /// Client → serveur : révoque un appareil de sa personne (l'admin :
-    /// tous), jamais soi-même. La rotation de la clé de groupe est faite
-    /// avant par le client.
     DeviceRevoke {
         device: DeviceId,
     },
     DeviceRevoked {
         device: DeviceId,
     },
-    /// Membre → serveur : coupe (`muted`) ou rouvre un service lié à lui.
     ServiceMute {
         service: UserId,
         muted: bool,
@@ -164,8 +125,6 @@ pub enum Frame {
         service: UserId,
         muted: bool,
     },
-    /// Admin → serveur, une seule fois : certificat racine auto-signé et
-    /// première entrée de son journal.
     AdminInit {
         cert: SignedBlob,
         entry: SignedBlob,
@@ -173,21 +132,15 @@ pub enum Frame {
     AdminInitialized {
         user: UserId,
     },
-    /// Admin → serveur : invite une personne (`member`), liée dans les deux
-    /// sens à chaque personne de `links`.
     UserInvite {
         name: String,
         role: Role,
         #[serde(default)]
         links: Vec<UserId>,
     },
-    /// Admin → serveur : réinvite une personne qui a perdu ses appareils ;
-    /// ses appareils sont révoqués, son certificat et son journal oubliés,
-    /// ses liens gardés.
     UserReinvite {
         user: UserId,
     },
-    /// Serveur → admin : jeton d'invitation à usage unique.
     UserInvited {
         user: UserId,
         #[serde(with = "b64::array")]
@@ -195,8 +148,6 @@ pub enum Frame {
         #[serde(with = "time::serde::rfc3339")]
         expires_at: OffsetDateTime,
     },
-    /// Admin → serveur : certificat d'une personne invitée (elle devient
-    /// active), ou certificat re-signé d'une personne active.
     UserCertify {
         user: UserId,
         cert: SignedBlob,
@@ -204,10 +155,6 @@ pub enum Frame {
     UserCertified {
         user: UserId,
     },
-    /// Admin → serveur : crée une personne de service et son premier
-    /// appareil, dont il a scanné le QR inversé. `sig` signe
-    /// [`crate::pair_register_message`] avec `public_key`. Réponse :
-    /// `pair_registered`.
     ServiceCreate {
         user: UserId,
         name: String,
@@ -219,8 +166,6 @@ pub enum Frame {
         sig: [u8; 64],
         cert: SignedBlob,
     },
-    /// Admin → serveur : ajoute un appareil à une personne de service.
-    /// Réponse : `pair_registered`.
     ServiceDevice {
         user: UserId,
         device: DeviceId,
@@ -230,7 +175,6 @@ pub enum Frame {
         #[serde(with = "b64::array")]
         sig: [u8; 64],
     },
-    /// Admin → serveur : révoque une personne, ses appareils et ses liens.
     UserRevoke {
         user: UserId,
     },
@@ -244,8 +188,6 @@ pub enum Frame {
     UserRenamed {
         user: UserId,
     },
-    /// Admin → serveur : pose ou retire un lien. Entre deux personnes, les
-    /// deux sens ; depuis un service, le seul sens service → personne.
     LinkSet {
         from: UserId,
         to: UserId,
@@ -256,13 +198,10 @@ pub enum Frame {
         to: UserId,
         allowed: bool,
     },
-    /// Admin → serveur : toutes les personnes et leurs appareils.
     UsersGet,
     Users {
         users: Vec<AdminUser>,
     },
-    /// Premier appareil d'une personne invitée → serveur, à la place de
-    /// `auth`. `sig` signe [`crate::invite_redeem_message`] avec `public_key`.
     InviteRedeem {
         #[serde(with = "b64::array")]
         token: [u8; PAIR_TOKEN_LEN],
@@ -272,26 +211,16 @@ pub enum Frame {
         #[serde(with = "b64::array")]
         sig: [u8; 64],
     },
-    /// Serveur → nouvel appareil : enregistré dans sa personne ; la
-    /// connexion est ensuite fermée.
     InviteRedeemed {
         user: UserId,
         device: DeviceId,
         inviter: DeviceId,
     },
-    /// Client → serveur, session authentifiée : maintien de la connexion.
-    /// L'extension Chrome en envoie toutes les 20 s, son service worker
-    /// s'arrêtant après 30 s sans message (note 0023).
     Ping,
-    /// Serveur → client : réponse à `ping`.
     Pong,
-    /// Les deux sens : erreur typée. `auth_failed`, et `pairing_invalid` ou
-    /// `name_taken` pendant `pair_redeem` ou `invite_redeem`, ferment la
-    /// connexion.
     Error {
         code: ErrorCode,
         message: String,
-        /// Référence de la trame fautive (`msg_id` d'un `send`, par exemple).
         #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
         reference: Option<String>,
     },
@@ -308,37 +237,23 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
-    /// JSON invalide ou champs incorrects.
     BadFrame,
     UnsupportedVersion,
     UnknownType,
-    /// Trame valide mais inattendue à ce stade (ex. `send` avant `auth`).
     UnexpectedFrame,
     AuthFailed,
     EnvelopeTooLarge,
-    /// `from` ne correspond pas à l'appareil authentifié.
     SenderMismatch,
     UnknownRecipient,
-    /// `msg_id` déjà utilisé par un autre expéditeur.
     MsgIdConflict,
-    /// Jeton d'appairage inconnu, expiré ou déjà utilisé, signature fausse,
-    /// ou clé ou identifiant déjà enregistrés.
     PairingInvalid,
-    /// Nom d'appareil (ou de personne) déjà pris.
     NameTaken,
     Internal,
-    /// Trame réservée à l'admin, ou interdite à une personne en attente
-    /// (étape 10).
     Forbidden,
-    /// Destinataire hors réseau : rien n'est stocké.
     NotAllowed,
-    /// Quota de la personne atteint (appareils, envois, invitations).
     QuotaExceeded,
-    /// La personne de la session vient d'être révoquée.
     UserRevoked,
-    /// Écriture concurrente (journal de roster) : relire puis recommencer.
     Conflict,
-    /// Code ajouté par une version plus récente du protocole.
     #[serde(other)]
     Unknown,
 }
@@ -419,7 +334,6 @@ impl Frame {
         Self::Error { code, message: message.into(), reference }
     }
 
-    /// Nom du type, tel qu'écrit dans `t`.
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::Challenge { .. } => "challenge",
@@ -473,7 +387,6 @@ impl Frame {
         }
     }
 
-    /// Sérialise la trame avec son champ de version `v`.
     pub fn to_json(&self) -> String {
         let Value::Object(fields) = serde_json::to_value(self).expect("Frame est sérialisable")
         else {
@@ -485,7 +398,6 @@ impl Frame {
         Value::Object(obj).to_string()
     }
 
-    /// Décode une trame en distinguant version, type inconnu et contenu invalide.
     pub fn from_json(text: &str) -> Result<Self, DecodeError> {
         let value: Value =
             serde_json::from_str(text).map_err(|e| DecodeError::BadFrame(e.to_string()))?;

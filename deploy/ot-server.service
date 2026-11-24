@@ -1,9 +1,3 @@
-# Relais OldTown. Installation : voir README.md, « Install ».
-#
-# Tourne sous l'utilisateur système ot-relay (créé à l'étape 0) plutôt qu'avec
-# DynamicUser, pour que l'administration locale puisse lancer
-# `sudo -u ot-relay ot-server device ...` sur la même base.
-
 [Unit]
 Description=Relais OldTown
 Documentation=file:///usr/local/share/doc/oldtown/README.md
@@ -15,21 +9,8 @@ Type=exec
 User=ot-relay
 Group=ot-relay
 ExecStart=/usr/local/bin/ot-server serve
-# À remplacer par l'IP Tailscale du serveur dans une surcharge locale :
-#   sudo systemctl edit ot-server
-#   [Service]
-#   Environment=OT_LISTEN=<ip tailscale>:7878
-# À l'amorçage, tant que l'IP n'est pas montée, l'écoute échoue et systemd
-# réessaie.
-# TLS (`wss`, note 0015), une fois le certificat obtenu par ot-tls-renew,
-# dans la même surcharge :
-#   Environment=OT_TLS_CERT=/var/lib/ot-relay/tls/relais.crt
-#   Environment=OT_TLS_KEY=/var/lib/ot-relay/tls/relais.key
 Environment=OT_LISTEN=127.0.0.1:7878
-# /metrics, seulement en local (étape 8e) : curl http://127.0.0.1:7879/metrics
 Environment=OT_ADMIN_LISTEN=127.0.0.1:7879
-# Derrière un frontal TLS (Caddy) sur la même machine, dans la surcharge :
-#   Environment=OT_TRUSTED_PROXY=127.0.0.1
 Environment=OT_DB=/var/lib/ot-relay/ot.db
 Environment=OT_TTL=7d
 Environment=OT_LOG_FORMAT=json
@@ -40,7 +21,6 @@ StateDirectory=ot-relay
 StateDirectoryMode=0700
 UMask=0077
 
-# Durcissement
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=

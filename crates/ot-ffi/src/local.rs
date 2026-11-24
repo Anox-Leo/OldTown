@@ -1,6 +1,3 @@
-//! État local de l'appareil, rangé dans le [`SecretStore`] de l'appli :
-//! identité, configuration, appairage en cours, messages vus, historique.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -15,26 +12,17 @@ use zeroize::Zeroizing;
 
 use crate::{DeviceState, Group, OtError, Received, SecretStore, on_runtime};
 
-/// Configuration : URL du relais, nom et identifiant.
 pub(crate) const DEVICE: &str = "device.json";
-/// Graine Ed25519, en base64 (même format que `device.key` de la CLI).
 pub(crate) const DEVICE_KEY: &str = "device.key";
-/// Appairage par code en attente de la réponse du parrain (contient le code).
 pub(crate) const PENDING_JOIN: &str = "pending_join.json";
-/// Derniers `msg_id` vus.
 pub(crate) const SEEN: &str = "seen.json";
-/// Derniers éléments reçus et envoyés.
 pub(crate) const HISTORY: &str = "history.json";
-/// Dernière ouverture de la conversation de chaque personne (non-lus).
 pub(crate) const OPENED: &str = "opened.json";
 
-/// Taille de l'historique gardé (note 0033, comme l'extension).
 pub const HISTORY_LEN: usize = 100;
 
-/// Sérialise les lectures-écritures de l'historique (événements et écran).
 static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 
-/// [`ot_core::SecretStore`] au-dessus du stockage de l'appli.
 pub(crate) struct Bridge(pub Arc<dyn SecretStore>);
 
 impl ot_core::SecretStore for Bridge {
@@ -53,7 +41,6 @@ fn store_error(e: crate::StoreError) -> KeyringError {
     KeyringError(e.to_string())
 }
 
-/// Accès typé au stockage de l'appli.
 #[derive(Clone)]
 pub(crate) struct Local {
     store: Arc<Bridge>,
@@ -141,8 +128,6 @@ impl Local {
         self.delete(PENDING_JOIN)
     }
 
-    /// `msg_id` vus ; un état illisible donne une liste vide (au pire un
-    /// doublon affiché).
     pub fn seen(&self) -> Vec<Ulid> {
         let ids: Vec<String> = self.read_json(SEEN).ok().flatten().unwrap_or_default();
         ids.iter().filter_map(|s| Ulid::from_string(s).ok()).collect()
@@ -153,13 +138,11 @@ impl Local {
         self.write_json(SEEN, &ids)
     }
 
-    /// Derniers éléments reçus et envoyés, du plus récent au plus ancien.
     pub fn history(&self) -> Result<Vec<Received>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         Ok(self.read_json(HISTORY)?.unwrap_or_default())
     }
 
-    /// Ajoute un élément en tête ; seuls les [`HISTORY_LEN`] derniers restent.
     pub fn push_history(&self, item: Received) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
@@ -169,8 +152,6 @@ impl Local {
         self.write_json(HISTORY, &items)
     }
 
-    /// Envoi accepté par le relais : l'élément n'est plus en cours.
-    /// Renvoie l'élément mis à jour, `None` s'il a quitté l'historique.
     pub fn mark_sent(&self, msg_id: &str) -> Result<Option<Received>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
@@ -181,7 +162,6 @@ impl Local {
         Ok(Some(updated))
     }
 
-    /// Retire un élément (envoi en échec).
     pub fn remove_history(&self, msg_id: &str) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
@@ -189,7 +169,6 @@ impl Local {
         self.write_json(HISTORY, &items)
     }
 
-    /// Note l'URI d'un fichier téléchargé dans son élément d'historique.
     pub fn set_file_uri(&self, msg_id: &str, uri: &str) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
@@ -207,13 +186,10 @@ impl Local {
         self.delete(OPENED)
     }
 
-    /// Dernière ouverture de la conversation de chaque personne, en
-    /// millisecondes ; un état illisible compte comme vide (tout non lu).
     pub fn opened(&self) -> HashMap<String, i64> {
         self.read_json(OPENED).ok().flatten().unwrap_or_default()
     }
 
-    /// Conversation de `user` ouverte à `at_ms` ; jamais en arrière.
     pub fn mark_opened(&self, user: &str, at_ms: i64) -> Result<HashMap<String, i64>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut opened = self.opened();
@@ -223,7 +199,6 @@ impl Local {
         Ok(opened)
     }
 
-    /// Efface tout : identité, configuration, groupe, état.
     pub fn forget(&self) -> Result<(), OtError> {
         self.keyring().forget_group()?;
         for name in [DEVICE, DEVICE_KEY, PENDING_JOIN, SEEN, HISTORY, OPENED] {
@@ -233,7 +208,6 @@ impl Local {
     }
 }
 
-/// URL du relais acceptée : `wss://` (ou `ws://` pour les essais), avec un hôte.
 fn check_server_url(url: &str) -> Result<String, OtError> {
     let url = url.trim().trim_end_matches('/');
     let rest =
@@ -248,13 +222,11 @@ fn check_server_url(url: &str) -> Result<String, OtError> {
     Ok(url.to_owned())
 }
 
-/// Appareil enregistré, `None` avant l'appairage.
 #[uniffi::export]
 pub fn device_state(store: Arc<dyn SecretStore>) -> Result<Option<DeviceState>, OtError> {
     Local::new(store).device()
 }
 
-/// Groupe enregistré, sans connexion (feuille de partage, écran de démarrage).
 #[uniffi::export]
 pub fn group_snapshot(store: Arc<dyn SecretStore>) -> Result<Option<Group>, OtError> {
     let local = Local::new(store);
@@ -262,10 +234,6 @@ pub fn group_snapshot(store: Arc<dyn SecretStore>) -> Result<Option<Group>, OtEr
     Ok(ot_core::group_info(&local.keyring())?.map(|g| Group::from_info(g, &device.device_id)))
 }
 
-/// Rejoint un groupe avec un code d'appairage (QR « rejoindre » ou saisie) :
-/// crée l'identité, s'enregistre auprès du relais, et laisse la demande au
-/// parrain à [`crate::OtClient`], qui l'envoie à son démarrage. Le groupe
-/// arrive ensuite (`Event::GroupChanged`).
 #[uniffi::export]
 pub async fn join(
     store: Arc<dyn SecretStore>,
@@ -287,7 +255,6 @@ pub async fn join(
             });
         }
         let server_url = check_server_url(&server_url)?;
-        // Valide le code avant tout contact avec le relais.
         let uri = PairUri::parse(&PairUri { server_url, code }.encode())?;
         let identity = Identity::generate();
         let redeemed = ot_core::redeem_pairing(
@@ -316,10 +283,6 @@ pub async fn join(
     .await
 }
 
-/// Premier appareil d'une personne invitée (étape 10) : rachète le jeton
-/// du code `ot2-…` auprès du relais et range l'invitation (son secret
-/// compris) ; [`crate::OtClient`] envoie la demande à l'admin à chaque
-/// connexion jusqu'à sa réponse. La fin arrive par `Event::Joined`.
 #[uniffi::export]
 pub async fn join_invite(
     store: Arc<dyn SecretStore>,
@@ -341,7 +304,6 @@ pub async fn join_invite(
             });
         }
         let server_url = check_server_url(&server_url)?;
-        // Valide le code avant tout contact avec le relais.
         let uri = InviteUri::parse(&InviteUri { server_url, code }.encode())?;
         let code = InviteCode::parse(&uri.code)
             .map_err(|e| OtError::Pairing { message: e.to_string() })?;
@@ -363,14 +325,11 @@ pub async fn join_invite(
     .await
 }
 
-/// Oublie l'appareil : il faudra le réappairer. Le client doit être arrêté.
 #[uniffi::export]
 pub fn forget_device(store: Arc<dyn SecretStore>) -> Result<(), OtError> {
     Local::new(store).forget()
 }
 
-/// Change l'URL du relais (passage de Tailscale à un nom public, note 0015).
-/// Prise en compte au prochain démarrage du client.
 #[uniffi::export]
 pub fn set_server_url(store: Arc<dyn SecretStore>, url: String) -> Result<DeviceState, OtError> {
     let local = Local::new(store);
@@ -382,7 +341,6 @@ pub fn set_server_url(store: Arc<dyn SecretStore>, url: String) -> Result<Device
     Ok(device)
 }
 
-/// Derniers éléments reçus et envoyés, du plus récent au plus ancien.
 #[uniffi::export]
 pub fn history(store: Arc<dyn SecretStore>) -> Result<Vec<Received>, OtError> {
     Local::new(store).history()
@@ -393,22 +351,17 @@ pub fn clear_history(store: Arc<dyn SecretStore>) -> Result<(), OtError> {
     Local::new(store).clear_history()
 }
 
-/// Invitation rachetée, en attente de la certification par l'admin
-/// (`Event::Joined` la termine).
 #[uniffi::export]
 pub fn invite_pending(store: Arc<dyn SecretStore>) -> Result<bool, OtError> {
     use ot_core::Keyring;
     Ok(Local::new(store).keyring().load_pending_invite()?.is_some())
 }
 
-/// Dernière ouverture de la conversation de chaque personne
-/// (`user_id` → millisecondes), pour compter ses non-lus.
 #[uniffi::export]
 pub fn opened(store: Arc<dyn SecretStore>) -> HashMap<String, i64> {
     Local::new(store).opened()
 }
 
-/// Note l'ouverture de la conversation de `user_id` ; renvoie le tout.
 #[uniffi::export]
 pub fn mark_opened(
     store: Arc<dyn SecretStore>,
@@ -418,7 +371,6 @@ pub fn mark_opened(
     Local::new(store).mark_opened(&user_id, at_ms)
 }
 
-/// Note où un fichier reçu a été enregistré (pour « Ouvrir »).
 #[uniffi::export]
 pub fn set_file_uri(
     store: Arc<dyn SecretStore>,
@@ -428,7 +380,6 @@ pub fn set_file_uri(
     Local::new(store).set_file_uri(&msg_id, &uri)
 }
 
-/// Noms gardés à côté du keyring : pour les tests, la liste complète.
 #[cfg(test)]
 pub(crate) const ALL_NAMES: &[&str] = &[
     DEVICE,

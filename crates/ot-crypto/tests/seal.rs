@@ -1,6 +1,3 @@
-//! Aller-retour et altérations, pour les schémas `0x01` à `0x04` et la clé
-//! d'invitation ; `0x05` a ses propres tests (`multi.rs`).
-
 use ot_crypto::{
     Body, CryptoError, ExchangeKeyPair, GroupKey, Header, OpenKey, PairingSecret, SealKey,
     SigningKey, open, seal,
@@ -36,7 +33,6 @@ type Tamper = Box<dyn Fn(&mut Envelope)>;
 struct Case {
     seal: SealFn,
     open: OpenFn,
-    /// Ouverture avec une autre clé du même type.
     open_wrong: OpenFn,
 }
 
@@ -110,7 +106,6 @@ fn cases() -> Vec<(&'static str, Case)> {
                     let (k, s) = (qr_recipient.clone(), qr_secret.clone());
                     move |env| open(env, OpenKey::PairQr(&k, &s))
                 }),
-                // Bonne clé X25519, mauvais secret : le relais sans `S`.
                 open_wrong: Box::new(move |env| {
                     open(env, OpenKey::PairQr(&qr_recipient, &PairingSecret::generate()))
                 }),
@@ -213,9 +208,6 @@ fn key_of_another_scheme_is_refused() {
     assert_eq!(open(&env, OpenKey::Pairing(&secret)).err(), Some(CryptoError::Decrypt));
 }
 
-/// L'invitation et l'appairage partagent l'en-tête `0x02` mais pas la clé :
-/// le même `S` n'ouvre pas l'un pour l'autre, et chaque clé n'admet que ses
-/// corps.
 #[test]
 fn invitation_and_pairing_keys_are_separate() {
     let sk = signer();
@@ -240,7 +232,6 @@ fn invitation_and_pairing_keys_are_separate() {
 #[test]
 fn low_order_recipient_is_refused() {
     let env = envelope();
-    // Point d'ordre faible : l'échange donnerait un secret nul.
     let res = seal(&env, SealKey::Device { recipient: [0; 32] }, &signer(), &body());
     assert_eq!(res.err(), Some(CryptoError::WeakKey));
 }
@@ -263,9 +254,7 @@ fn pair_qr_needs_both_secret_and_exchange_key() {
     env.payload = seal(&env, key, &signer(), &body()).unwrap();
     assert!(matches!(Header::parse(&env.payload), Ok(Header::PairQr { .. })));
     assert!(open(&env, OpenKey::PairQr(&recipient, &secret)).is_ok());
-    // Une photo du QR (S et clé publique) ne suffit pas à lire.
     let thief = ExchangeKeyPair::generate();
     assert_eq!(open(&env, OpenKey::PairQr(&thief, &secret)).err(), Some(CryptoError::Decrypt));
-    // Le schéma 0x03 n'ouvre pas un message 0x04.
     assert_eq!(open(&env, OpenKey::Device(&recipient)).err(), Some(CryptoError::Decrypt));
 }

@@ -1,5 +1,3 @@
-//! API exportée, contre un relais en processus (étape 3, T2).
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,7 +10,6 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::local::{ALL_NAMES, Local};
 
-/// Stockage de test, comme le ferait Kotlin.
 #[derive(Default)]
 struct TestStore(Mutex<HashMap<String, Vec<u8>>>);
 
@@ -48,15 +45,12 @@ async fn relay() -> (String, Store) {
     let store = Store::in_memory().await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    // Dossier des fichiers propre à chaque relais de test, sous le dossier
-    // temporaire du système.
     let blobs = std::env::temp_dir().join(format!("ot-ffi-test-{}", ot_core::Ulid::generate()));
     let relay = Relay::new(store.clone(), Config { blob_dir: blobs, ..Config::default() });
     tokio::spawn(ot_server::serve(relay, listener, std::future::pending()));
     (url, store)
 }
 
-/// Téléphone déjà enregistré, premier membre du groupe.
 async fn phone(url: &str, relay: &Store) -> Arc<TestStore> {
     let store = Arc::new(TestStore::default());
     let local = Local::new(store.clone());
@@ -99,7 +93,6 @@ async fn phone_joins_by_code_then_exchanges() {
     let invitation = a.pair_new().await.unwrap();
     assert!(invitation.uri.starts_with("oldtown://pair?s=ws://"));
 
-    // Le second téléphone scanne le QR.
     let QrKind::Join { server_url, code } = classify_qr(invitation.uri.clone()) else {
         panic!("QR « rejoindre » attendu");
     };
@@ -108,7 +101,6 @@ async fn phone_joins_by_code_then_exchanges() {
     let device =
         join(b_store.clone(), server_url.clone(), code.clone(), "pixel".into()).await.unwrap();
     assert_eq!(device.name, "pixel");
-    // Le code ne sert qu'une fois, et un appareil enregistré ne rejoint pas deux fois.
     assert!(matches!(
         join(b_store.clone(), server_url, code, "pixel".into()).await,
         Err(OtError::Invalid { .. })
@@ -123,7 +115,6 @@ async fn phone_joins_by_code_then_exchanges() {
     assert!(group.members.iter().any(|m| m.is_self && m.name == "pixel"));
     assert_eq!(group_snapshot(b_store.clone()).unwrap(), Some(group));
 
-    // Échange : un lien de B vers A, rangé dans l'historique de A.
     let msg_id = b.send_text(" https://example.org/a ".into(), vec![]).await.unwrap();
     let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
         unreachable!()
@@ -135,7 +126,6 @@ async fn phone_joins_by_code_then_exchanges() {
     );
     assert!(received.to.is_empty() && !received.outgoing, "envoi à tous : {received:?}");
     assert_eq!(history(a_store.clone()).unwrap(), vec![received.clone()]);
-    // Chez B, l'envoi est rangé en cours, puis accepté (note 0033).
     let Event::Sent { item } = next(&b, |e| matches!(e, Event::Sent { .. })).await else {
         unreachable!()
     };
@@ -149,7 +139,6 @@ async fn phone_joins_by_code_then_exchanges() {
     clear_history(a_store.clone()).unwrap();
     assert!(history(a_store.clone()).unwrap().is_empty());
 
-    // Destinataire hors groupe, texte vide : rien de rangé.
     assert!(matches!(
         b.send_text("x".into(), vec![ot_core::DeviceId::generate().to_string()]).await,
         Err(OtError::NotInGroup { .. })
@@ -180,7 +169,6 @@ async fn the_admin_phone_publishes_the_directory_only_on_request() {
     assert_eq!(a.admin_root(false).await.unwrap(), AdminRoot::Ready { user_id: user_id.clone() });
     assert!(matches!(a.admin_init().await, Err(OtError::Invalid { .. })), "déjà publiée");
 
-    // Le téléphone déclare sa catégorie ; l'annuaire relu la montre.
     let me = within(async {
         loop {
             let people = a.people().await.unwrap();
@@ -204,7 +192,6 @@ async fn phone_sponsors_by_reverse_qr() {
     let a = OtClient::start(a_store.clone()).unwrap();
     next(&a, connected).await;
 
-    // Un PC affiche son QR (comme `ot pair join --qr`).
     let pc = ClientConfig::new(
         url.clone(),
         ot_core::DeviceId::generate(),
@@ -234,7 +221,6 @@ async fn phone_sponsors_by_reverse_qr() {
     assert_eq!((received.from_name.as_str(), received.body.as_str()), ("windows", "merci"));
     assert!(received.to.is_empty());
 
-    // Adressé au téléphone seul : ses destinataires le disent.
     let me: ot_core::DeviceId = a.device().device_id.parse().unwrap();
     within(pc.send(&Content::text("pour toi"), vec![me.clone()])).await.unwrap();
     let Event::Message { received } = next(&a, |e| matches!(e, Event::Message { .. })).await else {
@@ -242,7 +228,6 @@ async fn phone_sponsors_by_reverse_qr() {
     };
     assert_eq!((received.body.as_str(), received.to.clone()), ("pour toi", vec![me.to_string()]));
 
-    // Réponse du téléphone au PC seul : rangée avec ce destinataire.
     let pc_id = pc.device_id().to_string();
     a.send_text("reçu".into(), vec![pc_id.clone()]).await.unwrap();
     let sent = history(a_store.clone()).unwrap();
@@ -250,7 +235,6 @@ async fn phone_sponsors_by_reverse_qr() {
     assert_eq!((sent[0].body.as_str(), sent[0].to.clone()), ("reçu", vec![pc_id]));
 }
 
-/// Fichier en mémoire, comme le lirait Kotlin.
 struct MemSource(Vec<u8>);
 
 impl FileSource for MemSource {
@@ -294,7 +278,6 @@ async fn files_both_ways() {
     let a_store = phone(&url, &relay_store).await;
     let a = OtClient::start(a_store.clone()).unwrap();
     next(&a, connected).await;
-    // Un PC rejoint le groupe par QR inversé.
     let pc_id = Identity::generate();
     let mut pc = ClientConfig::new(
         url.clone(),
@@ -311,7 +294,6 @@ async fn files_both_ways() {
     })
     .await;
 
-    // Téléphone → PC.
     let photo: Vec<u8> = (0..1_500_000u32).map(|i| (i % 251) as u8).collect();
     let source = Arc::new(MemSource(photo.clone()));
     let msg = a
@@ -334,7 +316,6 @@ async fn files_both_ways() {
     })
     .await;
     assert_eq!((file.msg_id.to_string(), file.name.as_str()), (msg.clone(), "IMG_0001.jpg"));
-    // Rangé chez l'expéditeur une fois annoncé, sans état « en cours ».
     let Event::Sent { item } = next(&a, |e| matches!(e, Event::Sent { .. })).await else {
         unreachable!()
     };
@@ -344,7 +325,6 @@ async fn files_both_ways() {
     assert_eq!((sent.mime.as_str(), sent.size), ("image/jpeg", photo.len() as u64));
     assert_eq!(history(a_store.clone()).unwrap()[0], item);
 
-    // PC → téléphone : rangé dans l'historique, téléchargé, URI notée.
     let source = Arc::new(MemSource(photo.clone()));
     let pc_file = ot_core::OutgoingFile {
         source_id: "/home/x/scan.pdf".into(),
@@ -370,7 +350,6 @@ async fn files_both_ways() {
     assert_eq!(saved.saved_uri.as_deref(), Some("content://media/downloads/7"));
     let history = history(a_store.clone()).unwrap();
     assert_eq!(history[0].file.as_ref().unwrap().saved_uri, saved.saved_uri);
-    // Aucune clé de fichier dans l'historique rangé par le pont.
     let raw = String::from_utf8(a_store.0.lock().unwrap()["history.json"].clone()).unwrap();
     assert!(!raw.contains("\"key\"") && !raw.contains("nonce"), "{raw}");
 }
@@ -478,7 +457,6 @@ fn history_keeps_the_last_hundred() {
     assert_eq!(items.len(), 100);
     assert_eq!(crate::local::HISTORY_LEN, 100);
     assert_eq!((items[0].body.as_str(), items[99].body.as_str()), ("109", "10"));
-    // Accusé du relais, puis échec d'un autre envoi.
     assert!(!local.mark_sent("m108").unwrap().unwrap().pending);
     assert_eq!(local.mark_sent("absent").unwrap(), None);
     local.remove_history("m109").unwrap();

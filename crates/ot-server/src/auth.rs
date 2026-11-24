@@ -1,6 +1,3 @@
-//! Vérification du défi signé, des requêtes HTTP signées et des jetons
-//! d'appairage.
-
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -18,7 +15,6 @@ pub fn new_nonce() -> [u8; NONCE_LEN] {
     nonce
 }
 
-/// Vérifie la signature de `"ot-auth-v1" ‖ nonce ‖ device_id` par `public_key`.
 pub fn verify(
     public_key: &[u8; 32],
     nonce: &[u8; NONCE_LEN],
@@ -34,13 +30,10 @@ pub fn new_token() -> [u8; PAIR_TOKEN_LEN] {
     token
 }
 
-/// SHA-256 du jeton : seule forme stockée en base.
 pub fn token_hash(token: &[u8; PAIR_TOKEN_LEN]) -> [u8; 32] {
     Sha256::digest(token).into()
 }
 
-/// Vérifie la signature de `"ot-pair-v1" ‖ nonce ‖ sha256(jeton)` par la
-/// clé du nouvel appareil.
 pub fn verify_redeem(
     public_key: &[u8; 32],
     nonce: &[u8; NONCE_LEN],
@@ -50,8 +43,6 @@ pub fn verify_redeem(
     verify_sig(public_key, &pair_redeem_message(nonce, token_hash), sig)
 }
 
-/// Vérifie la signature de `"ot-invite-v1" ‖ nonce ‖ sha256(jeton)` par la
-/// clé du premier appareil d'une personne invitée (étape 10).
 pub fn verify_invite(
     public_key: &[u8; 32],
     nonce: &[u8; NONCE_LEN],
@@ -61,7 +52,6 @@ pub fn verify_invite(
     verify_sig(public_key, &invite_redeem_message(nonce, token_hash), sig)
 }
 
-/// Vérifie la signature de `pair_register` par la clé du nouvel appareil.
 pub fn verify_register(
     public_key: &[u8; 32],
     device_id: &DeviceId,
@@ -71,7 +61,6 @@ pub fn verify_register(
     verify_sig(public_key, &pair_register_message(device_id, public_key, name), sig)
 }
 
-/// Vérifie la signature d'une requête HTTP (étape 5) par `public_key`.
 pub fn verify_http(
     public_key: &[u8; 32],
     method: &str,
@@ -85,11 +74,8 @@ pub fn verify_http(
     verify_sig(public_key, &http_request_message(method, path, time_ms, nonce, &body_hash), sig)
 }
 
-/// Nonces des requêtes HTTP vus pendant la fenêtre, pour refuser un rejeu.
-/// En mémoire seulement : un redémarrage les oublie (note 0026).
 #[derive(Debug)]
 pub struct NonceCache {
-    /// (appareil, nonce) → instant jusqu'auquel le garder.
     seen: Mutex<HashMap<(DeviceId, [u8; HTTP_NONCE_LEN]), i64>>,
     capacity: usize,
 }
@@ -97,8 +83,6 @@ pub struct NonceCache {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NonceError {
     Replayed,
-    /// Plus de `capacity` nonces vivants : le relais refuse plutôt que de
-    /// grossir sans fin.
     Full,
 }
 
@@ -107,16 +91,12 @@ impl NonceCache {
         Self { seen: Mutex::new(HashMap::new()), capacity }
     }
 
-    /// Retient le nonce, ou le refuse s'il a déjà servi. Une requête n'est
-    /// acceptée qu'à ±`HTTP_WINDOW_MS` de l'heure du relais : garder un nonce
-    /// deux fenêtres couvre tous les rejeux possibles.
     pub fn check(
         &self,
         device: &DeviceId,
         nonce: [u8; HTTP_NONCE_LEN],
         now: i64,
     ) -> Result<(), NonceError> {
-        // Invariant : aucun code ne panique en tenant le verrou.
         let mut seen = self.seen.lock().expect("verrou des nonces empoisonné");
         if seen.len() >= self.capacity {
             seen.retain(|_, until| *until > now);
@@ -133,8 +113,6 @@ impl NonceCache {
     }
 }
 
-/// Signature Ed25519 stricte de `msg` par `public_key` ; une clé invalide
-/// donne `false`.
 fn verify_sig(public_key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
     VerifyingKey::from_bytes(public_key)
         .is_ok_and(|key| key.verify_strict(msg, &Signature::from_bytes(sig)).is_ok())
@@ -150,10 +128,8 @@ mod tests {
         let (a, b) = (DeviceId::generate(), DeviceId::generate());
         assert_eq!(cache.check(&a, [1; 16], 0), Ok(()));
         assert_eq!(cache.check(&a, [1; 16], 1_000), Err(NonceError::Replayed));
-        // Le même nonce d'un autre appareil n'est pas un rejeu.
         assert_eq!(cache.check(&b, [1; 16], 1_000), Ok(()));
         assert_eq!(cache.check(&a, [2; 16], 1_000), Err(NonceError::Full));
-        // Deux fenêtres après le dernier, les anciens nonces sont oubliés.
         let later = 1_000 + 2 * HTTP_WINDOW_MS + 1;
         assert_eq!(cache.check(&a, [2; 16], later), Ok(()));
         assert_eq!(cache.check(&a, [1; 16], later), Ok(()));

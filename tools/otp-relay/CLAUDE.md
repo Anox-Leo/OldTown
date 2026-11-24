@@ -16,3 +16,6 @@ socket.
   `mx.google.com` : ne jamais faire confiance à un autre en-tête sans
   rendre son émetteur réglable.
 - Tests avec le code : `python3 -m unittest discover -s tests -t .`.
+- Aucun commentaire ni docstring (note 0077) : `tests/test_no_comments.py`
+  échoue sinon. Seul `contrib/config.example.toml`, copié chez l'utilisateur,
+  garde les siens.

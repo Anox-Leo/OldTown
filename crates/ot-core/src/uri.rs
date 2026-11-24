@@ -1,17 +1,10 @@
-//! Textes échangés hors du relais : QR « rejoindre » (`oldtown://pair`), QR
-//! ou lien d'invitation (`oldtown://invite`, étape 10) et classement d'un
-//! texte partagé en lien ou en texte.
-
 use ot_crypto::{InviteCode, PairingCode};
 use ot_proto::Content;
 
 use crate::ClientError;
 
-/// Début du QR « rejoindre » affiché par `ot pair new --qr`.
 pub const PAIR_URI_PREFIX: &str = "oldtown://pair?";
 
-/// QR « rejoindre » : URL du relais et code d'appairage (qui contient le
-/// secret : à ne montrer qu'à l'appareil qui rejoint).
 #[derive(Clone, PartialEq, Eq)]
 pub struct PairUri {
     pub server_url: String,
@@ -25,12 +18,10 @@ impl std::fmt::Debug for PairUri {
 }
 
 impl PairUri {
-    /// `oldtown://pair?s=<url du relais>&c=<code ot1-…>`.
     pub fn encode(&self) -> String {
         format!("{PAIR_URI_PREFIX}s={}&c={}", escape(&self.server_url), escape(&self.code))
     }
 
-    /// Relit un QR « rejoindre » ; le code doit être valide.
     pub fn parse(text: &str) -> Result<Self, ClientError> {
         let (server_url, code) = parse_query(text, PAIR_URI_PREFIX, "QR « rejoindre »")?;
         PairingCode::parse(&code).map_err(|e| ClientError::Pairing(e.to_string()))?;
@@ -38,11 +29,8 @@ impl PairUri {
     }
 }
 
-/// Début du QR ou du lien d'invitation d'une personne (étape 10).
 pub const INVITE_URI_PREFIX: &str = "oldtown://invite?";
 
-/// Invitation d'une personne : URL du relais et code `ot2-…` (qui contient
-/// le secret `S` : à ne transmettre qu'à la personne invitée).
 #[derive(Clone, PartialEq, Eq)]
 pub struct InviteUri {
     pub server_url: String,
@@ -56,13 +44,10 @@ impl std::fmt::Debug for InviteUri {
 }
 
 impl InviteUri {
-    /// `oldtown://invite?s=<url du relais>&c=<code ot2-…>`, même encodage
-    /// que le QR « rejoindre » (note 0022).
     pub fn encode(&self) -> String {
         format!("{INVITE_URI_PREFIX}s={}&c={}", escape(&self.server_url), escape(&self.code))
     }
 
-    /// Relit une invitation ; le code doit être valide.
     pub fn parse(text: &str) -> Result<Self, ClientError> {
         let (server_url, code) = parse_query(text, INVITE_URI_PREFIX, "invitation")?;
         InviteCode::parse(&code).map_err(|e| ClientError::Pairing(e.to_string()))?;
@@ -70,7 +55,6 @@ impl InviteUri {
     }
 }
 
-/// `s` et `c` d'un QR `oldtown://…?` ; paramètres inconnus ignorés.
 fn parse_query(text: &str, prefix: &str, what: &str) -> Result<(String, String), ClientError> {
     let bad = |why: &str| ClientError::Pairing(format!("{what} invalide : {why}"));
     let query = text.trim().strip_prefix(prefix).ok_or_else(|| bad("préfixe"))?;
@@ -81,7 +65,6 @@ fn parse_query(text: &str, prefix: &str, what: &str) -> Result<(String, String),
         match key {
             "s" => server_url = Some(value),
             "c" => code = Some(value),
-            // Paramètre ajouté par une version plus récente : ignoré.
             _ => {}
         }
     }
@@ -90,8 +73,6 @@ fn parse_query(text: &str, prefix: &str, what: &str) -> Result<(String, String),
     Ok((server_url, code))
 }
 
-/// Encodage en pourcentage de tout sauf les caractères non réservés de
-/// RFC 3986 et `:` `/` (sans ambiguïté dans une requête).
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -121,8 +102,6 @@ fn unescape(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Un texte d'un seul mot commençant par `http(s)://` est un lien ; le reste
-/// est du texte, gardé tel quel.
 pub fn classify(text: &str) -> Content {
     let trimmed = text.trim();
     let is_link = (trimmed.starts_with("https://") || trimmed.starts_with("http://"))

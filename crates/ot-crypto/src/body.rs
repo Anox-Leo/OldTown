@@ -1,5 +1,3 @@
-//! Corps des messages, sérialisés en JSON dans le clair (après la signature).
-
 use ot_proto::{BlobId, DeviceId, SignedBlob, UserId, b64};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -8,16 +6,15 @@ use crate::directory::LogHead;
 use crate::file::{FILE_NONCE_LEN, check_layout};
 use crate::{CryptoError, FileKey, GroupKey, Result};
 
-/// Corps d'un message chiffré. `text` et `link` gardent le format de
-/// l'étape 1 (`{"kind":"text","body":"…"}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Body {
-    /// Texte libre (schéma `0x01`).
-    Text { body: String },
-    /// Lien (schéma `0x01`).
-    Link { body: String },
-    /// Nouvel appareil → parrain (schéma `0x02`) : ses clés publiques.
+    Text {
+        body: String,
+    },
+    Link {
+        body: String,
+    },
     PairRequest {
         name: String,
         #[serde(with = "b64::array")]
@@ -25,47 +22,34 @@ pub enum Body {
         #[serde(with = "b64::array")]
         exchange_key: [u8; 32],
     },
-    /// Parrain → nouvel appareil (schéma `0x02`) : clés de groupe encore
-    /// utiles, de la plus ancienne à la courante, roster complet, et ancre
-    /// de l'annuaire si le parrain en a une (note 0076). Absente chez un
-    /// parrain d'avant la note : le nouvel appareil s'en passe.
     PairWelcome {
         keys: Vec<EpochKey>,
         roster: Roster,
         #[serde(default, skip_serializing_if = "Option::is_none", with = "b64::opt_array")]
         anchor: Option<[u8; 16]>,
     },
-    /// Roster complet, envoyé à tous après un ajout (schéma `0x01`).
-    Roster { roster: Roster },
-    /// Nouvelle époque après une rotation, pour un seul appareil (schéma
-    /// `0x03`) ; le roster ne contient plus les exclus.
-    GroupKey { epoch: u32, key: GroupKey, roster: Roster },
-    /// Fichier déposé sur le relais (schéma `0x01`, étape 5, note 0026) :
-    /// sa référence, ce qu'il faut pour l'ouvrir et le vérifier.
+    Roster {
+        roster: Roster,
+    },
+    GroupKey {
+        epoch: u32,
+        key: GroupKey,
+        roster: Roster,
+    },
     File {
         blob_id: BlobId,
-        /// Nom donné par l'expéditeur ; à nettoyer avant de l'écrire
-        /// ([`crate::sanitize_file_name`]).
         name: String,
         mime: String,
-        /// Taille en clair, en octets.
         size: u64,
         chunk_size: u32,
         chunks: u32,
         key: FileKey,
-        /// Préfixe de nonce STREAM.
         #[serde(with = "b64::array")]
         nonce: [u8; FILE_NONCE_LEN],
-        /// SHA-256 du clair.
         #[serde(with = "b64::array")]
         sha256: [u8; 32],
     },
-    /// Code à usage unique lu dans un mail (schéma `0x01`, note 0045),
-    /// envoyé par le pont `relais-otp`.
     Otp(Otp),
-    /// Premier appareil d'une personne invitée → appareil de l'admin qui l'a
-    /// invitée (étape 10, en-tête `0x02` sous la clé d'invitation) : ses clés
-    /// publiques, à certifier.
     InviteRequest {
         user: UserId,
         device_id: DeviceId,
@@ -75,44 +59,31 @@ pub enum Body {
         #[serde(with = "b64::array")]
         exchange_key: [u8; 32],
     },
-    /// Admin → invité (même clé) : le certificat de sa personne, et la tête
-    /// du journal de l'admin qui engage ce certificat (note 0056) : l'invité
-    /// refuse un journal de l'admin plus court ou différent.
-    InviteWelcome { cert: SignedBlob, admin_head: LogHead },
-    /// Admin → nouvel appareil de service (schéma `0x04`, à la place de
-    /// `pair_welcome`) : sa personne, son certificat, et l'ancre de
-    /// l'annuaire (pas de clé de groupe).
+    InviteWelcome {
+        cert: SignedBlob,
+        admin_head: LogHead,
+    },
     ServiceWelcome {
         user: UserId,
         cert: SignedBlob,
         #[serde(with = "b64::array")]
         anchor: [u8; 16],
-        /// Tête du journal de l'admin qui engage ce certificat (note 0056).
         admin_head: LogHead,
     },
 }
 
-/// Code à usage unique et ce qu'il faut pour le placer sur la bonne page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Otp {
-    /// Ce qu'il faut taper : 4 à 16 lettres ou chiffres ASCII.
     pub code: String,
-    /// Le code tel qu'écrit dans le mail (`G-482913`).
     pub display: String,
-    /// Nom affiché de l'expéditeur (`Google`), éventuellement vide.
     pub sender_name: String,
-    /// Domaine de l'adresse de l'expéditeur (`google.com`), en minuscules.
     pub sender_domain: String,
-    /// Vrai si l'expéditeur est authentifié (DMARC `pass` vu par le
-    /// fournisseur de messagerie).
     pub sender_verified: bool,
-    /// Fin de validité, en secondes depuis l'époque Unix.
     pub expires_at: i64,
 }
 
 impl Otp {
-    /// Longueur maximale de `display` et `sender_name`, en caractères.
     pub const MAX_TEXT_CHARS: usize = 128;
 
     fn check(&self) -> Result<()> {
@@ -147,14 +118,10 @@ pub struct EpochKey {
     pub key: GroupKey,
 }
 
-/// Liste des membres du groupe, tenue par les appareils eux-mêmes. Un roster
-/// en remplace un autre seulement si `(epoch, version)` est plus grand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Roster {
-    /// Époque de la clé de groupe à laquelle ce roster correspond.
     pub epoch: u32,
-    /// Incrémentée à chaque changement de membres.
     pub version: u64,
     pub members: Vec<Member>,
 }
@@ -164,13 +131,10 @@ pub struct Roster {
 pub struct Member {
     pub device_id: DeviceId,
     pub name: String,
-    /// Clé publique Ed25519 (signature des messages).
     #[serde(with = "b64::array")]
     pub sign_key: [u8; 32],
-    /// Clé publique X25519 (réception d'une clé de groupe scellée).
     #[serde(with = "b64::array")]
     pub exchange_key: [u8; 32],
-    /// Époque à laquelle l'appareil a rejoint le groupe.
     pub added_epoch: u32,
 }
 
@@ -185,7 +149,6 @@ impl Roster {
 }
 
 impl Body {
-    /// Nom du type, tel qu'écrit dans `kind`.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Text { .. } => "text",
@@ -202,15 +165,10 @@ impl Body {
         }
     }
 
-    /// JSON du corps ; effacé de la mémoire à la destruction (il peut porter
-    /// des clés de groupe).
     pub fn to_json(&self) -> Zeroizing<Vec<u8>> {
-        // Invariant : tous les champs sont des chaînes, entiers ou tableaux.
         Zeroizing::new(serde_json::to_vec(self).expect("Body est toujours sérialisable"))
     }
 
-    /// Lit un corps ; un `file` aux tailles incohérentes, un `otp` au code ou
-    /// au domaine invalide sont refusés.
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
         let body = serde_json::from_slice(bytes).map_err(|e| CryptoError::Body(e.to_string()))?;
         match &body {
@@ -258,13 +216,10 @@ mod tests {
         let body = file(3);
         assert_eq!(Body::from_json(&body.to_json()).unwrap(), body);
         assert_eq!(body.kind(), "file");
-        // Le `Debug` d'un corps `file` ne montre pas la clé.
         assert!(!format!("{body:?}").contains("[1, 1"));
         assert!(Body::from_json(&file(4).to_json()).is_err());
     }
 
-    /// L'ancre de `pair_welcome` est facultative (note 0076) : la bienvenue
-    /// d'un parrain plus ancien, sans elle, s'ouvre toujours.
     #[test]
     fn pair_welcome_anchor_is_optional() {
         let roster = Roster { epoch: 1, version: 1, members: Vec::new() };

@@ -1,11 +1,3 @@
-//! Étape 2, T4 : aucun jeton d'appairage dans les logs du relais ; étape 5,
-//! T2 : aucune signature ni nonce de requête HTTP ; étape 10 : aucun jeton
-//! d'invitation ni son hash.
-//!
-//! Seul test de son binaire : le subscriber `tracing` de test est propre au
-//! fil, et le cache d'intérêt des callsites est global au processus ; des
-//! tests parallèles dans le même binaire feraient perdre des lignes.
-
 mod common;
 
 use std::io::Write;
@@ -32,7 +24,6 @@ async fn redeem(server: &TestServer, token: &[u8; PAIR_TOKEN_LEN], name: &str) {
     while raw.recv().await.is_some() {}
 }
 
-/// Tampon partagé où le subscriber de test écrit les logs.
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<u8>>>);
 
@@ -54,7 +45,6 @@ async fn token_never_logged() {
         .with_max_level(tracing::Level::TRACE)
         .with_writer(move || writer.clone())
         .finish();
-    // Test monothread : le relais tourne sur ce fil, sous ce subscriber.
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let store = Store::in_memory().await.unwrap();
@@ -70,13 +60,11 @@ async fn token_never_logged() {
     redeem(&server, &[9; PAIR_TOKEN_LEN], "android").await;
     redeem(&server, &token, "windows").await;
 
-    // Un fichier vers l'appareil appairé, par requêtes signées.
     let body = br#"{"size":16,"chunk_size":16,"chunks":1}"#;
     let headers = signed_headers(&sponsor, "POST", "/v1/blobs", body, ot_server::now_ms(), [7; 16]);
     let res = http(server.addr, "POST", "/v1/blobs", &headers, body).await;
     assert_eq!(res.status, 201);
 
-    // Invitation (étape 10) : jeton créé puis utilisé.
     let cert = ot_proto::SignedBlob { data: b"{}".to_vec(), sig: [1; 64] };
     raw.send(&Frame::AdminInit { cert: cert.clone(), entry: cert }).await;
     assert!(matches!(raw.recv().await, Some(Frame::AdminInitialized { .. })));

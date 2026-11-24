@@ -40,3 +40,6 @@ Valider :
 node tools/design-tokens/gen.mjs --check
 node --test 'tools/design-tokens/*.test.mjs'
 ```
+
+`no-comments.test.mjs` échoue sur tout commentaire des scripts `.mjs` de ce
+dossier (note 0077).

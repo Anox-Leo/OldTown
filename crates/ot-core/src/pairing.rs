@@ -1,9 +1,3 @@
-//! Appairage côté nouvel appareil, première moitié : s'enregistrer auprès du
-//! relais avec le jeton du code (`pair_redeem`, ou `invite_redeem` pour le
-//! premier appareil d'une personne invitée, étape 10). La suite (demande
-//! chiffrée au parrain ou à l'admin, réponse) passe par le
-//! [`crate::Client`] une fois authentifié.
-
 use futures_util::{SinkExt, StreamExt};
 use ot_crypto::{InviteCode, PairingCode, token_hash};
 use ot_proto::{DeviceId, ErrorCode, Frame};
@@ -16,16 +10,12 @@ use crate::client::{HANDSHAKE_TIMEOUT, Ws, ws_url};
 use crate::invite::InviteRedeemed;
 use crate::tls::{self, TlsRoots};
 
-/// Appareil enregistré par le relais.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Redeemed {
     pub device_id: DeviceId,
-    /// Parrain, à qui envoyer la demande d'appairage.
     pub sponsor: DeviceId,
 }
 
-/// Enregistre `identity` sous le nom `name` avec le jeton du code. Le secret
-/// du code ne quitte pas l'appareil. Le relais ferme ensuite la connexion.
 pub async fn redeem_pairing(
     server_url: &str,
     tls: &TlsRoots,
@@ -48,10 +38,6 @@ pub async fn redeem_pairing(
     redeem_with(server_url, tls, redeem, answer).await
 }
 
-/// Premier appareil d'une personne invitée (étape 10) : s'enregistre dans
-/// sa personne avec le jeton du code `ot2-…`. Le secret `S` et l'ancre ne
-/// quittent pas l'appareil ; à ranger ensuite par
-/// [`crate::save_pending_invite`] avant de démarrer le client.
 pub async fn redeem_invite(
     server_url: &str,
     tls: &TlsRoots,
@@ -75,8 +61,6 @@ pub async fn redeem_invite(
     redeem_with(server_url, tls, redeem, answer).await
 }
 
-/// Connexion, défi, trame de rachat signée, réponse ; le relais ferme
-/// ensuite.
 async fn redeem_with<T>(
     server_url: &str,
     tls: &TlsRoots,
