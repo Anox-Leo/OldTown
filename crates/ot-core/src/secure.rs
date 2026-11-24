@@ -802,6 +802,11 @@ impl Secure {
         let mut certs = chain.map(|c| c.certs.clone()).unwrap_or_default();
         match what {
             Publish::IfBehind => {}
+            Publish::Certify(user, _) if user == me_user => {
+                return Err(ClientError::Invalid(
+                    "le certificat de l'admin n'est pas dans certs".into(),
+                ));
+            }
             Publish::Certify(user, blob) => {
                 let hash = cert_hash(blob);
                 if certs.iter().any(|c| &c.user == user && c.cert == hash) {
@@ -2614,6 +2619,25 @@ mod tests {
         let alice = p.alice.clone();
         let blob = p.users[0].cert.clone().unwrap();
         assert!(p.b[0].secure.next_entry(&Publish::Certify(alice, blob)).is_err());
+    }
+
+    #[test]
+    fn admin_entries_need_a_read_directory_and_never_commit_the_root() {
+        let mut p = People::new(2, 1);
+        let alice = p.alice.clone();
+        let root = p.users[0].cert.clone().unwrap();
+        assert!(matches!(
+            p.a[0].secure.next_entry(&Publish::Certify(alice, root)),
+            Err(ClientError::Invalid(_))
+        ));
+        let bob = p.bob.clone();
+        p.a[0].reload();
+        assert!(matches!(
+            p.a[0].secure.next_entry(&Publish::Revoke(bob.clone())),
+            Err(ClientError::Invalid(_))
+        ));
+        p.read_all();
+        assert!(matches!(p.a[0].secure.next_entry(&Publish::Revoke(bob)), Ok(NextEntry::Entry(_))));
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use ed25519_dalek::SigningKey;
 use ot_crypto::directory::{
     CertRef, GENESIS_PREV, LogHead, RosterEntry, UserCert, cert_hash, entry_hash, verify_root,
 };
@@ -453,47 +452,6 @@ impl DirectoryState {
         Applied { people: Some(people), events, again }
     }
 
-    pub fn next_admin_entry(
-        &self,
-        signer: &DeviceId,
-        key: &SigningKey,
-        change: CertChange<'_>,
-    ) -> Result<(LogEntry, Roster), DirectoryError> {
-        let refused = |reason| DirectoryError::BadEntry { seq: 0, reason };
-        let (admin, chain) = self
-            .admin
-            .as_ref()
-            .and_then(|(id, p)| Some((id, p.chain.as_ref()?)))
-            .ok_or(refused("journal de l'admin pas encore vérifié"))?;
-        if self.admin_head.is_some() {
-            return Err(refused("journal de l'admin pas encore lu jusqu'à la tête reçue"));
-        }
-        if chain.roster.member(signer).is_none_or(|m| m.sign_key != key.verifying_key().to_bytes())
-        {
-            return Err(refused("appareil hors du roster de l'admin"));
-        }
-        let mut certs = chain.certs.clone();
-        match change {
-            CertChange::Certify(user, blob) => {
-                if user == admin {
-                    return Err(refused("le certificat de l'admin n'est pas dans certs"));
-                }
-                certs.retain(|c| &c.user != user);
-                certs.push(CertRef { user: user.clone(), cert: cert_hash(blob) });
-            }
-            CertChange::Revoke(user) => certs.retain(|c| &c.user != user),
-            CertChange::None => {}
-        }
-        let roster = Roster { version: chain.roster.version + 1, ..chain.roster.clone() };
-        let seq = chain.seq + 1;
-        let entry =
-            RosterEntry::new(admin.clone(), seq, chain.head, signer.clone(), roster.clone())
-                .with_certs(certs)
-                .sign(key)
-                .map_err(|_| refused("entrée invalide"))?;
-        Ok((LogEntry { seq, entry }, roster))
-    }
-
     fn record_admin_history(
         &mut self,
         cert: &UserCert,
@@ -597,13 +555,6 @@ impl DirectoryRead {
         self.users.clear();
         Some(self.request(None))
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum CertChange<'a> {
-    Certify(&'a UserId, &'a SignedBlob),
-    Revoke(&'a UserId),
-    None,
 }
 
 fn check_cert(
@@ -1202,9 +1153,10 @@ mod tests {
 
         let mut state = w.state();
         apply(&mut state, &w.alice, &w.users());
-        let (entry, roster) =
-            state.next_admin_entry(&w.a1.id, &w.a1.sign, CertChange::Revoke(&w.bob)).unwrap();
-        assert_eq!((entry.seq, roster.version), (4, 4));
+        let mut log = w.alice_log();
+        w.commit(&mut log, &w.a1, 1, &[&w.a1, &w.a2], &[(&w.notifier, &w.notifier_cert)]);
+        let entry = log.entries[3].clone();
+        assert_eq!(entry.seq, 4);
         let mut users = w.users();
         users[0].log = vec![entry.clone()];
         users[1].log.clear();
@@ -1230,9 +1182,15 @@ mod tests {
             UserCert::new(carol.clone(), "Carol", Role::Member, genesis(&c1), 5, w.a2.id.clone())
                 .sign(&w.a2.sign)
                 .unwrap();
-        let (entry, _) = state
-            .next_admin_entry(&w.a2.id, &w.a2.sign, CertChange::Certify(&carol, &cert))
-            .unwrap();
+        let mut log = w.alice_log();
+        w.commit(
+            &mut log,
+            &w.a2,
+            1,
+            &[&w.a1, &w.a2],
+            &[(&w.bob, &w.bob_cert), (&w.notifier, &w.notifier_cert), (&carol, &cert)],
+        );
+        let entry = log.entries[3].clone();
         let mut carol_log = Log::new(&carol);
         carol_log.push(&c1, 1, 1, &[&c1]);
         let mut users = w.users();
@@ -1245,16 +1203,6 @@ mod tests {
         assert!(people.iter().any(|p| p.id == carol && p.name == "Carol"));
         let certs = &state.admin.as_ref().unwrap().1.chain.as_ref().unwrap().certs;
         assert_eq!(certs.len(), 3, "Bob et le service restent engagés");
-
-        let other = dev("autre", 8);
-        assert!(state.next_admin_entry(&other.id, &other.sign, CertChange::None).is_err());
-        assert!(state.next_admin_entry(&w.a1.id, &w.a2.sign, CertChange::None).is_err());
-        assert!(
-            state
-                .next_admin_entry(&w.a1.id, &w.a1.sign, CertChange::Certify(&w.alice, &cert))
-                .is_err()
-        );
-        assert!(w.state().next_admin_entry(&w.a1.id, &w.a1.sign, CertChange::None).is_err());
     }
 
     fn entry_of(id: &UserId, cert: &SignedBlob, log: &Log, d: &Dev) -> DirectoryUser {
