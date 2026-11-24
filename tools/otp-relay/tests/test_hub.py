@@ -48,8 +48,8 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_replay_and_dedup(self):
         self.hub.publish(event(), time.time() + 60)
-        self.hub.publish(event(), time.time() + 60)  # même id : ignoré
-        self.hub.publish(event("old"), time.time() - 1)  # déjà expiré
+        self.hub.publish(event(), time.time() + 60)
+        self.hub.publish(event("old"), time.time() - 1)
         reader, _ = await self.connect()
         await self.recv(reader), await self.recv(reader)
         replayed = await self.recv(reader)
@@ -57,7 +57,7 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         writer_cmd = (await self.connect())[1]
         writer_cmd.write(b'{"cmd":"ping","ref":7}\n')
         with self.assertRaises(asyncio.TimeoutError):
-            await asyncio.wait_for(reader.readline(), 0.2)  # aucun autre replay
+            await asyncio.wait_for(reader.readline(), 0.2)
 
     async def test_consume_is_broadcast(self):
         self.hub.publish(event(), time.time() + 60)

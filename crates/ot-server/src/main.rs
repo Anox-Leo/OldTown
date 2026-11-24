@@ -13,11 +13,11 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tracing_subscriber::EnvFilter;
 
-/// Serveur relais OldTown.
 #[derive(Parser)]
+#[command(about = "Serveur relais OldTown")]
 #[command(version)]
 struct Cli {
-    /// Fichier de la base SQLite.
+    #[arg(help = "Fichier de la base SQLite")]
     #[arg(long, env = "OT_DB", default_value = "ot.db", global = true)]
     db: PathBuf,
     #[command(subcommand)]
@@ -26,126 +26,132 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Lance le relais.
-    // En boîte : les options de `serve` rendraient l'enum bien plus grosse
-    // que les autres variantes (clippy::large_enum_variant, sous Windows).
+    #[command(about = "Lance le relais")]
     Serve(Box<ServeArgs>),
-    /// Gère les appareils autorisés.
+    #[command(about = "Gère les appareils autorisés")]
     #[command(subcommand)]
     Device(DeviceCommand),
-    /// Gère les messages stockés.
+    #[command(about = "Gère les messages stockés")]
     #[command(subcommand)]
     Messages(MessagesCommand),
-    /// Gère les personnes (recours par SSH, étape 10).
+    #[command(about = "Gère les personnes (recours par SSH, étape 10)")]
     #[command(subcommand)]
     User(UserCommand),
-    /// Gère le réseau des liens entre personnes.
+    #[command(about = "Gère le réseau des liens entre personnes")]
     #[command(subcommand)]
     Link(LinkCommand),
-    /// Recours de l'admin.
+    #[command(about = "Recours de l'admin")]
     #[command(subcommand)]
     Admin(AdminCommand),
 }
 
 #[derive(Subcommand)]
 enum UserCommand {
-    /// Liste les personnes, révoquées comprises, et leurs appareils actifs.
+    #[command(about = "Liste les personnes, révoquées comprises, et leurs appareils actifs")]
     List,
-    /// Renomme une personne (nom ou identifiant).
+    #[command(about = "Renomme une personne (nom ou identifiant)")]
     Rename { user: String, name: String },
-    /// Révoque une personne : ses appareils, ses liens, ses fichiers.
+    #[command(about = "Révoque une personne : ses appareils, ses liens, ses fichiers")]
     Revoke { user: String },
 }
 
 #[derive(Subcommand)]
 enum LinkCommand {
-    /// Liste les liens (« A → B » : A peut écrire à B).
+    #[command(about = "Liste les liens (« A → B » : A peut écrire à B)")]
     List,
-    /// Retire le lien entre deux personnes (les deux sens ; depuis un
-    /// service, son seul sens).
+    #[command(
+        about = "Retire le lien entre deux personnes (les deux sens ; depuis un service, son seul sens)"
+    )]
     Remove { from: String, to: String },
 }
 
 #[derive(Subcommand)]
 enum AdminCommand {
-    /// Oublie le certificat de l'admin après la perte de tous ses appareils :
-    /// toutes les autres personnes sont à réinviter. Arrêter le relais avant.
+    #[command(
+        about = "Oublie le certificat de l'admin après la perte de tous ses appareils : toutes les autres personnes sont à réinviter. Arrêter le relais avant"
+    )]
     Reset {
-        /// Confirme sans question (scripts).
+        #[arg(help = "Confirme sans question (scripts)")]
         #[arg(long)]
         yes: bool,
     },
 }
 
-/// Options de `ot-server serve`.
 #[derive(Args)]
+#[command(about = "Options de `ot-server serve`")]
 struct ServeArgs {
-    /// Adresse d'écoute : l'IP Tailscale du serveur, ou `127.0.0.1`
-    /// derrière un frontal TLS (Caddy).
+    #[arg(
+        help = "Adresse d'écoute : l'IP Tailscale du serveur, ou `127.0.0.1` derrière un frontal TLS (Caddy)"
+    )]
     #[arg(long, env = "OT_LISTEN", default_value = "127.0.0.1:7878")]
     listen: SocketAddr,
-    /// Adresse des routes d'administration (`/metrics`), à garder
-    /// locale (ex. 127.0.0.1:7879). Sans elle, pas de métriques.
+    #[arg(
+        help = "Adresse des routes d'administration (`/metrics`), à garder locale (ex. 127.0.0.1:7879). Sans elle, pas de métriques"
+    )]
     #[arg(long, env = "OT_ADMIN_LISTEN")]
     admin_listen: Option<SocketAddr>,
-    /// IP des frontaux (séparées par des virgules) dont on croit
-    /// l'en-tête `X-Forwarded-For` pour connaître l'IP des clients.
+    #[arg(
+        help = "IP des frontaux (séparées par des virgules) dont on croit l'en-tête `X-Forwarded-For` pour connaître l'IP des clients"
+    )]
     #[arg(long, env = "OT_TRUSTED_PROXY", value_delimiter = ',')]
     trusted_proxy: Vec<IpAddr>,
-    /// Durée de vie d'un message non acquitté (ex. 7d, 24h).
+    #[arg(help = "Durée de vie d'un message non acquitté (ex. 7d, 24h)")]
     #[arg(long, env = "OT_TTL", default_value = "7d", value_parser = parse_duration)]
     ttl: Duration,
-    /// Intervalle de purge.
+    #[arg(help = "Intervalle de purge")]
     #[arg(long, env = "OT_PURGE_INTERVAL", default_value = "10m", value_parser = parse_duration)]
     purge_interval: Duration,
-    /// Format des logs.
+    #[arg(help = "Format des logs")]
     #[arg(long, env = "OT_LOG_FORMAT", default_value = "text")]
     log_format: LogFormat,
-    /// Certificat TLS (chaîne PEM) : le relais sert alors en `wss://`.
-    /// Relu automatiquement quand il change (renouvellement).
+    #[arg(
+        help = "Certificat TLS (chaîne PEM) : le relais sert alors en `wss://`. Relu automatiquement quand il change (renouvellement)"
+    )]
     #[arg(long, env = "OT_TLS_CERT", requires = "tls_key")]
     tls_cert: Option<PathBuf>,
-    /// Clé privée TLS (PEM) du certificat.
+    #[arg(help = "Clé privée TLS (PEM) du certificat")]
     #[arg(long, env = "OT_TLS_KEY", requires = "tls_cert")]
     tls_key: Option<PathBuf>,
-    /// Dossier des fichiers en transit (morceaux chiffrés). Par défaut,
-    /// `blobs/` à côté de la base.
+    #[arg(
+        help = "Dossier des fichiers en transit (morceaux chiffrés). Par défaut, `blobs/` à côté de la base"
+    )]
     #[arg(long, env = "OT_BLOB_DIR")]
     blob_dir: Option<PathBuf>,
-    /// Taille maximale d'un fichier (ex. 2G, 500M).
+    #[arg(help = "Taille maximale d'un fichier (ex. 2G, 500M)")]
     #[arg(long, env = "OT_MAX_FILE_SIZE", default_value = "2G", value_parser = parse_size)]
     max_file_size: u64,
-    /// Espace disque total des fichiers en transit.
+    #[arg(help = "Espace disque total des fichiers en transit")]
     #[arg(long, env = "OT_BLOB_QUOTA", default_value = "20G", value_parser = parse_size)]
     blob_quota: u64,
-    /// Durée de vie d'un fichier déposé.
+    #[arg(help = "Durée de vie d'un fichier déposé")]
     #[arg(long, env = "OT_BLOB_TTL", default_value = "48h", value_parser = parse_duration)]
     blob_ttl: Duration,
-    /// Appareils actifs par membre (étape 10 ; l'admin et les services n'ont
-    /// pas de limite propre).
+    #[arg(
+        help = "Appareils actifs par membre (étape 10 ; l'admin et les services n'ont pas de limite propre)"
+    )]
     #[arg(long, env = "OT_USER_MAX_DEVICES", default_value = "8")]
     user_max_devices: usize,
-    /// Espace des fichiers en transit d'un membre ou d'un service.
+    #[arg(help = "Espace des fichiers en transit d'un membre ou d'un service")]
     #[arg(long, env = "OT_USER_BLOB_QUOTA", default_value = "2G", value_parser = parse_size)]
     user_blob_quota: u64,
-    /// Envois (et publications de journal) par minute d'un membre ou d'un
-    /// service.
+    #[arg(help = "Envois (et publications de journal) par minute d'un membre ou d'un service")]
     #[arg(long, env = "OT_USER_SEND_RATE", default_value = "120")]
     user_send_rate: u32,
-    /// Messages d'un membre ou d'un service en attente de livraison.
+    #[arg(help = "Messages d'un membre ou d'un service en attente de livraison")]
     #[arg(long, env = "OT_USER_PENDING_QUOTA", default_value = "256M", value_parser = parse_size)]
     user_pending_quota: u64,
-    /// Taille du journal de roster d'un membre ou d'un service.
+    #[arg(help = "Taille du journal de roster d'un membre ou d'un service")]
     #[arg(long, env = "OT_USER_LOG_QUOTA", default_value = "4M", value_parser = parse_size)]
     user_log_quota: u64,
 }
 
 #[derive(Subcommand)]
 enum MessagesCommand {
-    /// Supprime les messages acquittés ou expirés (comme la purge périodique).
+    #[command(about = "Supprime les messages acquittés ou expirés (comme la purge périodique)")]
     Purge {
-        /// Supprime tous les messages, livrés ou non, puis compacte la base
-        /// (bascule vers le chiffrement). Arrêter le relais avant.
+        #[arg(
+            help = "Supprime tous les messages, livrés ou non, puis compacte la base (bascule vers le chiffrement). Arrêter le relais avant"
+        )]
         #[arg(long)]
         all: bool,
     },
@@ -153,11 +159,11 @@ enum MessagesCommand {
 
 #[derive(Subcommand)]
 enum DeviceCommand {
-    /// Enregistre un appareil à partir de la clé publique affichée par `ot init`.
+    #[command(about = "Enregistre un appareil à partir de la clé publique affichée par `ot init`")]
     Add { name: String, public_key: String },
-    /// Liste les appareils, révoqués compris.
+    #[command(about = "Liste les appareils, révoqués compris")]
     List,
-    /// Révoque un appareil (nom ou identifiant).
+    #[command(about = "Révoque un appareil (nom ou identifiant)")]
     Revoke { device: String },
 }
 
@@ -267,7 +273,6 @@ async fn serve(
         "relais démarré"
     );
     let relay = Relay::new(store.clone(), config);
-    // Arrêtée avec le relais ; une erreur n'arrête pas le relais.
     let admin = admin.map(|listener| {
         let relay = relay.clone();
         tokio::spawn(async move {
@@ -464,13 +469,10 @@ fn fmt_ms(ms: i64) -> String {
         .unwrap_or_else(|| ms.to_string())
 }
 
-/// `blobs/` dans le dossier de la base.
 fn default_blob_dir(db: &Path) -> PathBuf {
     db.parent().unwrap_or(Path::new("")).join("blobs")
 }
 
-/// Taille au format `<nombre><unité>`, unité parmi `K`, `M`, `G` (puissances
-/// de 1024) ; sans unité, en octets.
 fn parse_size(s: &str) -> Result<u64, String> {
     let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let (n, unit) = s.split_at(split);
@@ -485,7 +487,6 @@ fn parse_size(s: &str) -> Result<u64, String> {
     n.checked_mul(1 << shift).ok_or_else(|| format!("taille trop grande : {s:?}"))
 }
 
-/// Durée au format `<nombre><unité>`, unité parmi `ms`, `s`, `m`, `h`, `d`.
 fn parse_duration(s: &str) -> Result<Duration, String> {
     let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let (n, unit) = s.split_at(split);

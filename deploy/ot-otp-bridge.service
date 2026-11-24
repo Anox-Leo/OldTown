@@ -1,18 +1,3 @@
-# Codes à usage unique relayés par OldTown (note 0045) : lit le socket
-# d'otp-relay (tools/otp-relay) et envoie chaque code, chiffré, aux appareils
-# choisis.
-#
-# Service utilisateur, sous le même compte qu'otp-relay (son socket refuse les
-# autres UID). Membre du groupe OldTown sous un nom dédié (relais-otp), avec
-# son propre dossier : il ne coupe la session d'aucun autre appareil (note
-# 0009). À copier dans ~/.config/systemd/user/.
-#
-# Réglages locaux (jamais dans le dépôt) dans
-# ~/.config/oldtown-otp/bridge.env, ex. :
-#   OT_OTP_TO=<nom de l'extension>[,<autre appareil>]
-# ou, si le pont est un appareil de service (`ot pair join --qr --service`) :
-#   OT_OTP_TO_USER=<personne>[,<autre personne>]
-
 [Unit]
 Description=OldTown : codes d'otp-relay vers mes appareils
 Wants=otp-relay.service
@@ -28,7 +13,6 @@ Restart=always
 RestartSec=10
 UMask=0077
 
-# Durcissement : lecture seule partout sauf le dossier de l'appareil.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only

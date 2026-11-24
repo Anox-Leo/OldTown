@@ -1,5 +1,3 @@
-//! Chiffrement et signature de `payload.data`, pour les cinq schémas.
-
 use chacha20poly1305::aead::{Aead, KeyInit, Payload as AeadPayload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -12,7 +10,6 @@ use zeroize::Zeroizing;
 
 use crate::{Body, CryptoError, ExchangeKeyPair, GroupKey, PairingSecret, Result, random};
 
-/// Taille du nonce XChaCha20-Poly1305.
 pub const NONCE_LEN: usize = 24;
 const SIG_LEN: usize = 64;
 
@@ -31,38 +28,26 @@ const SCHEME_DEVICE: u8 = 0x03;
 const SCHEME_PAIR_QR: u8 = 0x04;
 const SCHEME_MULTI: u8 = 0x05;
 
-/// Clé de message scellée pour un destinataire de `0x05` : 32 octets
-/// chiffrés plus l'étiquette Poly1305.
 pub const WRAP_LEN: usize = 32 + 16;
 
-/// Nonce de `wrap_i` : nul. La clé `k_i` ne sert qu'une fois : elle dérive
-/// d'une clé éphémère neuve à chaque message, et l'identifiant du
-/// destinataire comme le `msg_id` entrent dans HKDF (notes 0052 et 0056) :
-/// même un éphémère rejoué (aléa défaillant) donne une autre `k_i` pour un
-/// autre message.
 const WRAP_NONCE: [u8; NONCE_LEN] = [0; NONCE_LEN];
 
-/// Engagement de la clé de message `K` dans l'en-tête `0x05` (note 0056) :
-/// tous les destinataires ouvrent avec la même `K`, donc lisent le même
-/// clair (XChaCha20-Poly1305 n'engage pas sa clé).
 pub const COMMIT_LEN: usize = 32;
 
-/// En-tête d'un `payload.data` chiffré : il dit quelle clé ouvre le message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Header {
-    /// `0x01` : clé de groupe de l'époque.
-    Group { epoch: u32 },
-    /// `0x02` : clé dérivée du secret d'appairage ; `token_id = sha256(T)[..8]`.
-    Pairing { token_id: [u8; 8] },
-    /// `0x03` : clé dérivée d'un échange X25519 avec une clé éphémère.
-    Device { ephemeral: [u8; 32] },
-    /// `0x04` : comme `0x03`, avec le secret `S` du QR inversé ajouté au
-    /// matériau de HKDF (note 0022) : il faut à la fois `S` et la clé X25519
-    /// du destinataire.
-    PairQr { ephemeral: [u8; 32] },
-    /// `0x05` (étape 10, notes 0052 et 0056) : une clé de message, scellée
-    /// pour la clé X25519 de chaque appareil destinataire (1 à 32), dans
-    /// l'ordre de `env.to`, et son engagement.
+    Group {
+        epoch: u32,
+    },
+    Pairing {
+        token_id: [u8; 8],
+    },
+    Device {
+        ephemeral: [u8; 32],
+    },
+    PairQr {
+        ephemeral: [u8; 32],
+    },
     Multi {
         ephemeral: [u8; 32],
         recipients: Vec<([u8; 16], [u8; WRAP_LEN])>,
@@ -94,8 +79,6 @@ impl Header {
                 out.reserve(1 + recipients.len() * (16 + WRAP_LEN) + COMMIT_LEN);
                 out.push(SCHEME_MULTI);
                 out.extend_from_slice(ephemeral);
-                // Invariant : 1 à MAX_RECIPIENTS (32) destinataires, vérifié
-                // au scellement comme à la lecture.
                 out.push(recipients.len() as u8);
                 for (ulid, wrap) in recipients {
                     out.extend_from_slice(ulid);
@@ -107,7 +90,6 @@ impl Header {
         out
     }
 
-    /// Destinataires d'un en-tête `0x05`, dans l'ordre de la table.
     pub fn recipients(&self) -> Vec<DeviceId> {
         match self {
             Self::Multi { recipients, .. } => {
@@ -117,7 +99,6 @@ impl Header {
         }
     }
 
-    /// Lit l'en-tête d'un payload ; refuse le clair.
     pub fn parse(payload: &Payload) -> Result<Self> {
         if payload.enc != Encoding::Xchacha20poly1305 {
             return Err(CryptoError::Plaintext);
@@ -125,7 +106,6 @@ impl Header {
         Self::split(&payload.data).map(|(h, _)| h)
     }
 
-    /// En-tête et reste des octets (`nonce ‖ chiffré`).
     fn split(data: &[u8]) -> Result<(Self, &[u8])> {
         let (&scheme, rest) = data.split_first().ok_or(CryptoError::Malformed("vide"))?;
         let take = |n: usize| {
@@ -192,58 +172,26 @@ impl Header {
     }
 }
 
-/// Clé de chiffrement d'un message sortant.
 #[derive(Debug, Clone, Copy)]
 pub enum SealKey<'a> {
-    Group {
-        epoch: u32,
-        key: &'a GroupKey,
-    },
-    Pairing {
-        token_id: [u8; 8],
-        secret: &'a PairingSecret,
-    },
-    /// Clé X25519 publique du destinataire.
-    Device {
-        recipient: [u8; 32],
-    },
-    /// Clé X25519 publique et secret `S` lus dans le QR inversé.
-    PairQr {
-        recipient: [u8; 32],
-        secret: &'a PairingSecret,
-    },
-    /// Invitation d'une personne (étape 10) : en-tête `0x02`, clé
-    /// `HKDF-SHA256(S, "ot-invite-v1")`.
-    Invite {
-        token_id: [u8; 8],
-        secret: &'a PairingSecret,
-    },
-    /// `0x05` : appareils destinataires et leur clé X25519 publique, dans
-    /// l'ordre de `env.to`.
-    Multi {
-        recipients: &'a [(DeviceId, [u8; 32])],
-    },
+    Group { epoch: u32, key: &'a GroupKey },
+    Pairing { token_id: [u8; 8], secret: &'a PairingSecret },
+    Device { recipient: [u8; 32] },
+    PairQr { recipient: [u8; 32], secret: &'a PairingSecret },
+    Invite { token_id: [u8; 8], secret: &'a PairingSecret },
+    Multi { recipients: &'a [(DeviceId, [u8; 32])] },
 }
 
-/// Clé d'ouverture, choisie par l'appelant d'après le [`Header`].
 #[derive(Debug, Clone, Copy)]
 pub enum OpenKey<'a> {
     Group(&'a GroupKey),
     Pairing(&'a PairingSecret),
     Device(&'a ExchangeKeyPair),
-    /// Clé X25519 de l'appareil et secret `S` de son QR inversé.
     PairQr(&'a ExchangeKeyPair, &'a PairingSecret),
-    /// Secret `S` d'une invitation en cours (en-tête `0x02`).
     Invite(&'a PairingSecret),
-    /// `0x05` : mon identifiant (pour trouver ma ligne) et ma clé X25519.
-    Multi {
-        me: &'a DeviceId,
-        key: &'a ExchangeKeyPair,
-    },
+    Multi { me: &'a DeviceId, key: &'a ExchangeKeyPair },
 }
 
-/// Famille de clé qui a ouvert (ou scellé) un message : elle borne les corps
-/// admis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyKind {
     Group,
@@ -255,8 +203,6 @@ enum KeyKind {
 }
 
 impl KeyKind {
-    /// Corps admis sous cette clé. Les corps de l'étape 10 n'ont qu'une clé
-    /// possible ; ceux d'avant gardent leurs règles.
     fn admits(self, body: &Body) -> bool {
         match body {
             Body::InviteRequest { .. } | Body::InviteWelcome { .. } => self == Self::Invite,
@@ -272,13 +218,10 @@ impl KeyKind {
     }
 }
 
-/// Aléa d'un chiffrement ; fixé seulement par les vecteurs de test.
 #[derive(Clone)]
 pub struct Randomness {
     pub nonce: [u8; NONCE_LEN],
-    /// Clé X25519 éphémère (schémas `0x03`, `0x04` et `0x05`).
     pub ephemeral: Zeroizing<[u8; 32]>,
-    /// Clé de message (schéma `0x05` seulement).
     pub message_key: Zeroizing<[u8; 32]>,
 }
 
@@ -296,8 +239,6 @@ impl Randomness {
     }
 }
 
-/// Données associées : `"ot-env-v1" ‖ en-tête ‖ msg_id ‖ from ‖ to (séparés
-/// par `,`) ‖ created_at (RFC 3339)`. Le `payload` de l'enveloppe est ignoré.
 pub fn associated_data(header: &Header, env: &Envelope) -> Result<Vec<u8>> {
     let created_at =
         env.created_at.format(&Rfc3339).map_err(|_| CryptoError::Malformed("created_at"))?;
@@ -318,7 +259,6 @@ fn signed_message(ad: &[u8], body: &[u8]) -> Vec<u8> {
 
 fn hkdf(ikm: &[u8], info: &[&[u8]]) -> Zeroizing<[u8; 32]> {
     let mut okm = Zeroizing::new([0; 32]);
-    // Invariant : 32 octets est bien en deçà de la limite de HKDF-SHA256.
     Hkdf::<Sha256>::new(None, ikm)
         .expand_multi_info(info, &mut okm[..])
         .expect("32 octets sont toujours dérivables");
@@ -333,7 +273,6 @@ fn invite_key(secret: &PairingSecret) -> Zeroizing<[u8; 32]> {
     hkdf(secret.as_bytes(), &[INVITE_INFO])
 }
 
-/// `k_i = HKDF-SHA256(DH(éph, X_i), "ot-multi-v1" ‖ éph ‖ X_i ‖ ulid_i ‖ msg_id)`.
 fn multi_key(
     secret: &StaticSecret,
     peer: &[u8; 32],
@@ -349,12 +288,10 @@ fn multi_key(
     Ok(hkdf(shared.as_bytes(), &[MULTI_INFO, eph, recipient, ulid, msg_id]))
 }
 
-/// `SHA-256("ot-multi-commit-v1" ‖ K)`.
 fn multi_commitment(message_key: &[u8; 32]) -> [u8; COMMIT_LEN] {
     Sha256::new().chain_update(MULTI_COMMIT).chain_update(message_key).finalize().into()
 }
 
-/// La table de `0x05` doit être exactement `env.to`, dans le même ordre.
 fn check_multi_recipients(header: &Header, env: &Envelope) -> Result<()> {
     if env.to.is_empty() || header.recipients() != env.to {
         return Err(CryptoError::Malformed("destinataires de 0x05 différents de env.to"));
@@ -375,8 +312,6 @@ fn device_key(
     Ok(hkdf(shared.as_bytes(), &[DEVICE_INFO, eph, recipient]))
 }
 
-/// `HKDF-SHA256(DH ‖ S, "ot-pair-qr-v1" ‖ éph ‖ dest)` : comme le schéma
-/// `0x03`, avec le secret du QR inversé dans le matériau d'entrée.
 fn pair_qr_key(
     secret: &StaticSecret,
     peer: &[u8; 32],
@@ -394,13 +329,10 @@ fn pair_qr_key(
     Ok(hkdf(&ikm[..], &[PAIR_QR_INFO, eph, recipient]))
 }
 
-/// Chiffre et signe `body` pour l'enveloppe `env` (seuls ses champs de
-/// routage comptent) ; le résultat va dans `env.payload`.
 pub fn seal(env: &Envelope, key: SealKey<'_>, signer: &SigningKey, body: &Body) -> Result<Payload> {
     seal_with(env, key, signer, body, Randomness::generate())
 }
 
-/// Comme [`seal`], avec un aléa fixé : réservé aux vecteurs de test.
 pub fn seal_with(
     env: &Envelope,
     key: SealKey<'_>,
@@ -467,7 +399,6 @@ pub fn seal_with(
     };
     let ad = associated_data(&header, env)?;
     let json = body.to_json();
-    // Le message signé contient le corps en clair : effacé lui aussi.
     let signed = Zeroizing::new(signed_message(&ad, &json));
     let sig = signer.sign(&signed);
 
@@ -486,8 +417,6 @@ pub fn seal_with(
     Ok(Payload { enc: Encoding::Xchacha20poly1305, data })
 }
 
-/// Message déchiffré, dont la signature reste à vérifier avec la clé de
-/// l'expéditeur (lue dans le roster, ou dans le corps pour `pair_request`).
 pub struct Opened {
     pub header: Header,
     kind: KeyKind,
@@ -497,10 +426,6 @@ pub struct Opened {
 }
 
 impl Opened {
-    /// Corps décodé, s'il est admis sous la clé qui a ouvert le message
-    /// (un corps d'invitation n'est lu que sous la clé d'invitation, `0x05`
-    /// ne porte que texte, lien, fichier et code). Ne pas s'y fier avant
-    /// [`Opened::verify`].
     pub fn body(&self) -> Result<Body> {
         let body = Body::from_json(&self.body)?;
         if !self.kind.admits(&body) {
@@ -509,7 +434,6 @@ impl Opened {
         Ok(body)
     }
 
-    /// Vérifie la signature Ed25519 de l'expéditeur (forme stricte).
     pub fn verify(&self, sign_key: &[u8; 32]) -> Result<()> {
         let key = VerifyingKey::from_bytes(sign_key).map_err(|_| CryptoError::BadSignature)?;
         key.verify_strict(&self.signed, &Signature::from_bytes(&self.signature))
@@ -517,8 +441,6 @@ impl Opened {
     }
 }
 
-/// Déchiffre `env.payload` avec `key`. Toute altération de l'en-tête, du
-/// nonce, du chiffré ou des champs de routage fait échouer l'ouverture.
 pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
     if env.payload.enc != Encoding::Xchacha20poly1305 {
         return Err(CryptoError::Plaintext);
@@ -540,7 +462,6 @@ pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
         (Header::Multi { ephemeral, recipients, .. }, OpenKey::Multi { me, key }) => {
             check_multi_recipients(&header, env)?;
             let ulid = me.ulid().to_bytes();
-            // Pas dans la table : ce message n'est pas pour moi.
             let (_, wrap) =
                 recipients.iter().find(|(u, _)| *u == ulid).ok_or(CryptoError::Decrypt)?;
             let mine = key.public_key();
@@ -566,8 +487,6 @@ pub fn open(env: &Envelope, key: OpenKey<'_>) -> Result<Opened> {
             .decrypt(&XNonce::from(nonce), AeadPayload { msg: sealed, aad: &ad })
             .map_err(|_| CryptoError::Decrypt)?,
     );
-    // Engagement vérifié après l'AEAD : l'en-tête est dans les données
-    // associées, seul l'expéditeur a pu y mettre une autre `K`.
     if let Header::Multi { commitment, .. } = &header
         && multi_commitment(&aead_key) != *commitment
     {

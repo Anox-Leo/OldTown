@@ -1,8 +1,3 @@
-//! Personnes de service (étape 10, § 6.1 et 6.2), partie réseau : l'admin
-//! ajoute un appareil de service (et crée le service au premier), et
-//! republie le journal d'un service après le retrait d'un de ses appareils
-//! (D47). Chaque objet est signé ou vérifié par [`crate::Secure`].
-
 use ot_crypto::PairingOffer;
 use ot_crypto::directory::LogHead;
 use ot_proto::{DeviceId, ErrorCode, Frame, Role, UserId, UserState};
@@ -12,16 +7,13 @@ use crate::client::Client;
 use crate::secure::{NextEntry, Publish, service_member};
 use crate::types::ClientError;
 
-/// Tentatives d'une publication en conflit avant d'abandonner.
 const PUBLISH_ATTEMPTS: usize = 4;
 
-/// Appareil de service ajouté par [`Client::add_service_device`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceAdded {
     pub user: UserId,
     pub device_id: DeviceId,
     pub device_name: String,
-    /// La personne de service vient d'être créée (premier appareil).
     pub created: bool,
 }
 
@@ -30,12 +22,6 @@ fn unexpected(frame: &Frame) -> ClientError {
 }
 
 impl Client {
-    /// Admin : ajoute l'appareil de service dont `qr` est le QR inversé
-    /// (`ot pair join --qr --service`) à la personne de service `service`
-    /// (nom ou identifiant), créée si elle n'existe pas. Enregistrement par
-    /// le relais, certificat engagé par mon journal, entrée du journal du
-    /// service, puis bienvenue scellée sous le secret du QR. Relancée avec
-    /// le même QR après une coupure, elle reprend où elle s'était arrêtée.
     pub async fn add_service_device(
         &self,
         service: &str,
@@ -90,9 +76,6 @@ impl Client {
                 let known = self.after_read(move |s| Ok(s.service_known_cert(&id))).await?;
                 let cert = match known {
                     Some(cert) => cert,
-                    // Création coupée avant l'engagement du certificat (reprise
-                    // avec le même QR) : cet appareil est son `genesis`, le
-                    // certificat est re-signé et rendu au relais.
                     None if u.devices.iter().all(|d| d.id == offer.device_id) => {
                         let (id, name, o) = (u.id.clone(), u.name.clone(), offer.clone());
                         let cert =
@@ -132,7 +115,6 @@ impl Client {
         })
     }
 
-    /// `service_create` ou `service_device` : réponse `pair_registered`.
     async fn register(&self, frame: Frame) -> Result<(), ClientError> {
         match self.call(frame).await? {
             Frame::PairRegistered { .. } => Ok(()),
@@ -140,10 +122,6 @@ impl Client {
         }
     }
 
-    /// Admin : publie l'entrée suivante du journal du service `user`
-    /// ([`crate::Secure::next_service_entry`]), en relisant l'annuaire avant
-    /// (le service vient peut-être d'être créé ou engagé) et après chaque
-    /// `conflict`. Rend la tête, ou `None` s'il n'y avait rien à publier.
     pub(crate) async fn publish_service(
         &self,
         user: &UserId,

@@ -1,8 +1,3 @@
-//! Trames de l'étape 10 (note 0052) : annuaire, profil et retrait de ses
-//! appareils, journal de roster, invitation, et administration réservée à
-//! l'admin. Chaque décision relit la personne en base : une personne en
-//! attente devient active pendant sa session, une autre peut être révoquée.
-
 use std::collections::BTreeSet;
 
 use axum::extract::ws::WebSocket;
@@ -18,20 +13,14 @@ use crate::store::StoreError;
 use crate::users::{DeviceChanges, Peer};
 use crate::{Inner, auth, now_ms};
 
-/// Ce que peut envoyer une session selon sa personne.
 enum Gate {
-    /// Toute personne active (membre, admin, service).
     Active,
-    /// Personne active avec un groupe (pas un service).
     Group,
-    /// Membre ou admin actif (pas un service).
     Person,
-    /// Admin seulement.
     Admin,
 }
 
 impl Active<'_> {
-    /// Trames autres que `send`, `ack`, `ping`, `list_devices`, `error`.
     pub(super) async fn on_people_frame(&mut self, frame: Frame) -> Result<Option<Frame>, Close> {
         let gate = match &frame {
             Frame::DirectoryGet { .. } => None,
@@ -138,24 +127,18 @@ impl Active<'_> {
             }
             Frame::LinkSet { from, to, allowed } => self.link_set(from, to, allowed).await?,
             Frame::UsersGet => self.users().await?,
-            // Invariant : `gate` a écarté toutes les autres trames.
             other => unreachable!("trame {} non filtrée", other.type_name()),
         };
         Ok(Some(reply))
     }
 
-    /// Appareil et personne de la session, relus en base. Révoqué entre-temps :
-    /// la session se ferme.
     async fn peer(&mut self) -> Result<Peer, Close> {
         self.inner.store.peer(&self.device).await.map_err(db)?.ok_or(Close("appareil révoqué"))
     }
 
-    /// Prévient les appareils concernés par un changement de `user`, sauf
-    /// celui de la session, qui reçoit la réponse.
     async fn notify(&mut self, user: &UserId) -> Result<(), Close> {
         let admin = self.inner.store.admin().await.map_err(db)?;
         if &admin.id == user {
-            // L'annuaire de l'admin est l'ancre de tous.
             self.inner.registry.directory_changed_all(&self.device);
             return Ok(());
         }
@@ -169,7 +152,6 @@ impl Active<'_> {
         self.inner.registry.directory_changed(others);
     }
 
-    /// Erreur typée pour un refus du magasin, comptée dans les métriques.
     fn refused(&self, e: StoreError, reference: Option<String>) -> Frame {
         let m = &self.inner.metrics;
         let (code, message) = match e {
@@ -231,8 +213,6 @@ impl Active<'_> {
         seq: u64,
         entry: &SignedBlob,
     ) -> Result<Frame, Close> {
-        // Même frein que les envois : chaque publication réveille l'annuaire
-        // de tous les appareils concernés.
         if peer_role_limited(self.role) && !self.inner.send_rate.take(&self.user) {
             Metrics::inc(&self.inner.metrics.refused_quota);
             let msg = "trop de publications : réessayer dans une minute";
@@ -275,7 +255,6 @@ impl Active<'_> {
         }
     }
 
-    /// Jeton d'invitation neuf et sa date de fin.
     fn invite_token(&self) -> ([u8; PAIR_TOKEN_LEN], i64, i64) {
         let now = now_ms();
         let ttl = self.inner.config.users.invite_ttl.as_millis() as i64;
@@ -438,7 +417,6 @@ impl Active<'_> {
     }
 
     async fn link_set(&mut self, from: UserId, to: UserId, allowed: bool) -> Result<Frame, Close> {
-        // Prévenir ceux qui voyaient le lien et ceux qui le verront.
         let store = &self.inner.store;
         let mut devices: BTreeSet<DeviceId> = BTreeSet::new();
         for u in [&from, &to] {
@@ -468,7 +446,6 @@ impl Active<'_> {
     }
 }
 
-/// Membre ou service : soumis aux limites propres des personnes.
 fn peer_role_limited(role: Role) -> bool {
     role != Role::Admin
 }
@@ -482,9 +459,6 @@ fn rfc3339(ms: i64) -> Result<OffsetDateTime, Close> {
         .map_err(|_| Close("horloge invalide"))
 }
 
-/// Premier appareil d'une personne invitée : enregistré avec le jeton,
-/// répond `invite_redeemed` puis ferme ; l'appareil se reconnecte avec
-/// `auth`. Calqué sur `pair_redeem` (note 0020).
 pub(super) async fn redeem_invite(
     inner: &Inner,
     socket: &mut WebSocket,
@@ -511,7 +485,6 @@ pub(super) async fn redeem_invite(
             let frame =
                 Frame::InviteRedeemed { user: r.user, device: r.device.id, inviter: r.inviter };
             send(socket, &frame).await?;
-            // Le nouvel appareil va écrire à l'invitant : rien d'autre à prévenir.
             Err(Rejected::Closed(Close("invitation terminée")))
         }
         Err(StoreError::PairingInvalid) => {
@@ -533,8 +506,6 @@ pub(super) async fn redeem_invite(
     }
 }
 
-/// Refus d'une invitation, compté aussi comme appairage refusé (et, pour un
-/// jeton ou une signature invalides, comme échec de l'IP).
 async fn invite_rejected(
     inner: &Inner,
     socket: &mut WebSocket,

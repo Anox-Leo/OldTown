@@ -1,6 +1,3 @@
-//! Outils communs aux tests d'intégration : serveur lancé dans le processus,
-//! appareils de test et client WebSocket brut.
-
 #![allow(dead_code)]
 
 use std::net::SocketAddr;
@@ -32,10 +29,8 @@ pub fn test_config() -> Config {
 
 pub struct TestServer {
     pub addr: SocketAddr,
-    /// Routes d'administration (`/metrics`).
     pub admin: SocketAddr,
     pub relay: Relay,
-    /// En TLS : l'URL est en `wss://localhost`.
     tls: bool,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
@@ -59,7 +54,6 @@ impl TestServer {
         Self { addr, admin, relay, tls: false, stop: Some(stop), task }
     }
 
-    /// Relais en TLS (`wss://`), avec le certificat donné.
     pub async fn start_tls(store: Store, config: Config, tls: Tls) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -87,14 +81,12 @@ impl TestServer {
         store.close().await;
     }
 
-    /// Arrête le serveur sans fermer la base (utile pour une base en mémoire).
     pub async fn stop_keep_store(mut self) {
         let _ = self.stop.take().unwrap().send(());
         tokio::time::timeout(STEP, &mut self.task).await.expect("arrêt du serveur").unwrap();
     }
 }
 
-/// Routes d'administration sur un port local à part, arrêtées avec le test.
 async fn start_admin(relay: &Relay) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -109,14 +101,12 @@ pub struct TestDevice {
     pub keyring: Arc<MemoryKeyring>,
 }
 
-/// Appareil enregistré sur le relais, sans groupe.
 pub async fn add_device(store: &Store, name: &str) -> TestDevice {
     let identity = Identity::generate();
     let id = store.add_device(name, &identity.public_key(), 0).await.unwrap().id;
     TestDevice { id, name: name.into(), identity, keyring: Arc::new(MemoryKeyring::new()) }
 }
 
-/// Met les appareils dans un même groupe (époque 1), comme après appairage.
 pub fn make_group(devices: &[&TestDevice]) {
     let members = devices
         .iter()
@@ -153,13 +143,10 @@ pub async fn open_store(path: &Path) -> Store {
     Store::open(path).await.unwrap()
 }
 
-/// Prochain événement, en échouant au-delà de `STEP`.
 pub async fn next_event(events: &mut Events) -> Event {
     tokio::time::timeout(STEP, events.next()).await.expect("événement attendu").expect("flux fermé")
 }
 
-/// Attend la connexion. Le délai est global : un client qui échoue en boucle
-/// produit sans cesse des événements et ne doit pas bloquer le test.
 pub async fn wait_connected(events: &mut Events) -> u64 {
     within(async {
         loop {
@@ -172,7 +159,6 @@ pub async fn wait_connected(events: &mut Events) -> u64 {
     .await
 }
 
-/// Prochain message reçu, en ignorant les événements de connexion.
 pub async fn next_message(events: &mut Events) -> ot_core::Received {
     within(async {
         loop {
@@ -184,12 +170,10 @@ pub async fn next_message(events: &mut Events) -> ot_core::Received {
     .await
 }
 
-/// Échoue si `fut` ne se termine pas dans `STEP`.
 pub async fn within<T>(fut: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(STEP, fut).await.expect("délai dépassé")
 }
 
-/// Vérifie qu'aucun message n'arrive pendant `d`.
 pub async fn no_message(events: &mut Events, d: Duration) {
     let deadline = tokio::time::Instant::now() + d;
     while let Ok(Some(ev)) = tokio::time::timeout_at(deadline, events.next()).await {
@@ -197,7 +181,6 @@ pub async fn no_message(events: &mut Events, d: Duration) {
     }
 }
 
-/// Client WebSocket brut, pour tester le protocole trame par trame.
 pub struct Raw(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
 impl Raw {
@@ -218,7 +201,6 @@ impl Raw {
         self.0.send(Message::text(text)).await.unwrap();
     }
 
-    /// Prochaine trame ; `None` si la connexion est fermée.
     pub async fn recv(&mut self) -> Option<Frame> {
         loop {
             let msg = tokio::time::timeout(STEP, self.0.next()).await.expect("trame attendue");
@@ -237,7 +219,6 @@ impl Raw {
         }
     }
 
-    /// Connexion authentifiée ; renvoie le nombre de messages en attente.
     pub async fn login(server: &TestServer, dev: &TestDevice) -> (Self, u64) {
         let mut raw = Self::connect(server).await;
         let nonce = raw.challenge().await;
@@ -257,7 +238,6 @@ impl Raw {
     }
 }
 
-/// Requête HTTP/1.0 minimale ; renvoie (code, corps).
 pub async fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut s = TcpStream::connect(addr).await.unwrap();
@@ -269,7 +249,6 @@ pub async fn http_get(addr: SocketAddr, path: &str) -> (u16, String) {
     (code, body)
 }
 
-/// Attend un événement qui satisfait `pred`, en ignorant les autres.
 pub async fn wait_for(events: &mut Events, pred: impl Fn(&Event) -> bool) -> Event {
     within(async {
         loop {
@@ -282,7 +261,6 @@ pub async fn wait_for(events: &mut Events, pred: impl Fn(&Event) -> bool) -> Eve
     .await
 }
 
-/// Sens d'une trame qui traverse le [`proxy`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dir {
     ToServer,
@@ -291,8 +269,6 @@ pub enum Dir {
 
 pub type TamperFn = std::sync::Arc<dyn Fn(Dir, Frame) -> Frame + Send + Sync>;
 
-/// Relais malveillant : un proxy WebSocket devant le vrai relais, qui peut
-/// modifier chaque trame. Renvoie l'URL à donner aux clients.
 pub async fn proxy(upstream: &TestServer, tamper: TamperFn) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -334,7 +310,6 @@ pub async fn proxy(upstream: &TestServer, tamper: TamperFn) -> String {
     format!("ws://{addr}")
 }
 
-/// Inverse un bit du chiffré d'une enveloppe envoyée ou livrée.
 pub fn flip_payload(frame: Frame) -> Frame {
     match frame {
         Frame::Send { mut env } => {
@@ -353,7 +328,6 @@ pub fn flip_payload(frame: Frame) -> Frame {
     }
 }
 
-/// Autorité de certification de test : signe des certificats pour `localhost`.
 pub struct TestCa(rcgen::CertifiedIssuer<'static, rcgen::KeyPair>);
 
 impl TestCa {
@@ -365,13 +339,10 @@ impl TestCa {
         Self(rcgen::CertifiedIssuer::self_signed(params, key).unwrap())
     }
 
-    /// Certificat racine, en DER (à donner aux clients).
     pub fn der(&self) -> Vec<u8> {
         self.0.der().to_vec()
     }
 
-    /// Écrit un certificat `localhost` signé par cette autorité et sa clé
-    /// dans `dir` ; renvoie leurs chemins.
     pub fn write_leaf(&self, dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
         let params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
         let key = rcgen::KeyPair::generate().unwrap();
@@ -383,27 +354,23 @@ impl TestCa {
     }
 }
 
-/// Réponse HTTP brute : code et corps.
 pub struct HttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
 }
 
 impl HttpResponse {
-    /// Corps JSON d'une réponse.
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         serde_json::from_slice(&self.body).unwrap_or_else(|e| {
             panic!("JSON attendu ({e}) : {}", String::from_utf8_lossy(&self.body))
         })
     }
 
-    /// Code d'erreur de l'API.
     pub fn error(&self) -> ot_proto::http::HttpErrorCode {
         self.json::<ot_proto::http::HttpError>().error
     }
 }
 
-/// Requête HTTP/1.1 minimale (`Connection: close`).
 pub async fn http(
     addr: SocketAddr,
     method: &str,
@@ -430,8 +397,6 @@ pub async fn http(
     HttpResponse { status, body: buf[split + 4..].to_vec() }
 }
 
-/// En-têtes d'authentification d'une requête signée par `dev`, à l'heure
-/// `time_ms` avec `nonce`.
 pub fn signed_headers(
     dev: &TestDevice,
     method: &str,
@@ -454,7 +419,6 @@ pub fn signed_headers(
     ]
 }
 
-/// Requête signée par `dev`, à l'heure courante, avec un nonce neuf.
 pub async fn signed(
     server: &TestServer,
     dev: &TestDevice,
@@ -468,8 +432,6 @@ pub async fn signed(
     http(server.addr, method, path, &headers, body).await
 }
 
-/// Interrupteur TCP devant le relais : `cut` coupe les connexions ouvertes
-/// et refuse les nouvelles, `restore` les laisse repasser (coupure réseau).
 pub struct Gate {
     pub addr: SocketAddr,
     open: Arc<std::sync::atomic::AtomicBool>,
@@ -516,7 +478,6 @@ impl Gate {
     }
 }
 
-/// Fichier en mémoire, comme source d'envoi.
 pub struct MemSource {
     pub data: Vec<u8>,
     pub reads: std::sync::atomic::AtomicU64,
@@ -540,8 +501,6 @@ impl ot_core::ChunkSource for MemSource {
     }
 }
 
-/// Destination en mémoire : ce qui est écrit, et s'il a été finalisé ou
-/// abandonné.
 #[derive(Default)]
 pub struct MemSink {
     pub data: std::sync::Mutex<Vec<u8>>,
@@ -569,7 +528,6 @@ impl ot_core::ChunkSink for MemSink {
     }
 }
 
-/// Octets pseudo-aléatoires reproductibles.
 pub fn sample(len: usize) -> Vec<u8> {
     let mut x: u32 = 0x1234_5678;
     (0..len)

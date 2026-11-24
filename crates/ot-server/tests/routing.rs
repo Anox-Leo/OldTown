@@ -1,5 +1,3 @@
-//! T6 : routage, erreurs typées, sessions.
-
 mod common;
 
 use common::*;
@@ -48,8 +46,6 @@ async fn send_accept_deliver_ack() {
     panic!("l'ack n'a pas été enregistré");
 }
 
-/// Maintien de la connexion (extension Chrome, note 0023) : `ping` reçoit
-/// `pong`, sans rien changer d'autre.
 #[tokio::test]
 async fn ping_gets_pong() {
     let (server, a, _) = setup().await;
@@ -69,7 +65,6 @@ async fn oversized_envelope_is_rejected() {
     ra.send(&Frame::Send { env: env.clone() }).await;
     rejected(ra.recv().await, ErrorCode::EnvelopeTooLarge, &env);
 
-    // La session continue.
     ra.send(&Frame::ListDevices).await;
     assert!(matches!(ra.recv().await, Some(Frame::Devices { .. })));
 }

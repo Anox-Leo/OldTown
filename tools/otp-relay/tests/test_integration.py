@@ -1,10 +1,3 @@
-"""Test de bout en bout contre un vrai serveur IMAP (désactivé par défaut).
-
-    docker run -d --name otp-relay-it -p 127.0.0.1:11143:143 \
-        -v $PWD/tests/dovecot-plain.conf:/etc/dovecot/conf.d/zz-plain.conf:ro dovecot/dovecot:2.3-latest
-    OTP_RELAY_IT=127.0.0.1:11143:test:pass python3 -m unittest tests.test_integration -v
-"""
-
 import imaplib
 import json
 import os
@@ -86,7 +79,7 @@ class EndToEnd(unittest.TestCase):
     def test_code_is_pushed_within_a_second(self):
         sock, lines = self._client()
         self._wait(lines, lambda m: m["type"] == "status" and m["state"] == "connected")
-        time.sleep(0.3)  # laisse le daemon entrer en IDLE
+        time.sleep(0.3)
 
         latencies = []
         for code in ("482913", "105577", "930214"):
@@ -102,7 +95,6 @@ class EndToEnd(unittest.TestCase):
         print(f"\nlatences APPEND → événement : {', '.join(f'{x * 1000:.0f} ms' for x in latencies)}")
         self.assertLess(max(latencies), 1.0)
 
-        # Un second client reçoit les codes encore valides en replay
         sock2, lines2 = self._client()
         replayed = [m["code"] for m in (json.loads(lines2.readline()) for _ in range(5)) if m["type"] == "otp"]
         self.assertEqual(sorted(replayed), ["105577", "482913", "930214"])

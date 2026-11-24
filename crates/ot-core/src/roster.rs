@@ -1,18 +1,10 @@
-//! Règles du roster : qui peut le changer, et comment.
-//!
-//! La confiance vient de l'appairage, jamais du relais : un roster n'est
-//! accepté que d'un membre déjà connu, et seulement s'il est plus récent.
-
 use ot_crypto::{Member, Roster};
 use ot_proto::DeviceId;
 
-/// Raison du refus d'un roster.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RosterError {
     #[error("l'expéditeur n'est pas membre du groupe")]
     NotMember,
-    /// `(epoch, version)` pas plus grand que le roster courant (rejeu ou
-    /// message en retard) : ignoré sans bruit.
     #[error("roster déjà connu ou plus ancien")]
     Stale,
     #[error("le roster ne contient pas cet appareil")]
@@ -25,12 +17,10 @@ pub enum RosterError {
     AlreadyMember,
 }
 
-/// Premier roster : l'appareil seul, époque 1.
 pub fn genesis(me: Member) -> Roster {
     Roster { epoch: 1, version: 1, members: vec![me] }
 }
 
-/// Vérifie qu'un roster signé par `sender` peut remplacer `current`.
 pub fn check_replacement(
     current: &Roster,
     new: &Roster,
@@ -47,7 +37,6 @@ pub fn check_replacement(
     check_keys_unchanged(current, new)
 }
 
-/// Un roster bien formé contient l'appareil, sans doublon.
 pub fn check_shape(roster: &Roster, me: &DeviceId) -> Result<(), RosterError> {
     if !roster.contains(me) {
         return Err(RosterError::MissingSelf);
@@ -60,8 +49,6 @@ pub fn check_shape(roster: &Roster, me: &DeviceId) -> Result<(), RosterError> {
     Ok(())
 }
 
-/// Les clés d'un membre ne changent jamais : un appareil qui change de clé
-/// est un nouvel appareil, à appairer.
 pub fn check_keys_unchanged(current: &Roster, new: &Roster) -> Result<(), RosterError> {
     for m in &new.members {
         if let Some(old) = current.member(&m.device_id)
@@ -73,7 +60,6 @@ pub fn check_keys_unchanged(current: &Roster, new: &Roster) -> Result<(), Roster
     Ok(())
 }
 
-/// Ajoute un membre (appairage) ; la version augmente.
 pub fn with_member(current: &Roster, member: Member) -> Result<Roster, RosterError> {
     if current.contains(&member.device_id) {
         return Err(RosterError::AlreadyMember);
@@ -84,7 +70,6 @@ pub fn with_member(current: &Roster, member: Member) -> Result<Roster, RosterErr
     Ok(next)
 }
 
-/// Roster d'une nouvelle époque, sans les exclus ; la version augmente.
 pub fn rotated(current: &Roster, epoch: u32, excluded: &[DeviceId]) -> Roster {
     Roster {
         epoch,
@@ -122,7 +107,6 @@ mod tests {
             check_replacement(&current, &new, &stranger.device_id, &a.device_id),
             Err(RosterError::NotMember)
         );
-        // Même un roster qui le contient ne rend pas un inconnu légitime.
         new.members.push(stranger.clone());
         assert_eq!(
             check_replacement(&current, &new, &stranger.device_id, &a.device_id),

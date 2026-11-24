@@ -1,12 +1,3 @@
-//! QR inversé (note 0022) : le nouvel appareil affiche ses clés publiques, le
-//! secret `S` et une signature ; un membre du groupe le scanne, le fait
-//! enregistrer par le relais, puis lui envoie la clé de groupe (schéma
-//! `0x04`).
-//!
-//! Texte du QR : `oldtown://sponsor?o=` puis base64url sans remplissage de
-//! `version (1) ‖ ULID de l'identifiant (16) ‖ clé Ed25519 (32) ‖ clé X25519
-//! (32) ‖ S (16) ‖ signature (64) ‖ nom (UTF-8, le reste)`.
-
 use std::fmt;
 
 use base64::Engine;
@@ -17,29 +8,21 @@ use zeroize::Zeroizing;
 
 use crate::{CryptoError, PairingSecret, Result};
 
-/// Début du texte d'un QR inversé.
 pub const OFFER_PREFIX: &str = "oldtown://sponsor?o=";
 const VERSION: u8 = 1;
 const FIXED_LEN: usize = 1 + 16 + 32 + 32 + 16 + 64;
 
-/// Demande d'appairage affichée par le nouvel appareil.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PairingOffer {
-    /// Identifiant choisi par le nouvel appareil, enregistré tel quel.
     pub device_id: DeviceId,
     pub name: String,
-    /// Clé publique Ed25519 (authentification et signature des messages).
     pub sign_key: [u8; 32],
-    /// Clé publique X25519 (réception de la clé de groupe).
     pub exchange_key: [u8; 32],
-    /// Secret qui authentifie la réponse du parrain.
     pub secret: PairingSecret,
-    /// Signature de [`pair_register_message`] par `sign_key`.
     pub sig: [u8; 64],
 }
 
 impl PairingOffer {
-    /// Construit et signe l'offre du nouvel appareil.
     pub fn new(
         device_id: DeviceId,
         name: &str,
@@ -55,7 +38,6 @@ impl PairingOffer {
         Ok(Self { device_id, name: name.to_owned(), sign_key, exchange_key, secret, sig })
     }
 
-    /// Vérifie la signature de l'offre (ce que le relais vérifiera aussi).
     pub fn verify(&self) -> Result<()> {
         let key =
             VerifyingKey::from_bytes(&self.sign_key).map_err(|_| CryptoError::BadSignature)?;
@@ -64,7 +46,6 @@ impl PairingOffer {
             .map_err(|_| CryptoError::BadSignature)
     }
 
-    /// Texte du QR ; il contient `S`, d'où l'effacement à la destruction.
     pub fn encode(&self) -> Zeroizing<String> {
         let mut raw = Zeroizing::new(Vec::with_capacity(FIXED_LEN + self.name.len()));
         raw.push(VERSION);
@@ -79,7 +60,6 @@ impl PairingOffer {
         out
     }
 
-    /// Relit le texte d'un QR inversé et vérifie sa signature.
     pub fn parse(text: &str) -> Result<Self> {
         let data = text
             .trim()
@@ -157,11 +137,9 @@ mod tests {
         let raw = URL_SAFE_NO_PAD.decode(&text[OFFER_PREFIX.len()..]).unwrap();
         let reencode = |raw: &[u8]| format!("{OFFER_PREFIX}{}", URL_SAFE_NO_PAD.encode(raw));
 
-        // Nom changé : la signature ne correspond plus.
         let mut renamed = raw.clone();
         *renamed.last_mut().unwrap() ^= 1;
         assert_eq!(PairingOffer::parse(&reencode(&renamed)), Err(CryptoError::BadSignature));
-        // Autre version, tronqué, sans nom, mauvais préfixe.
         let mut v2 = raw.clone();
         v2[0] = 2;
         assert!(PairingOffer::parse(&reencode(&v2)).is_err());

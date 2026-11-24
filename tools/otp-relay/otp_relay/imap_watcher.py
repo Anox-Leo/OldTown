@@ -1,12 +1,3 @@
-"""Connexion IMAP persistante en IDLE : appelle `on_message` pour chaque nouveau mail.
-
-Boucle d'une session :
-    SELECT (lecture seule) → rattrapage des UID manqués → IDLE
-    → dès qu'un « * N EXISTS » arrive : DONE, UID FETCH des nouveaux messages → IDLE…
-L'IDLE est renouvelé toutes les `idle_refresh` secondes (Gmail le coupe vers 29 min),
-ce qui sert aussi de test de vie de la connexion, avec le keepalive TCP.
-"""
-
 from __future__ import annotations
 
 import imaplib
@@ -22,11 +13,11 @@ from .config import ImapConfig
 
 log = logging.getLogger(__name__)
 
-FETCH_LIMIT = 512 * 1024  # un mail d'OTP fait quelques dizaines de Ko ; on tronque les gros
-STARTUP_LOOKBACK = 20  # nombre de derniers messages examinés au démarrage
+FETCH_LIMIT = 512 * 1024
+STARTUP_LOOKBACK = 20
 
-OnMessage = Callable[[bytes, float, int], None]  # (mail brut, reçu à [epoch], uid)
-OnStatus = Callable[[str, str], None]  # (état, détail)
+OnMessage = Callable[[bytes, float, int], None]
+OnStatus = Callable[[str, str], None]
 
 
 class AuthError(Exception):
@@ -45,13 +36,11 @@ class ImapWatcher(threading.Thread):
         self._uidvalidity: int | None = None
         self._last_uid: int | None = None
 
-    # ------------------------------------------------------------------ cycle de vie
-
     def stop(self) -> None:
         self._stop.set()
         imap = self._imap
         if imap is not None and imap.sock is not None:
-            try:  # débloque la lecture en cours dans l'IDLE
+            try:
                 imap.sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
@@ -65,7 +54,6 @@ class ImapWatcher(threading.Thread):
             except AuthError as exc:
                 log.error("authentification IMAP refusée : %s", exc)
                 self.on_status("auth_failed", str(exc))
-                # Insister sur un mot de passe faux peut verrouiller le compte Google.
                 self._stop.wait(900)
                 continue
             except (imaplib.IMAP4.error, OSError, ssl.SSLError, EOFError) as exc:
@@ -76,7 +64,7 @@ class ImapWatcher(threading.Thread):
             finally:
                 self._close()
             if time.monotonic() - started > 120:
-                backoff = 1.0  # la session a tenu : on repart vite
+                backoff = 1.0
             log.info("reconnexion dans %.0f s", backoff)
             self._stop.wait(backoff)
             backoff = min(backoff * 2, 300)
@@ -91,8 +79,6 @@ class ImapWatcher(threading.Thread):
         except Exception:
             pass
 
-    # ------------------------------------------------------------------ session
-
     def _connect(self) -> imaplib.IMAP4:
         cfg = self.cfg
         timeout = cfg.connect_timeout
@@ -106,7 +92,7 @@ class ImapWatcher(threading.Thread):
                 imap.starttls(ssl_context=ssl.create_default_context())
         sock = imap.sock
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        if hasattr(socket, "TCP_KEEPIDLE"):  # connexion morte détectée en ~2 min au lieu de ~2 h
+        if hasattr(socket, "TCP_KEEPIDLE"):
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 15)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
@@ -131,9 +117,6 @@ class ImapWatcher(threading.Thread):
         uidnext = int(imap.untagged_responses.get("UIDNEXT", [b"1"])[-1])
 
         if self._last_uid is None or uidvalidity != self._uidvalidity:
-            # Premier démarrage (ou boîte réinitialisée) : on repart des derniers messages
-            # d'hier et d'aujourd'hui ; seuls ceux de moins de max_age seront diffusés.
-            # (Les UID Gmail ne sont pas contigus : impossible de reculer de N UID.)
             self._uidvalidity = uidvalidity
             self._last_uid = uidnext - 1
             typ, data = imap.uid("SEARCH", None, "SINCE", _imap_date(time.time() - 86400))
@@ -144,13 +127,12 @@ class ImapWatcher(threading.Thread):
         self.on_status("connected", f"{cfg.host}/{cfg.mailbox}")
 
         while not self._stop.is_set():
-            imap.untagged_responses.clear()  # sinon EXPUNGE/FETCH s'accumulent sur des jours
+            imap.untagged_responses.clear()
             self._fetch_new(imap)
             if self._wait_for_mail(imap):
                 log.debug("nouveau message signalé")
 
     def _wait_for_mail(self, imap: imaplib.IMAP4) -> bool:
-        """Bloque en IDLE ; True dès qu'un nouveau message est signalé, False au renouvellement."""
         with imap.idle(duration=self.cfg.idle_refresh) as idler:
             for typ, data in idler:
                 if typ == "EXISTS":
@@ -164,7 +146,6 @@ class ImapWatcher(threading.Thread):
         typ, data = imap.uid("SEARCH", None, f"UID {self._last_uid + 1}:*")
         if typ != "OK":
             raise imaplib.IMAP4.error(f"UID SEARCH : {data}")
-        # « N:* » renvoie toujours le dernier message, même si son UID < N.
         uids = sorted(u for u in map(int, (data[0] or b"").split()) if u > self._last_uid)
         if not uids:
             return
@@ -195,11 +176,6 @@ class ImapWatcher(threading.Thread):
 
 
 def _fetch_items(data: list) -> list[tuple[bytes, bytes]]:
-    """Regroupe la réponse d'imaplib en (méta-données, corps) par message.
-
-    imaplib renvoie pour chaque message un tuple (préfixe, littéral) suivi d'un
-    fragment b' INTERNALDATE ...)' quand le serveur place des attributs après le corps.
-    """
     items: list[tuple[bytes, bytes]] = []
     for part in data:
         if isinstance(part, tuple):

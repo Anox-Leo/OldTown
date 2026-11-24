@@ -1,8 +1,3 @@
-//! Chiffrement de bout en bout côté client : chaque message sortant est
-//! chiffré et signé, chaque message entrant est déchiffré et vérifié contre
-//! le roster avant d'être remis à l'appli. Les messages système (`roster`,
-//! `group_key`, `pair_*`) sont traités ici.
-
 use std::sync::Arc;
 
 use ot_crypto::directory::{
@@ -37,11 +32,9 @@ mod service;
 #[cfg(feature = "net")]
 pub(crate) use service::service_member;
 
-/// État du groupe, vu de cet appareil (pour l'affichage).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupInfo {
     pub epoch: u32,
-    /// Empreinte courte de la clé de groupe courante.
     pub key_fingerprint: String,
     pub roster_version: u64,
     pub members: Vec<MemberInfo>,
@@ -51,9 +44,7 @@ pub struct GroupInfo {
 pub struct MemberInfo {
     pub device_id: DeviceId,
     pub name: String,
-    /// Empreinte courte de la clé Ed25519.
     pub sign_fingerprint: String,
-    /// Empreinte courte de la clé X25519.
     pub exchange_fingerprint: String,
     pub added_epoch: u32,
 }
@@ -82,14 +73,11 @@ impl GroupInfo {
         self.members.iter().find(|m| &m.device_id == id)
     }
 
-    /// Appareils annoncés par le relais mais absents du roster : relais
-    /// compromis, ou appairage inachevé. Ils ne reçoivent rien de lisible.
     pub fn strangers(&self, devices: &[DeviceInfo]) -> Vec<DeviceInfo> {
         devices.iter().filter(|d| self.member(&d.id).is_none()).cloned().collect()
     }
 }
 
-/// Erreur de `init_group`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GroupError {
     #[error("un groupe existe déjà (époque {0}) ; --force pour le remplacer")]
@@ -98,7 +86,6 @@ pub enum GroupError {
     Keyring(#[from] KeyringError),
 }
 
-/// Paire X25519 de l'appareil, créée et enregistrée si elle manque.
 pub fn ensure_exchange_key(keyring: &dyn Keyring) -> Result<ExchangeKeyPair, KeyringError> {
     if let Some(key) = keyring.load_exchange_key()? {
         return Ok(key);
@@ -108,8 +95,6 @@ pub fn ensure_exchange_key(keyring: &dyn Keyring) -> Result<ExchangeKeyPair, Key
     Ok(key)
 }
 
-/// Crée le groupe sur le premier appareil : époque 1 et un roster qui ne
-/// contient que lui. Refuse d'écraser un groupe existant sans `force`.
 pub fn init_group(
     keyring: &dyn Keyring,
     device_id: &DeviceId,
@@ -137,7 +122,6 @@ pub fn init_group(
     Ok(GroupInfo::new(&keys, &roster))
 }
 
-/// État du groupe enregistré, sans connexion ; `None` sans groupe.
 pub fn group_info(keyring: &dyn Keyring) -> Result<Option<GroupInfo>, KeyringError> {
     match (keyring.load_group_keys()?, keyring.load_roster()?) {
         (Some(keys), Some(roster)) => Ok(Some(GroupInfo::new(&keys, &roster))),
@@ -145,20 +129,14 @@ pub fn group_info(keyring: &dyn Keyring) -> Result<Option<GroupInfo>, KeyringErr
     }
 }
 
-/// Ce que le client doit faire après le traitement d'un message : émettre un
-/// événement, ou envoyer une enveloppe (message système : roster, réponse
-/// d'appairage).
 #[derive(Debug)]
 pub enum Effect {
     Emit(Event),
     Send(Envelope),
 }
 
-/// Refus d'un message entrant.
 enum Reject {
-    /// Rejeu ou message périmé : acquitté sans bruit.
     Ignored(&'static str),
-    /// Rejeté et signalé à l'appli.
     Reason(String),
 }
 
@@ -185,30 +163,22 @@ impl From<&str> for Reject {
 
 enum Handled {
     Done,
-    /// Nouvelles clés : la quarantaine est à réessayer.
     KeysChanged,
     Quarantine,
 }
 
-/// Parrainage en cours : le secret ne vit qu'en mémoire.
 struct Sponsoring {
     token_id: [u8; 8],
     secret: PairingSecret,
     expires_at: OffsetDateTime,
 }
 
-/// Appairage en cours côté nouvel appareil.
 struct Joining {
     token_id: [u8; 8],
     secret: PairingSecret,
     sponsor: DeviceId,
 }
 
-/// Cœur de groupe sans réseau : scelle les messages sortants, ouvre et
-/// vérifie les messages entrants, tient roster, époques, quarantaine et
-/// appairages en cours. Chaque changement est enregistré dans le
-/// [`Keyring`] avant de rendre la main. Utilisé par le [`crate::Client`]
-/// réseau et, compilé en WebAssembly, par l'extension (note 0023).
 pub struct Secure {
     me: DeviceId,
     identity: Identity,
@@ -219,46 +189,29 @@ pub struct Secure {
     keyring: Arc<dyn Keyring>,
     sponsoring: Vec<Sponsoring>,
     joining: Option<Joining>,
-    /// QR inversé affiché : secret `S` attendu dans la réponse du parrain.
     joining_qr: Option<PairingSecret>,
-    /// Annuaire vérifié (étape 10), rangé dans le keyring.
     directory: DirectoryState,
-    /// Personnes vérifiées au dernier tour complet de lecture.
     people: Vec<Person>,
-    /// Fourche de ma personne déjà signalée (une alerte par fourche).
     fork: bool,
-    /// Ma personne, d'après le relais (dernière lecture de l'annuaire).
     me_user: Option<UserId>,
-    /// Heure du dernier tour complet de lecture.
     people_at: Option<OffsetDateTime>,
-    /// Invitations créées par cet appareil (admin), rangées dans le keyring.
     invites: Vec<InviteRecord>,
-    /// Invitation rachetée par cet appareil (invité), rangée dans le keyring.
     pending_invite: Option<PendingInvite>,
-    /// Appareil de service : bienvenue reçue, à confirmer par l'annuaire.
     service_join: Option<service::ServiceJoin>,
-    /// Ancre reçue du parrain (note 0076) : une lecture de l'annuaire est
-    /// due, pour que cet appareil se trouve et déclare ses capacités.
     read_due: bool,
 }
 
-/// Ce qu'une entrée de mon journal doit changer (§ 4.2, note 0056).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Publish {
-    /// Mon roster local, s'il est plus récent que le journal publié.
     IfBehind,
-    /// Admin : engager ce certificat (neuf ou re-signé) de cette personne.
     Certify(UserId, SignedBlob),
-    /// Admin : retirer l'empreinte d'une personne révoquée.
     Revoke(UserId),
 }
 
-/// Entrée de mon journal signée par cet appareil, à publier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnEntry {
     pub user: UserId,
     pub entry: LogEntry,
-    /// Roster qu'elle porte : adopté par mon groupe une fois publiée.
     pub roster: Roster,
     pub certs: Vec<CertRef>,
 }
@@ -269,16 +222,12 @@ impl OwnEntry {
     }
 }
 
-/// Suite d'une publication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NextEntry {
-    /// Rien à publier ; la tête de mon journal si elle engage déjà le
-    /// changement demandé.
     Done(Option<LogHead>),
     Entry(Box<OwnEntry>),
 }
 
-/// Âge au-delà duquel l'annuaire est relu avant un envoi à une personne.
 pub const DIRECTORY_MAX_AGE: time::Duration = time::Duration::seconds(60);
 
 fn body_of(content: &Content) -> Body {
@@ -289,8 +238,6 @@ fn body_of(content: &Content) -> Body {
 }
 
 impl Secure {
-    /// Charge l'état depuis le keyring. Une erreur de lecture laisse
-    /// l'appareil sans groupe (il refuse alors d'envoyer) et est signalée.
     pub fn load(me: DeviceId, identity: Identity, keyring: Arc<dyn Keyring>) -> (Self, Vec<Event>) {
         let mut events = Vec::new();
         let mut report = |e: KeyringError| events.push(Event::KeyringError { message: e.0 });
@@ -359,42 +306,30 @@ impl Secure {
         Some(GroupInfo::new(self.keys.as_ref()?, self.roster.as_ref()?))
     }
 
-    /// L'appareil connaît l'ancre de l'annuaire : il le lit et le vérifie.
-    /// Sans elle (installation à une personne), l'annuaire reste vide.
     pub fn has_anchor(&self) -> bool {
         self.directory.anchor.is_some()
     }
 
-    /// Dernier `seq` vérifié par personne, pour `directory_get`.
     pub fn directory_known(&self) -> Known {
         self.directory.known()
     }
 
-    /// Personnes vérifiées au dernier tour complet de lecture (moi compris).
     pub fn people(&self) -> Vec<Person> {
         self.people.clone()
     }
 
-    /// État vérifié de l'annuaire (ancre, journaux).
     pub fn directory_state(&self) -> &DirectoryState {
         &self.directory
     }
 
-    /// L'annuaire a été lu il y a moins de [`DIRECTORY_MAX_AGE`] : un envoi à
-    /// une personne peut partir sans relecture.
     pub fn directory_fresh(&self, now: OffsetDateTime) -> bool {
         self.people_at.is_some_and(|t| now - t < DIRECTORY_MAX_AGE)
     }
 
-    /// Mon profil sur le relais n'annonce pas encore `users-v1` : à
-    /// déclarer (`device_update`), seul l'appareil le peut.
     pub fn needs_features(&self) -> bool {
         self.my_profile().is_some_and(|d| !d.up_to_date)
     }
 
-    /// `device_update` que cet appareil doit au relais : ses capacités si
-    /// son profil ne les a pas, et `kind` si son profil n'a pas de
-    /// catégorie (jamais celle choisie dans les réglages). `None` : rien.
     pub fn declaration(&self, kind: Option<DeviceKind>) -> Option<Frame> {
         let profile = self.my_profile()?;
         let features = (!profile.up_to_date).then(|| vec![Feature::users_v1()]);
@@ -420,17 +355,11 @@ impl Secure {
         self.people.iter().find(|p| &p.id == me)
     }
 
-    /// Les autres personnes vérifiées.
     fn others(&self) -> impl Iterator<Item = &Person> {
         let me = self.me_user.clone();
         self.people.iter().filter(move |p| Some(&p.id) != me.as_ref())
     }
 
-    /// Appareils destinataires d'un envoi à `user` (§ 4.3) : `device` s'il
-    /// est joignable et à jour ; sinon ses appareils par défaut joignables
-    /// et à jour, ou à défaut tous ses appareils joignables et à jour (D42).
-    /// Puis la copie (D43) : mes appareils à jour, hors CLI et hors
-    /// celui-ci. Seuls des appareils des rosters vérifiés en sortent.
     pub fn recipients(
         &self,
         user: &UserId,
@@ -485,9 +414,6 @@ impl Secure {
         Ok(to)
     }
 
-    /// Mes appareils qui reçoivent la copie d'un envoi à une personne : à
-    /// jour, hors CLI, hors celui-ci, membres de mon roster. Aucun pour un
-    /// service (pas de groupe).
     fn copies(&self) -> Vec<DeviceId> {
         let (Some(me), Some(roster)) = (self.my_person(), &self.roster) else {
             return Vec::new();
@@ -503,8 +429,6 @@ impl Secure {
             .collect()
     }
 
-    /// Clé X25519 d'un appareil : mon roster d'abord, puis les rosters
-    /// vérifiés des autres personnes.
     fn exchange_key(&self, id: &DeviceId) -> Option<[u8; 32]> {
         if let Some(m) = self.roster.as_ref().and_then(|r| r.member(id)) {
             return Some(m.exchange_key);
@@ -512,8 +436,6 @@ impl Secure {
         self.others().find_map(|p| p.roster.member(id)).map(|m| m.exchange_key)
     }
 
-    /// Clé de signature et personne d'un expéditeur : mon roster d'abord
-    /// (ma personne), puis les rosters vérifiés des autres personnes.
     fn sender(&self, id: &DeviceId) -> Option<([u8; 32], Origin)> {
         if let Some(m) = self.roster.as_ref().and_then(|r| r.member(id)) {
             return Some((m.sign_key, Origin::default()));
@@ -529,15 +451,12 @@ impl Secure {
         })
     }
 
-    /// Copie d'un de mes envois : la personne du premier destinataire hors
-    /// de mon roster.
     fn addressee(&self, to: &[DeviceId]) -> Option<UserId> {
         let roster = self.roster.as_ref();
         let other = to.iter().find(|id| !roster.is_some_and(|r| r.contains(id)))?;
         self.others().find(|p| p.roster.contains(other)).map(|p| p.id.clone())
     }
 
-    /// Scelle `body` en `0x05` pour ces appareils, dans cet ordre.
     fn seal_multi(&self, to: Vec<DeviceId>, body: &Body) -> Result<Envelope, ClientError> {
         let recipients = to
             .iter()
@@ -551,8 +470,6 @@ impl Secure {
         self.seal_env(to, SealKey::Multi { recipients: &recipients }, body).map_err(crypto)
     }
 
-    /// Chiffre un contenu pour une autre personne (`0x05`), copie à mes
-    /// appareils comprise.
     pub fn seal_content_to(
         &self,
         content: &Content,
@@ -563,8 +480,6 @@ impl Secure {
         self.seal_multi(to, &body_of(content))
     }
 
-    /// Chiffre un code à usage unique pour des personnes (pont d'un service,
-    /// ou d'un membre), en un seul message `0x05`.
     pub fn seal_otp_to(&self, otp: &Otp, users: &[UserId]) -> Result<Envelope, ClientError> {
         let mut to: Vec<DeviceId> = Vec::new();
         for user in users {
@@ -580,8 +495,6 @@ impl Secure {
         self.seal_multi(to, &Body::Otp(otp.clone()))
     }
 
-    /// Comme [`Secure::seal_otp_to`], pour un seul appareil d'une personne
-    /// plutôt que ses appareils par défaut.
     pub fn seal_otp_to_device(
         &self,
         otp: &Otp,
@@ -592,8 +505,6 @@ impl Secure {
         self.seal_multi(to, &Body::Otp(otp.clone()))
     }
 
-    /// Chiffre l'annonce d'un fichier déposé pour ces appareils, déjà
-    /// résolus par [`Secure::recipients`] (le blob leur est ouvert).
     pub fn seal_file_to(
         &self,
         meta: &FileMeta,
@@ -602,11 +513,6 @@ impl Secure {
         self.seal_multi(to, &meta.body())
     }
 
-    // --- Invitation, côté admin (§ 4.5) ---
-
-    /// `user_invite` (ou `user_reinvite`) accepté : tire `S`, range
-    /// l'invitation et rend le code (jeton, `S`, ancre). Une invitation
-    /// précédente de la même personne est remplacée.
     pub fn create_invite(
         &mut self,
         user: UserId,
@@ -638,7 +544,6 @@ impl Secure {
         Ok(code)
     }
 
-    /// Invitations dont la demande est arrivée : à certifier.
     pub fn invites_to_certify(&self) -> Vec<UserId> {
         self.invites.iter().filter(|r| r.guest.is_some()).map(|r| r.user.clone()).collect()
     }
@@ -654,9 +559,6 @@ impl Secure {
         self.keyring.save_invites(&self.invites).map_err(keyring_err)
     }
 
-    /// Certificat de l'invité, signé par cet appareil la première fois puis
-    /// rangé : une reprise après coupure envoie le même. Rend aussi si le
-    /// relais l'a déjà accepté.
     pub fn invite_cert(
         &mut self,
         user: &UserId,
@@ -691,15 +593,12 @@ impl Secure {
         Ok((cert, false))
     }
 
-    /// `user_certify` accepté pour cette invitation.
     pub fn invite_certified(&mut self, user: &UserId) -> Result<(), ClientError> {
         let i = self.invite_index(user)?;
         self.invites[i].certified = true;
         self.save_invite_list()
     }
 
-    /// Bienvenue scellée sous `S` pour l'appareil invité : son certificat et
-    /// la tête de mon journal qui l'engage.
     pub fn invite_welcome(&self, user: &UserId, head: LogHead) -> Result<Envelope, ClientError> {
         let r = &self.invites[self.invite_index(user)?];
         let (Some(g), Some(cert)) = (&r.guest, &r.cert) else {
@@ -711,7 +610,6 @@ impl Secure {
         self.seal_env(vec![g.device_id.clone()], key, &body).map_err(crypto)
     }
 
-    /// Bienvenue acceptée par le relais : l'invitation est terminée.
     pub fn invite_done(&mut self, user: &UserId) -> Result<Vec<Effect>, ClientError> {
         let i = self.invite_index(user)?;
         let r = self.invites.remove(i);
@@ -726,9 +624,6 @@ impl Secure {
         })])
     }
 
-    /// Demande d'un invité, vérifiée par `S` (que seul cet appareil et
-    /// l'invité connaissent) et par sa propre clé ; rangée **avant**
-    /// l'acquittement, la suite est menée par le client.
     fn on_invite_request(
         &mut self,
         i: usize,
@@ -757,7 +652,6 @@ impl Secure {
         let mut invites = self.invites.clone();
         invites[i].guest = Some(guest);
         if let Err(e) = self.keyring.save_invites(&invites) {
-            // Pas rangée : rejetée, l'invité la renverra à sa prochaine connexion.
             fx.push(Effect::Emit(Event::KeyringError { message: e.0.clone() }));
             return Err(Reject::Reason(e.0));
         }
@@ -765,10 +659,6 @@ impl Secure {
         Ok(Handled::Done)
     }
 
-    // --- Invitation, côté invité (§ 4.5) ---
-
-    /// Demande à l'admin qui a invité, tant que la bienvenue n'est pas là
-    /// (renvoyée à chaque connexion).
     pub fn invite_request(&self) -> Option<Result<Envelope, ClientError>> {
         let p = self.pending_invite.as_ref().filter(|p| p.welcome.is_none())?;
         let body = Body::InviteRequest {
@@ -783,23 +673,16 @@ impl Secure {
         Some(self.seal_env(vec![p.inviter.clone()], key, &body).map_err(crypto))
     }
 
-    /// Une invitation attend sa bienvenue ou sa confirmation par l'annuaire.
     pub fn is_invited(&self) -> bool {
         self.pending_invite.is_some()
     }
 
-    /// Une lecture de l'annuaire est attendue : bienvenue d'invitation ou de
-    /// service à confirmer, ou ancre reçue du parrain (note 0076).
     pub fn awaits_directory(&self) -> bool {
         self.pending_invite.as_ref().is_some_and(|p| p.welcome.is_some())
             || self.awaits_service()
             || self.read_due
     }
 
-    /// Bienvenue de l'admin : ouverte sous `S`, signée par l'appareil qui a
-    /// invité (clé lue dans le roster vérifié de l'admin), certificat pour
-    /// moi. Rangée avec la tête du journal de l'admin, que l'annuaire devra
-    /// atteindre ; le groupe se crée une fois le certificat confirmé.
     fn on_invite_welcome(
         &mut self,
         env: &Envelope,
@@ -813,7 +696,6 @@ impl Secure {
             return Err(Reject::Ignored("bienvenue déjà reçue"));
         }
         let Some(inviter) = self.directory.admin_roster().and_then(|r| r.member(&env.from)) else {
-            // Le roster de l'admin n'est pas encore lu (ou pas à jour).
             return Ok(Handled::Quarantine);
         };
         let opened = open(env, OpenKey::Invite(&p.secret()))?;
@@ -834,8 +716,6 @@ impl Secure {
             }));
             return Err("certificat qui ne désigne pas cet appareil".into());
         }
-        // La tête doit être atteinte par la lecture ; déjà dépassée, la
-        // chaîne vérifiée depuis l'ancre la contient.
         let chain_seq = self.directory.admin.as_ref().and_then(|(_, k)| k.chain.as_ref());
         match chain_seq {
             Some(c) if c.seq == admin_head.seq && c.head != admin_head.hash => {
@@ -860,10 +740,6 @@ impl Secure {
         Ok(Handled::Done)
     }
 
-    /// Après un tour complet de lecture : si l'annuaire confirme le
-    /// certificat de la bienvenue (tête de l'admin atteinte, empreinte
-    /// engagée, signataire dans son roster courant), crée mon groupe.
-    /// L'entrée 1 de mon journal part ensuite (`Publish::IfBehind`).
     fn finish_invite(&mut self, fx: &mut Vec<Effect>) {
         let Some(p) = &self.pending_invite else { return };
         let Some(w) = &p.welcome else { return };
@@ -898,12 +774,6 @@ impl Secure {
         fx.push(Effect::Emit(Event::Joined { user }));
     }
 
-    // --- Mon journal (§ 4.2) et les certificats engagés par l'admin ---
-
-    /// Prochaine entrée de mon journal pour `what`, signée par cet appareil,
-    /// ou rien à faire. Mon roster local est publié tel quel s'il est plus
-    /// récent ; sinon sa version passe au-dessus de celle du journal, et mon
-    /// groupe l'adopte une fois publiée (note 0057, point 7).
     pub fn next_entry(&self, what: &Publish) -> Result<NextEntry, ClientError> {
         let quiet = matches!(what, Publish::IfBehind);
         let refuse = |why: &str| {
@@ -979,7 +849,6 @@ impl Secure {
             .with_certs(certs)
             .sign(self.identity.signing_key())
             .map_err(crypto)?;
-        // Les empreintes, triées comme dans l'entrée signée.
         let certs = RosterEntry::read_unverified(&entry).map_err(crypto)?.certs;
         Ok(NextEntry::Entry(Box::new(OwnEntry {
             user: me_user.clone(),
@@ -989,14 +858,10 @@ impl Secure {
         })))
     }
 
-    /// Mon roster local est plus récent que mon journal publié.
     pub fn needs_publish(&self) -> bool {
         matches!(self.next_entry(&Publish::IfBehind), Ok(NextEntry::Entry(_)))
     }
 
-    /// Entrée acceptée par le relais : elle prolonge mon journal vérifié ;
-    /// si sa version dépasse mon roster local, mon groupe l'adopte (message
-    /// `roster` à mes autres appareils).
     pub fn entry_published(&mut self, own: &OwnEntry) -> Vec<Effect> {
         let mut fx = Vec::new();
         let chain = Chain {
@@ -1027,9 +892,6 @@ impl Secure {
         fx
     }
 
-    /// Certificat d'une personne re-signé par cet appareil (même `genesis`) :
-    /// après le retrait de l'appareil de l'admin qui l'avait signé, ou un
-    /// renommage (`name`).
     pub fn recertify(
         &self,
         user: &UserId,
@@ -1053,7 +915,6 @@ impl Secure {
         cert.sign(self.identity.signing_key()).map_err(crypto)
     }
 
-    /// Personnes dont le certificat a été signé par `issuer`.
     pub fn certified_by(&self, issuer: &DeviceId) -> Vec<UserId> {
         self.directory
             .people
@@ -1063,8 +924,6 @@ impl Secure {
             .collect()
     }
 
-    /// Applique un tour complet de lecture de l'annuaire. Renvoie les effets
-    /// (événements) et `true` si un autre tour est à faire, `known` à jour.
     pub fn apply_directory(
         &mut self,
         me: &UserId,
@@ -1095,8 +954,6 @@ impl Secure {
             fx.push(Effect::Emit(event));
         }
         if let Some(people) = applied.people {
-            // Profils et présence ne sont pas dans l'état rangé : un changement
-            // de la vue compte aussi.
             if people != self.people
                 && !fx.iter().any(|f| matches!(f, Effect::Emit(Event::DirectoryChanged)))
             {
@@ -1104,7 +961,6 @@ impl Secure {
             }
             self.people = people;
             self.people_at = Some(now);
-            // Des expéditeurs `0x05` inconnus le sont peut-être plus.
             self.retry_quarantine(now, &mut fx);
             self.finish_invite(&mut fx);
             self.finish_service(&mut fx);
@@ -1118,9 +974,6 @@ impl Secure {
         (fx, applied.again)
     }
 
-    /// Objets de `admin_init` (note 0052) : certificat racine auto-signé par
-    /// cet appareil (son `genesis`) et entrée 1 du journal de l'admin, son
-    /// roster courant. Rien n'est rangé avant [`Secure::adopt_admin_root`].
     pub fn admin_root(
         &self,
         admin: &UserId,
@@ -1156,11 +1009,6 @@ impl Secure {
         Ok((cert, entry))
     }
 
-    /// Certificat racine déjà publié par un autre appareil de l'admin :
-    /// adopté seulement s'il est pour `admin`, auto-signé, et si son
-    /// `genesis` est membre de mon roster avec les mêmes clés. Mon roster
-    /// est vérifié par mon groupe : le relais ne peut pas y glisser un
-    /// appareil.
     pub fn adopt_existing_root(
         &mut self,
         admin: &UserId,
@@ -1180,8 +1028,6 @@ impl Secure {
         Ok(self.adopt_admin_root(cert))
     }
 
-    /// `admin_init` accepté par le relais : l'ancre est celle de ce
-    /// certificat ; le journal se vérifie ensuite à la lecture.
     pub fn adopt_admin_root(&mut self, cert: &SignedBlob) -> Vec<Effect> {
         let mut fx = Vec::new();
         self.directory = DirectoryState::with_anchor(anchor(cert));
@@ -1210,8 +1056,6 @@ impl Secure {
         Ok(env)
     }
 
-    /// Chiffre un contenu sous l'époque courante. Les destinataires doivent
-    /// être membres du roster ; vide : tous les autres appareils.
     pub fn seal_content(
         &self,
         content: &Content,
@@ -1226,8 +1070,6 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
-    /// Chiffre un code à usage unique (corps `otp`, note 0045) sous l'époque
-    /// courante, pour des membres du roster (vide : tous).
     pub fn seal_otp(&self, otp: &Otp, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
         let (keys, roster) = self.group()?;
         if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
@@ -1238,8 +1080,6 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
-    /// Chiffre l'annonce d'un fichier déposé (corps `file`, étape 5) sous
-    /// l'époque courante, pour des membres du roster (vide : tous).
     pub fn seal_file(&self, meta: &FileMeta, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
         let (keys, roster) = self.group()?;
         if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
@@ -1249,20 +1089,17 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &meta.body()).map_err(crypto)
     }
 
-    /// Offre reçue pour ce blob, avec sa clé (pour le téléchargement).
     pub fn file(&self, blob_id: &BlobId) -> Result<Option<StoredFile>, ClientError> {
         let files = self.keyring.load_files().map_err(keyring_err)?;
         Ok(files.into_iter().find(|f| &f.blob_id == blob_id))
     }
 
-    /// Fichiers annoncés encore connus, du plus ancien au plus récent.
     pub fn files(&self) -> Result<Vec<FileInfo>, ClientError> {
         let mut files = self.keyring.load_files().map_err(keyring_err)?;
         prune_offers(&mut files, OffsetDateTime::now_utc());
         Ok(files.iter().map(StoredFile::info).collect())
     }
 
-    /// Oublie une offre (fichier téléchargé, ou expiré sur le relais).
     pub fn forget_file(&self, blob_id: &BlobId) -> Result<(), ClientError> {
         let mut files = self.keyring.load_files().map_err(keyring_err)?;
         let before = files.len();
@@ -1273,8 +1110,6 @@ impl Secure {
         Ok(())
     }
 
-    /// Dépôt en cours pour cette source, s'il n'a pas expiré et si la taille
-    /// n'a pas changé.
     pub fn upload(
         &self,
         source_id: &str,
@@ -1287,14 +1122,11 @@ impl Secure {
             .find(|u| u.source_id == source_id && u.meta.size == size && u.expires_at > now))
     }
 
-    /// Tous les dépôts en cours de cette source, expirés compris.
     pub fn uploads_of(&self, source_id: &str) -> Result<Vec<PendingUpload>, ClientError> {
         let uploads = self.keyring.load_uploads().map_err(keyring_err)?;
         Ok(uploads.into_iter().filter(|u| u.source_id == source_id).collect())
     }
 
-    /// Enregistre un dépôt en cours (remplace celui de la même source) et
-    /// oublie les dépôts expirés.
     pub fn save_upload(
         &self,
         upload: PendingUpload,
@@ -1306,7 +1138,6 @@ impl Secure {
         self.keyring.save_uploads(&uploads).map_err(keyring_err)
     }
 
-    /// Oublie le dépôt en cours de cette source (terminé ou abandonné).
     pub fn forget_upload(&self, source_id: &str) -> Result<(), ClientError> {
         let mut uploads = self.keyring.load_uploads().map_err(keyring_err)?;
         let before = uploads.len();
@@ -1317,7 +1148,6 @@ impl Secure {
         Ok(())
     }
 
-    /// Le relais a créé un jeton : tire le secret et attend la demande.
     pub fn sponsor(
         &mut self,
         token: [u8; ot_crypto::TOKEN_LEN],
@@ -1335,7 +1165,6 @@ impl Secure {
         Ok(code)
     }
 
-    /// Nouvel appareil : prépare la demande d'appairage pour le parrain.
     pub fn start_join(
         &mut self,
         code: &PairingCode,
@@ -1354,8 +1183,6 @@ impl Secure {
         Ok(env)
     }
 
-    /// Nouvel appareil, QR inversé : prépare l'offre à afficher et attend la
-    /// réponse authentifiée par son secret.
     pub fn offer(&mut self, name: &str) -> Result<PairingOffer, ClientError> {
         let secret = PairingSecret::generate();
         let offer = PairingOffer::new(
@@ -1370,26 +1197,19 @@ impl Secure {
         Ok(offer)
     }
 
-    /// Nouvel appareil, QR inversé : reprend une offre affichée avant un
-    /// redémarrage (secret rangé par l'appli, note 0023).
     pub fn restore_offer(&mut self, secret: PairingSecret) {
         self.joining_qr = Some(secret);
     }
 
-    /// Nouvel appareil, appairage par code : reprend l'attente de la réponse
-    /// du parrain après un redémarrage, sans renvoyer la demande.
     pub fn restore_join(&mut self, code: &PairingCode, sponsor: DeviceId) {
         self.joining =
             Some(Joining { token_id: code.token_id(), secret: code.secret.clone(), sponsor });
     }
 
-    /// Un appairage (par code ou QR inversé) attend encore sa réponse.
     pub fn is_joining(&self) -> bool {
         self.joining.is_some() || self.joining_qr.is_some()
     }
 
-    /// Parrain, QR inversé : vérifie l'offre scannée avant de demander
-    /// l'enregistrement au relais.
     pub fn check_offer(&self, offer: &PairingOffer) -> Result<(), ClientError> {
         let (_, roster) = self.group()?;
         offer.verify().map_err(|e| ClientError::Pairing(e.to_string()))?;
@@ -1404,10 +1224,6 @@ impl Secure {
         Ok(())
     }
 
-    /// Parrain, QR inversé, une fois l'appareil enregistré par le relais :
-    /// l'ajoute au roster, lui scelle clés et roster (schéma `0x04`), et
-    /// diffuse le roster. Renvoie la réponse au nouvel appareil à part, pour
-    /// suivre son acceptation.
     pub fn welcome_offer(
         &mut self,
         offer: &PairingOffer,
@@ -1417,7 +1233,7 @@ impl Secure {
             name: offer.name.clone(),
             sign_key: offer.sign_key,
             exchange_key: offer.exchange_key,
-            added_epoch: 0, // fixée par `admit`
+            added_epoch: 0,
         };
         let key = SealKey::PairQr { recipient: offer.exchange_key, secret: &offer.secret };
         let mut fx = Vec::new();
@@ -1425,10 +1241,6 @@ impl Secure {
         Ok((welcome, fx))
     }
 
-    /// Parrain : ajoute `member` au roster (à l'époque courante), lui scelle
-    /// sous `key` les clés encore utiles et le nouveau roster, et diffuse ce
-    /// roster à tous. Renvoie la réponse au nouvel appareil ; la diffusion et
-    /// les événements vont dans `fx`.
     fn admit(
         &mut self,
         mut member: Member,
@@ -1462,8 +1274,6 @@ impl Secure {
         Ok(welcome)
     }
 
-    /// Tire une nouvelle clé de groupe, la scelle pour chaque membre restant
-    /// et l'adopte. Renvoie l'époque et les messages `group_key` à envoyer.
     pub fn rotate(
         &mut self,
         exclude: &[DeviceId],
@@ -1498,8 +1308,6 @@ impl Secure {
         Ok((epoch, envs, fx))
     }
 
-    /// Traite un message livré par le relais. Il sera acquitté quoi qu'il
-    /// arrive : remis, mis de côté, ou rejeté.
     pub fn process(&mut self, seq: i64, env: Envelope, now: OffsetDateTime) -> Vec<Effect> {
         let mut fx = Vec::new();
         if self.process_one(seq, env, now, &mut fx) {
@@ -1508,7 +1316,6 @@ impl Secure {
         fx
     }
 
-    /// Renvoie `true` si les clés ont changé.
     fn process_one(
         &mut self,
         seq: i64,
@@ -1596,9 +1403,6 @@ impl Secure {
                     _ => self.adopt_welcome(env, opened, now, fx),
                 }
             }
-            // Étape 10 : d'une autre personne (annuaire vérifié), ou d'un de
-            // mes appareils (copie d'un envoi, D43). Expéditeur inconnu :
-            // mis de côté jusqu'à la prochaine lecture de l'annuaire.
             Header::Multi { .. } => {
                 let Some((sign_key, mut origin)) = self.sender(&env.from) else {
                     return Ok(Handled::Quarantine);
@@ -1615,8 +1419,6 @@ impl Secure {
         }
     }
 
-    /// Remet à l'appli un corps de contenu (texte, lien, fichier, code).
-    /// Tout autre corps n'est pas remis : `Ok(Err(nom du corps))`.
     fn deliver(
         &mut self,
         seq: i64,
@@ -1675,10 +1477,6 @@ impl Secure {
         Ok(Handled::Done)
     }
 
-    /// Parrain : vérifie la demande, ajoute l'appareil, lui envoie la clé et
-    /// le roster, puis le roster à tous.
-    /// Fichier annoncé : l'offre (clé comprise) est rangée avant que le
-    /// message soit acquitté, puis signalée à l'appli sans la clé.
     fn on_file(
         &mut self,
         seq: i64,
@@ -1710,12 +1508,10 @@ impl Secure {
             return Err("pair_request attendu".into());
         };
         opened.verify(&sign_key)?;
-        // `added_epoch` est fixée par `admit`.
         let member =
             Member { device_id: env.from.clone(), name, sign_key, exchange_key, added_epoch: 0 };
         let (token_id, secret) = (self.sponsoring[i].token_id, self.sponsoring[i].secret.clone());
         let pairing = SealKey::Pairing { token_id, secret: &secret };
-        // La réponse au nouvel appareil part avant la diffusion du roster.
         let mut admitted = Vec::new();
         let welcome = self
             .admit(member, pairing, &mut admitted)
@@ -1726,7 +1522,6 @@ impl Secure {
         Ok(Handled::Done)
     }
 
-    /// Nouvel appareil : adopte les clés et le roster du parrain.
     fn on_pair_welcome(
         &mut self,
         env: &Envelope,
@@ -1741,8 +1536,6 @@ impl Secure {
         self.adopt_welcome(env, opened, now, fx)
     }
 
-    /// Nouvel appareil : vérifie la réponse ouverte (par le code ou par le QR
-    /// inversé) et adopte clés et roster.
     fn adopt_welcome(
         &mut self,
         env: &Envelope,
@@ -1776,9 +1569,6 @@ impl Secure {
         self.joining_qr = None;
         self.save_keys(fx);
         self.set_roster(roster, fx);
-        // L'ancre vient d'un appareil de ma personne, authentifié par `S`
-        // comme les clés de groupe ; sans elle, l'annuaire ne se lit pas
-        // (seuls les appareils de l'admin peuvent adopter la racine).
         if let Some(anchor) = anchor.filter(|_| !self.has_anchor()) {
             self.directory = DirectoryState::with_anchor(anchor);
             if let Err(e) = self.keyring.save_directory(&self.directory) {
@@ -1790,8 +1580,6 @@ impl Secure {
         Ok(Handled::KeysChanged)
     }
 
-    /// Nouvelle clé de groupe scellée pour cet appareil. La plus haute époque
-    /// gagne ; à égalité, celle tirée par le plus petit `device_id`.
     fn on_group_key(
         &mut self,
         env: &Envelope,
@@ -1822,7 +1610,6 @@ impl Secure {
             if current.key == key {
                 return Err(Reject::Ignored("clé déjà connue"));
             }
-            // Rotation concurrente : le plus petit `device_id` l'emporte.
             if !current.author.as_ref().is_some_and(|a| env.from < *a) {
                 return Err(Reject::Ignored("rotation concurrente perdue"));
             }
@@ -1841,8 +1628,6 @@ impl Secure {
         Ok(Handled::KeysChanged)
     }
 
-    /// Met de côté un message d'époque ou d'expéditeur inconnus (au plus
-    /// `MAX_QUARANTINE`, pas plus de 7 jours).
     fn put_aside(&mut self, seq: i64, env: Envelope, now: OffsetDateTime, fx: &mut Vec<Effect>) {
         tracing::debug!(seq, msg_id = %env.msg_id, "époque inconnue, message mis de côté");
         self.quarantine.retain(|q| now - q.received_at < RETIRED_KEY_LIFETIME);
@@ -1859,7 +1644,6 @@ impl Secure {
         self.save_quarantine(fx);
     }
 
-    /// Réessaie les messages mis de côté dont la clé est maintenant connue.
     fn retry_quarantine(&mut self, now: OffsetDateTime, fx: &mut Vec<Effect>) {
         loop {
             let all = std::mem::take(&mut self.quarantine);
@@ -1908,7 +1692,6 @@ impl Secure {
     }
 }
 
-/// Erreur du keyring, remontée telle quelle à l'appli.
 fn keyring_err(e: KeyringError) -> ClientError {
     ClientError::Invalid(e.to_string())
 }
@@ -1962,7 +1745,6 @@ mod tests {
         }
     }
 
-    /// Appareils déjà membres d'un même groupe, époque 1.
     fn group(n: usize) -> Vec<Dev> {
         let mut devs: Vec<Dev> = (0..n).map(|_| Dev::new()).collect();
         let roster = Roster {
@@ -2058,7 +1840,6 @@ mod tests {
     #[test]
     fn sender_outside_roster_is_rejected() {
         let mut d = group(2);
-        // Un appareil qui a la clé de groupe mais n'est pas au roster de B.
         let mut stranger = Dev::new();
         stranger
             .keyring
@@ -2076,7 +1857,6 @@ mod tests {
     #[test]
     fn forged_signature_is_rejected() {
         let mut d = group(2);
-        // Chiffré sous la bonne clé, au nom de A, mais signé par une autre clé.
         let keys = d[0].keyring.load_group_keys().unwrap().unwrap();
         let mut env = d[0].send("x");
         let forger = Identity::generate();
@@ -2112,12 +1892,10 @@ mod tests {
         assert_eq!(epoch, 2);
         let late = d[0].send("après rotation");
 
-        // Le message arrive avant sa clé : mis de côté, sans bruit.
         let fx = d[1].receive(late);
         assert!(texts(&fx).is_empty() && rejected(&fx).is_empty());
         assert_eq!(d[1].keyring.load_quarantine().unwrap().len(), 1);
 
-        // Puis la clé : le message sort de quarantaine.
         let for_b = group_keys.into_iter().find(|e| e.to == [d[1].id.clone()]).unwrap();
         let fx = d[1].receive(for_b);
         assert_eq!(texts(&fx), ["après rotation"]);
@@ -2148,13 +1926,11 @@ mod tests {
         assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 2 }))));
         assert!(!d[1].secure.info().unwrap().members.iter().any(|m| m.device_id == c));
 
-        // C ne lit pas le nouveau message, B si ; B lit encore l'ancien.
         let new = d[0].send("après");
         let fx = d[2].receive(new.clone());
         assert!(texts(&fx).is_empty());
         assert_eq!(texts(&d[1].receive(new)), ["après"]);
         assert_eq!(texts(&d[1].receive(old)), ["avant"]);
-        // C, exclu, ne peut plus écrire à B.
         let from_c = d[2].send("toujours là ?");
         assert_eq!(rejected(&d[1].receive(from_c)), ["expéditeur hors roster"]);
     }
@@ -2198,17 +1974,12 @@ mod tests {
 
         let fx = new.receive(out[0].clone());
         assert!(matches!(fx.last(), Some(Effect::Emit(Event::GroupChanged { epoch: 1 }))));
-        // Un tiers apprend le nouveau membre par le message `roster`.
         d[1].receive(out[1].clone());
         assert_eq!(texts(&d[1].receive(new.send("salut"))), ["salut"]);
         assert_eq!(texts(&new.receive(d[1].send("bienvenue"))), ["bienvenue"]);
-        // Le roster rediffusé est déjà connu du nouveau : ignoré sans bruit.
         assert!(rejected(&new.receive(out[1].clone())).is_empty());
     }
 
-    /// Un parrain qui a l'ancre la donne au nouvel appareil, par le code
-    /// comme par le QR inversé (note 0076) : sans elle, un appareil d'une
-    /// personne autre que l'admin ne lit jamais l'annuaire.
     #[test]
     fn pairing_passes_the_directory_anchor() {
         let mut d = group(1);
@@ -2233,14 +2004,11 @@ mod tests {
             new.reload();
             assert_eq!(new.secure.directory_state().anchor, Some([9; 16]), "ancre rangée");
         }
-        // La lecture faite, plus rien n'est attendu.
         let user = UserId::generate();
         by_code.secure.apply_directory(&user, &UserId::generate(), &[]);
         assert!(!by_code.secure.awaits_directory());
     }
 
-    /// Sans ancre chez le parrain (ou chez un parrain d'avant la note 0076),
-    /// la bienvenue n'en porte pas et l'appareil rejoint quand même.
     #[test]
     fn pairing_without_anchor_still_joins() {
         let mut d = group(1);
@@ -2266,8 +2034,6 @@ mod tests {
         assert_eq!(rejected(&fx), ["déchiffrement impossible"]);
         assert_eq!(d[0].secure.info().unwrap().members.len(), 1);
 
-        // Le jeton reste valable : une demande intacte passe, mais une
-        // réponse altérée ne donne pas le groupe.
         let request = new.secure.start_join(&code, d[0].id.clone(), "nouveau").unwrap();
         let mut welcome = sends(&d[0].receive(request)).remove(0);
         welcome.payload.data[20] ^= 1;
@@ -2290,7 +2056,6 @@ mod tests {
         let mut d = group(2);
         let mut new = Dev::new();
         let offer = new.secure.offer("windows").unwrap();
-        // Le parrain relit le QR scanné.
         let scanned = PairingOffer::parse(&offer.encode()).unwrap();
         d[0].secure.check_offer(&scanned).unwrap();
         let (welcome, fx) = d[0].secure.welcome_offer(&scanned).unwrap();
@@ -2305,7 +2070,6 @@ mod tests {
         d[1].receive(broadcast);
         assert_eq!(texts(&d[1].receive(new.send("salut"))), ["salut"]);
         assert_eq!(texts(&new.receive(d[1].send("bienvenue"))), ["bienvenue"]);
-        // Une seconde offre du même appareil est refusée.
         assert!(d[0].secure.check_offer(&scanned).is_err());
     }
 
@@ -2314,8 +2078,6 @@ mod tests {
         let mut d = group(1);
         let mut new = Dev::new();
         let offer = new.secure.offer("windows").unwrap();
-        // Un relais qui connaît les clés publiques mais pas `S` fabrique une
-        // réponse : elle ne s'ouvre pas.
         let mut forged = offer.clone();
         forged.secret = PairingSecret::generate();
         let (welcome, _) = d[0].secure.welcome_offer(&forged).unwrap();
@@ -2329,7 +2091,7 @@ mod tests {
         let mut new = Dev::new();
         let offer = new.secure.offer("windows").unwrap();
         let (welcome, _) = d[0].secure.welcome_offer(&offer).unwrap();
-        new.reload(); // l'offre n'existe qu'en mémoire
+        new.reload();
         assert_eq!(rejected(&new.receive(welcome)), ["appairage par QR inconnu ou terminé"]);
     }
 
@@ -2435,8 +2197,6 @@ mod tests {
         assert!(devs[0].secure.has_anchor());
         assert_eq!(devs[0].secure.directory_known().get(&admin), Some(&1));
 
-        // L'autre appareil du groupe adopte la racine ; un appareil d'un
-        // autre groupe, non.
         assert!(devs[1].secure.adopt_existing_root(&admin, &cert).is_ok());
         assert!(devs[1].secure.has_anchor());
         let mut stranger = group(1).remove(0);
@@ -2458,7 +2218,6 @@ mod tests {
         let (fx, _) = devs[0].secure.apply_directory(&admin, &admin, &users);
         assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryFork)), 0);
 
-        // Mon roster local, même version, n'a plus d1 mais un autre appareil.
         let other = Dev::new();
         let roster = Roster {
             epoch: 1,
@@ -2474,9 +2233,6 @@ mod tests {
         assert_eq!(emitted(&fx, |e| matches!(e, Event::DirectoryFork)), 0, "une seule alerte");
     }
 
-    // --- Étape 10, T7 : envois entre personnes (`0x05`). ---
-
-    /// Profil d'un appareil sur le relais.
     fn device_profile(
         d: &Dev,
         up_to_date: bool,
@@ -2494,8 +2250,6 @@ mod tests {
         }
     }
 
-    /// Alice (admin, son groupe `a`) et Bob (membre, son groupe `b`),
-    /// certificats et journaux signés comme sur un vrai relais.
     struct People {
         alice: UserId,
         bob: UserId,
@@ -2567,8 +2321,6 @@ mod tests {
             people
         }
 
-        /// Chaque appareil relit l'annuaire ; le relais ne sert que les
-        /// entrées après `known`.
         fn read_all(&mut self) {
             let (alice, bob) = (&self.alice, &self.bob);
             let devs =
@@ -2586,7 +2338,6 @@ mod tests {
             }
         }
 
-        /// Change le profil d'un appareil de Bob (`i`) ou d'Alice.
         fn set_profile(&mut self, user: usize, i: usize, p: ot_proto::DirectoryDevice) {
             self.users[user].devices[i] = p;
             self.read_all();
@@ -2619,11 +2370,9 @@ mod tests {
             assert_eq!((&origin.from_user, origin.from_service), (&Some(alice.clone()), false));
             assert_eq!(origin.to_user, None);
         }
-        // La copie : de ma personne, adressée à Bob.
         let copy = messages(&p.a[1].receive(env));
         assert_eq!(copy[0].origin, Origin { to_user: Some(bob.clone()), ..Origin::default() });
 
-        // Réponse de Bob, depuis son autre appareil.
         let reply = p.b[1].secure.seal_content_to(&Content::link("https://x.test"), &alice, None);
         let reply = reply.unwrap();
         assert_eq!(reply.to, [p.a[0].id.clone(), p.a[1].id.clone(), p.b[0].id.clone()]);
@@ -2677,14 +2426,12 @@ mod tests {
     fn recipients_follow_defaults_and_skip_devices_not_up_to_date() {
         let mut p = People::new(3, 3);
         let bob = p.bob.clone();
-        // b1 par défaut : seul destinataire (plus la copie).
         let d1 = device_profile(&p.b[1], true, true, None);
         p.set_profile(1, 1, d1);
         let to = p.a[0].secure.recipients(&bob, None).unwrap();
         assert_eq!(to[0], p.b[1].id);
         assert!(!to.contains(&p.b[0].id) && !to.contains(&p.b[2].id));
 
-        // b1 pas à jour : les autres appareils joignables et à jour.
         let d1 = device_profile(&p.b[1], false, true, None);
         p.set_profile(1, 1, d1);
         let to = p.a[0].secure.recipients(&bob, None).unwrap();
@@ -2693,7 +2440,6 @@ mod tests {
         assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
         assert_eq!(p.a[0].secure.recipients(&bob, Some(&p.b[2].id)).unwrap()[0], p.b[2].id);
 
-        // Copie : ni la CLI, ni un appareil pas à jour, ni moi.
         let cli = device_profile(&p.a[1], true, false, Some(DeviceKind::Cli));
         p.set_profile(0, 1, cli);
         let old = device_profile(&p.a[2], false, false, None);
@@ -2701,7 +2447,6 @@ mod tests {
         let to = p.a[0].secure.recipients(&bob, None).unwrap();
         assert!(to.iter().all(|id| p.b.iter().any(|d| &d.id == id)), "aucune copie");
 
-        // Aucun appareil à jour : rien ne part.
         for i in 0..3 {
             let d = device_profile(&p.b[i], false, false, None);
             p.users[1].devices[i] = d;
@@ -2709,7 +2454,6 @@ mod tests {
         p.read_all();
         let err = p.a[0].secure.recipients(&bob, None).unwrap_err();
         assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
-        // Ni à soi-même, ni à une personne inconnue.
         let alice = p.alice.clone();
         assert!(matches!(p.a[0].secure.recipients(&alice, None), Err(ClientError::Invalid(_))));
         let nobody = UserId::generate();
@@ -2724,7 +2468,6 @@ mod tests {
         let mut p = People::new(1, 1);
         let alice = p.alice.clone();
         let env = p.b[0].secure.seal_content_to(&Content::text("tôt"), &alice, None).unwrap();
-        // Alice redémarre : l'annuaire vérifié (en mémoire) est à relire.
         p.a[0].reload();
         let fx = p.a[0].receive(env);
         assert!(messages(&fx).is_empty() && rejected(&fx).is_empty());
@@ -2739,15 +2482,12 @@ mod tests {
         let mut p = People::new(1, 2);
         let bob = p.bob.clone();
         let env = p.a[0].secure.seal_content_to(&Content::text("x"), &bob, None).unwrap();
-        // Le relais réordonne `to` : l'en-tête ne correspond plus.
         let mut swapped = env.clone();
         swapped.to.reverse();
         assert!(messages(&p.b[0].receive(swapped)).is_empty());
-        // Il retire Bob 1 de la table : l'AEAD casse pour tous.
         let mut cut = env.clone();
         cut.to.truncate(1);
         assert!(messages(&p.b[0].receive(cut)).is_empty());
-        // Un message de Bob signé par un autre que son appareil.
         let forger = Identity::generate();
         let mut forged =
             p.b[0].secure.seal_content_to(&Content::text("y"), &p.alice, None).unwrap();
@@ -2793,12 +2533,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(file.origin.from_user, Some(alice.clone()));
-        // Rangée avec son origine : relue après un redémarrage.
         p.b[0].reload();
         assert_eq!(p.b[0].secure.files().unwrap()[0].origin.from_user, Some(alice));
         p.read_all();
 
-        // Un code d'une autre personne n'est jamais rempli d'office (O2).
         let otp = Otp {
             code: "482913".into(),
             display: "G-482913".into(),
@@ -2835,14 +2573,11 @@ mod tests {
         assert!(!p.a[0].secure.directory_fresh(OffsetDateTime::now_utc() + DIRECTORY_MAX_AGE));
     }
 
-    // --- Étape 10, § 4.2 : mon journal. ---
-
     #[test]
     fn admin_entries_are_idempotent_and_the_group_adopts_their_version() {
         let mut p = People::new(2, 1);
         let bob = p.bob.clone();
         let cert = p.users[1].cert.clone().unwrap();
-        // Déjà engagé, rien d'à jour à publier.
         let head = p.a[0]
             .secure
             .directory_state()
@@ -2860,7 +2595,6 @@ mod tests {
         );
         assert!(!p.a[0].secure.needs_publish(), "roster local (v1) derrière le journal (v2)");
 
-        // Révocation : entrée 3, roster local porté au-dessus du journal.
         let NextEntry::Entry(own) =
             p.a[0].secure.next_entry(&Publish::Revoke(bob.clone())).unwrap()
         else {
@@ -2870,7 +2604,6 @@ mod tests {
         assert!(own.certs.is_empty());
         let fx = p.a[0].secure.entry_published(&own);
         assert_eq!(p.a[0].secure.info().unwrap().roster_version, 3);
-        // Le roster adopté part à l'autre appareil, qui le prend.
         let broadcast = sends(&fx).remove(0);
         p.a[1].receive(broadcast);
         assert_eq!(p.a[1].secure.info().unwrap().roster_version, 3);
@@ -2878,7 +2611,6 @@ mod tests {
             p.a[0].secure.next_entry(&Publish::Revoke(bob)).unwrap(),
             NextEntry::Done(Some(own.head()))
         );
-        // Un membre n'engage pas de certificat.
         let alice = p.alice.clone();
         let blob = p.users[0].cert.clone().unwrap();
         assert!(p.b[0].secure.next_entry(&Publish::Certify(alice, blob)).is_err());
@@ -2887,8 +2619,6 @@ mod tests {
     #[test]
     fn a_new_member_publishes_only_from_the_published_roster() {
         let mut p = People::new(1, 2);
-        // Bob ajoute un appareil (roster v2) : b0, membre du roster publié,
-        // publie ; le nouveau ne peut pas signer l'entrée.
         let mut roster = p.b[0].secure.roster.clone().unwrap();
         let new = Dev::new();
         roster.members.push(new.member("nouveau"));

@@ -1,6 +1,3 @@
-//! Serveur relais OldTown : authentifie les appareils, stocke les enveloppes
-//! et les livre à leurs destinataires. Il ne lit jamais `payload`.
-
 mod auth;
 pub mod blobs;
 pub mod limits;
@@ -39,51 +36,28 @@ pub use crate::auth::token_hash;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Durée de vie d'un message non acquitté.
     pub ttl: Duration,
     pub purge_interval: Duration,
-    /// Intervalle des pings WebSocket ; une session muette pendant
-    /// deux intervalles et demi est fermée.
     pub ping_interval: Duration,
-    /// Délai pour répondre au défi.
     pub auth_timeout: Duration,
-    /// Durée de validité d'un jeton d'appairage.
     pub pairing_ttl: Duration,
-    /// Intervalle de vérification du certificat TLS (rechargé s'il a changé).
     pub tls_reload_interval: Duration,
-    /// Dossier des morceaux de fichiers (étape 5), créé au premier dépôt.
     pub blob_dir: PathBuf,
-    /// Taille maximale d'un fichier, en clair.
     pub max_file_size: u64,
-    /// Somme maximale des tailles chiffrées des fichiers en transit.
     pub blob_quota: u64,
-    /// Durée de vie d'un fichier déposé.
     pub blob_ttl: Duration,
-    /// Protections d'un relais exposé (étape 8e).
     pub limits: LimitsConfig,
-    /// Limites propres à chaque membre (étape 10) : l'admin et les services
-    /// n'ont que les limites globales.
     pub users: UserLimits,
 }
 
-/// Limites d'un membre (étape 10, `OT_USER_*`). Sauf les appareils, elles
-/// valent aussi pour une personne de service ; l'admin n'a que les limites
-/// globales.
 #[derive(Debug, Clone)]
 pub struct UserLimits {
-    /// Appareils actifs par membre.
     pub max_devices: usize,
-    /// Taille chiffrée cumulée des fichiers en transit d'un membre.
     pub blob_quota: u64,
-    /// Envois (`send` et `roster_publish`) par minute d'un membre.
     pub send_rate: u32,
-    /// Taille cumulée des messages d'un membre en attente de livraison.
     pub pending_quota: u64,
-    /// Taille cumulée du journal de roster d'un membre.
     pub log_quota: u64,
-    /// Durée de validité d'une invitation (D45).
     pub invite_ttl: Duration,
-    /// Invitations utilisables à la fois.
     pub max_open_invitations: u64,
 }
 
@@ -101,7 +75,6 @@ impl Default for UserLimits {
     }
 }
 
-/// Nombre maximal de nonces HTTP retenus pendant la fenêtre.
 const MAX_HTTP_NONCES: usize = 100_000;
 
 impl Default for Config {
@@ -123,7 +96,6 @@ impl Default for Config {
     }
 }
 
-/// État partagé du relais.
 #[derive(Clone)]
 pub struct Relay {
     inner: Arc<Inner>,
@@ -138,7 +110,6 @@ struct Inner {
     blob_dir: BlobDir,
     nonces: NonceCache,
     limits: Arc<Limits>,
-    /// Débit des envois de chaque membre et service (étape 10).
     send_rate: SendRate,
 }
 
@@ -163,8 +134,6 @@ impl Relay {
         &self.inner.store
     }
 
-    /// Routes publiques : WebSocket, fichiers, `/healthz`. Les métriques
-    /// n'y sont pas : elles sont sur [`Relay::admin_router`].
     pub fn router(&self) -> Router {
         Router::new()
             .route(ot_proto::WS_PATH, get(ws_handler))
@@ -173,8 +142,6 @@ impl Relay {
             .with_state(self.clone())
     }
 
-    /// Routes d'administration (`/metrics`, `/healthz`), servies sur une
-    /// adresse à part, locale par défaut (`OT_ADMIN_LISTEN`).
     pub fn admin_router(&self) -> Router {
         Router::new()
             .route("/healthz", get(healthz))
@@ -182,8 +149,6 @@ impl Relay {
             .with_state(self.clone())
     }
 
-    /// Lance une purge (messages, jetons, fichiers) et met à jour les
-    /// compteurs. Renvoie les chiffres des messages et des jetons.
     pub async fn purge_once(&self) -> store::Result<PurgeStats> {
         self.inner.limits.prune();
         self.inner.send_rate.prune();
@@ -211,7 +176,6 @@ impl Relay {
         Ok(stats)
     }
 
-    /// Supprime un blob et ses morceaux (`reason` : `done`, `cancelled`).
     pub(crate) async fn remove_blob(
         &self,
         id: &ot_proto::BlobId,
@@ -226,8 +190,6 @@ impl Relay {
         Ok(())
     }
 
-    /// Efface les morceaux sur disque que la base ne connaît plus (arrêt
-    /// brutal pendant une suppression) et les fichiers temporaires.
     pub async fn clean_blob_dir(&self) -> std::io::Result<usize> {
         let ids = self.inner.store.blob_ids().await.map_err(std::io::Error::other)?;
         self.inner.blob_dir.clean(ids.into_iter().collect::<HashSet<_>>()).await
@@ -241,15 +203,11 @@ impl Relay {
         Ok(self.inner.metrics.render(pending, blob_bytes, &users))
     }
 
-    /// Ferme la session ouverte d'un appareil (après révocation, par exemple).
     pub fn disconnect(&self, device: &ot_proto::DeviceId) {
         self.inner.registry.kick(device);
     }
 }
 
-/// Sert le relais en clair (`ws://`) sur `listener` jusqu'à ce que
-/// `shutdown` se termine, en purgeant périodiquement. Les sessions ouvertes
-/// sont fermées à l'arrêt.
 pub async fn serve(
     relay: Relay,
     listener: TcpListener,
@@ -258,8 +216,6 @@ pub async fn serve(
     run(relay, listener, shutdown).await
 }
 
-/// Sert les routes d'administration ([`Relay::admin_router`]) en clair
-/// sur `listener`, jusqu'à ce que `shutdown` se termine.
 pub async fn serve_admin(
     relay: Relay,
     listener: TcpListener,
@@ -268,8 +224,6 @@ pub async fn serve_admin(
     axum::serve(listener, relay.admin_router()).with_graceful_shutdown(shutdown).await
 }
 
-/// Comme [`serve`], en TLS (`wss://`) ; le certificat est relu toutes les
-/// `tls_reload_interval` s'il a changé sur le disque.
 pub async fn serve_tls(
     relay: Relay,
     listener: TcpListener,
@@ -334,7 +288,6 @@ where
     res
 }
 
-/// Adresse de la connexion, en clair comme en TLS (`ConnectInfo`).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Peer(pub(crate) SocketAddr);
 
@@ -370,8 +323,6 @@ async fn ws_handler(
         .on_upgrade(move |socket| session::run(relay, socket, ip, permit))
 }
 
-/// Refus d'une connexion par les limites : `503` avec le code `busy` de
-/// l'API des fichiers ; le client réessaie avec son délai habituel.
 pub(crate) fn refused(relay: &Relay, why: Refused) -> Response {
     let m = &relay.inner.metrics;
     Metrics::inc(match why {

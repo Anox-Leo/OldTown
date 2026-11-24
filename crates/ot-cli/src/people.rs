@@ -1,8 +1,3 @@
-//! Commandes de l'étape 10 : personnes, invitation, administration,
-//! services. Les noms se résolvent dans l'annuaire vérifié (personnes que je
-//! peux joindre) ou, pour l'admin, dans la liste du relais (`users`) ; un
-//! nom ambigu est refusé avec la liste des choix.
-
 use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::sync::Arc;
@@ -24,7 +19,6 @@ use crate::{
     progress_bar, registered, start, within,
 };
 
-/// Attente de la certification par l'admin d'une invitation rachetée.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub fn role_name(role: Role) -> &'static str {
@@ -46,7 +40,6 @@ fn kind_name(kind: Option<DeviceKind>) -> &'static str {
     }
 }
 
-/// Profil d'un appareil, en clair : nature, par défaut, joignable, à jour.
 pub fn profile(d: &DeviceProfile) -> String {
     let mut parts = vec![kind_name(d.kind)];
     if d.default {
@@ -62,8 +55,6 @@ pub fn profile(d: &DeviceProfile) -> String {
     parts.join(", ")
 }
 
-/// Un seul élément de `items` désigné par `name` (identifiant, sinon nom) ;
-/// sinon une erreur qui liste les choix.
 fn pick<'a, T>(
     items: &'a [T],
     name: &str,
@@ -92,12 +83,10 @@ fn pick<'a, T>(
     }
 }
 
-/// Personne de l'annuaire vérifié désignée par son nom ou son identifiant.
 pub fn find_person<'a>(people: &'a [Person], name: &str) -> Result<&'a Person> {
     pick(people, name, "personne", |p| p.id.to_string(), |p| p.name.clone())
 }
 
-/// Personne connue du relais (admin), hors révoquées.
 fn find_user<'a>(users: &'a [AdminUser], name: &str) -> Result<&'a AdminUser> {
     let live: Vec<AdminUser> =
         users.iter().filter(|u| u.state != UserState::Revoked).cloned().collect();
@@ -105,9 +94,6 @@ fn find_user<'a>(users: &'a [AdminUser], name: &str) -> Result<&'a AdminUser> {
     users.iter().find(|u| u.id == found.id).context("personne disparue")
 }
 
-/// Personnes de `--to-user` à qui un code peut partir : celles qui ont coupé
-/// le service, absentes de l'annuaire ou sans appareil joignable et à jour
-/// sont sautées, et signalées (par identifiant, jamais par le code).
 pub fn otp_recipients(people: &[Person], names: &[String]) -> Vec<UserId> {
     let mut users = Vec::new();
     for name in names {
@@ -124,8 +110,6 @@ pub fn otp_recipients(people: &[Person], names: &[String]) -> Vec<UserId> {
     users
 }
 
-/// Destinataire d'un code pour `--to-user … --device …` : la personne et son
-/// appareil, ou ce qui l'empêche (service coupé, nom inconnu ou ambigu).
 pub fn otp_device(people: &[Person], user: &str, device: &str) -> Result<(UserId, DeviceId)> {
     let person = find_person(people, user)?;
     if person.muted {
@@ -135,12 +119,10 @@ pub fn otp_device(people: &[Person], user: &str, device: &str) -> Result<(UserId
     Ok((person.id.clone(), d.id.clone()))
 }
 
-/// Ma personne dans l'annuaire : celle dont le roster porte cet appareil.
 fn me<'a>(people: &'a [Person], device: &DeviceId) -> Option<&'a Person> {
     people.iter().find(|p| p.roster.contains(device))
 }
 
-/// Annuaire vérifié frais, ou une erreur qui dit pourquoi il est vide.
 async fn directory(client: &Client) -> Result<Vec<Person>> {
     let people = within(client.fresh_directory()).await?;
     if people.is_empty() {
@@ -152,7 +134,6 @@ async fn directory(client: &Client) -> Result<Vec<Person>> {
     Ok(people)
 }
 
-/// Destinataire `--to-user` (et `--device`) d'un envoi.
 async fn target(
     client: &Client,
     user: &str,
@@ -286,16 +267,12 @@ pub async fn mute(home: &Home, service: &str, state: OnOff) -> Result<()> {
     Ok(())
 }
 
-/// Appareil désigné pour `ot device …` : de mon groupe d'abord, puis (pour
-/// l'admin) de n'importe quelle personne connue du relais.
 async fn find_device(client: &Client, name: &str) -> Result<DeviceId> {
     let members = within(client.group()).await?.map(|g| g.members).unwrap_or_default();
     let mine = pick(&members, name, "appareil", |m| m.device_id.to_string(), |m| m.name.clone());
     if let Ok(m) = &mine {
         return Ok(m.device_id.clone());
     }
-    // L'admin règle aussi les appareils des autres personnes ; un membre
-    // n'a que les siens.
     let Ok(users) = within(client.users()).await else {
         return mine.map(|m| m.device_id.clone());
     };
@@ -352,8 +329,6 @@ pub async fn device_revoke(home: &Home, device: &str) -> Result<()> {
         if &id == client.device_id() {
             bail!("impossible de retirer cet appareil depuis lui-même");
         }
-        // Rotation, publication, révocation, re-certification : plusieurs
-        // allers-retours.
         tokio::time::timeout(COMMAND_TIMEOUT * 4, client.remove_device(&id))
             .await
             .context("pas de réponse du relais")??;
@@ -415,8 +390,6 @@ pub async fn invite_join(
     let joined = tokio::time::timeout(JOIN_TIMEOUT, joined(&mut events)).await;
     let res = match joined {
         Ok(Ok(user)) => {
-            // L'entrée 1 de mon journal part juste après : l'attendre, pour
-            // être visible des autres dès maintenant.
             let me_id = redeemed.device_id.clone();
             let visible = async {
                 loop {
@@ -447,7 +420,6 @@ pub async fn invite_join(
     Ok(())
 }
 
-/// Attend `Joined` (invitation acceptée), ou un échec.
 async fn joined(events: &mut Events) -> Result<UserId> {
     loop {
         match events.next().await {
@@ -466,7 +438,6 @@ async fn joined(events: &mut Events) -> Result<UserId> {
     }
 }
 
-/// Attend le prochain `DirectoryChanged` ; `false` si le client s'arrête.
 async fn wait_directory(events: &mut Events) -> bool {
     loop {
         match events.next().await {
@@ -511,7 +482,6 @@ pub async fn admin(home: &Home, cmd: AdminCommand, offset: UtcOffset) -> Result<
                 Ok(())
             }
             AdminCommand::Service(ServiceCommand::Add { service, qr }) => {
-                // Enregistrement, deux publications et la bienvenue.
                 let added = tokio::time::timeout(
                     COMMAND_TIMEOUT * 4,
                     client.add_service_device(&service, &qr),
@@ -533,8 +503,6 @@ pub async fn admin(home: &Home, cmd: AdminCommand, offset: UtcOffset) -> Result<
         }
     }
     .await;
-    // Les dernières trames (bienvenue, publications) sont déjà écrites : le
-    // relais les lit avant la fermeture.
     client.shutdown().await;
     res
 }
@@ -548,8 +516,6 @@ async fn admin_init(client: &Client) -> Result<()> {
     Ok(())
 }
 
-/// Invitation (ou réinvitation) : affiche le code, puis attend la demande
-/// de la personne et sa certification, menées par ce client.
 async fn invite(
     client: &Client,
     events: &mut Events,

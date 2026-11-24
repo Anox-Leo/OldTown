@@ -1,8 +1,3 @@
-# Renouvelle le certificat TLS du relais avec `tailscale cert` (note 0015).
-# Le nom du relais (MagicDNS, *.ts.net) ne va jamais dans le dépôt : il est lu
-# dans /etc/oldtown/tls.env, une ligne `OT_TLS_DOMAIN=<nom complet>`.
-# Le relais relit le certificat tout seul quand il change (10 min au plus).
-
 [Unit]
 Description=Renouvellement du certificat TLS du relais OldTown
 Wants=network-online.target

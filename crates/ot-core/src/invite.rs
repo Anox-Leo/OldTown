@@ -1,22 +1,3 @@
-//! Invitation d'une personne (étape 10, § 4.5), partie sans réseau : ce que
-//! l'admin garde de chaque invitation (`invites.json`) et ce que l'invité
-//! garde jusqu'à son entrée dans l'annuaire (`pending_invite.json`), tous
-//! deux dans le [`crate::Keyring`] : ils portent le secret `S` du code.
-//!
-//! Le déroulé (le [`crate::Client`] le mène, `Secure` vérifie et range) :
-//!
-//! 1. admin : `user_invite`, puis [`InviteRecord`] et code `ot2-…` ;
-//! 2. invité : `invite_redeem` (jeton), [`save_pending_invite`], puis
-//!    `invite_request` scellé sous `S` à l'appareil qui a invité, renvoyé à
-//!    chaque connexion jusqu'à la bienvenue ;
-//! 3. admin : demande vérifiée et rangée **avant** l'acquittement, puis
-//!    certificat signé (gardé pour reprendre à l'identique), `user_certify`,
-//!    entrée de son journal qui engage le certificat, `invite_welcome
-//!    {cert, admin_head}` sous `S`, invitation effacée ;
-//! 4. invité : bienvenue rangée, annuaire relu jusqu'à `admin_head` ; une
-//!    fois son certificat vérifié par l'annuaire, il crée son groupe et
-//!    publie l'entrée 1 de son journal.
-
 use ot_crypto::directory::LogHead;
 use ot_crypto::{InviteCode, PairingSecret};
 use ot_proto::{DeviceId, SignedBlob, UserId, b64};
@@ -26,12 +7,8 @@ use time::{Duration, OffsetDateTime};
 use crate::directory::DirectoryState;
 use crate::keyring::{Keyring, KeyringError};
 
-/// Délai laissé à l'échange après la fin du jeton : l'invité peut racheter
-/// le jeton à la dernière minute, et l'admin être hors ligne ensuite (le
-/// relais garde l'échange ouvert 48 h après usage, note 0056).
 pub const INVITE_EXCHANGE: Duration = Duration::hours(48);
 
-/// Appareil de l'invité, tel que sa demande (vérifiée) le décrit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Guest {
@@ -43,28 +20,21 @@ pub struct Guest {
     pub exchange_key: [u8; 32],
 }
 
-/// Invitation créée par cet appareil de l'admin. Seul lui détient `S` : la
-/// demande attend dans la file du relais s'il est hors ligne.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InviteRecord {
     pub user: UserId,
-    /// Nom de la personne, signé dans son certificat.
     pub name: String,
     #[serde(with = "b64::array")]
     pub token_id: [u8; 8],
     #[serde(with = "b64::array")]
     pub secret: [u8; 16],
-    /// Fin du jeton sur le relais.
     #[serde(with = "time::serde::rfc3339")]
     pub expires_at: OffsetDateTime,
-    /// Demande reçue et vérifiée.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guest: Option<Guest>,
-    /// Certificat signé pour l'invité : le même à chaque reprise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert: Option<SignedBlob>,
-    /// `user_certify` accepté par le relais.
     #[serde(default)]
     pub certified: bool,
 }
@@ -74,7 +44,6 @@ impl InviteRecord {
         PairingSecret::from_bytes(self.secret)
     }
 
-    /// L'échange peut encore aboutir.
     pub fn alive(&self, now: OffsetDateTime) -> bool {
         now < self.expires_at + INVITE_EXCHANGE
     }
@@ -102,15 +71,11 @@ impl std::fmt::Debug for InviteRecord {
     }
 }
 
-/// Invitation rachetée par cet appareil, jusqu'à ce que sa personne soit
-/// dans l'annuaire vérifié.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingInvite {
     pub user: UserId,
-    /// Appareil de l'admin qui a invité : lui seul détient `S`.
     pub inviter: DeviceId,
-    /// Nom de cet appareil.
     pub name: String,
     #[serde(with = "b64::array")]
     pub token_id: [u8; 8],
@@ -118,8 +83,6 @@ pub struct PendingInvite {
     pub secret: [u8; 16],
     #[serde(with = "b64::array")]
     pub anchor: [u8; 16],
-    /// Bienvenue reçue : certificat, et tête du journal de l'admin qui
-    /// l'engage. Reste à la voir confirmée par l'annuaire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub welcome: Option<Welcome>,
 }
@@ -147,13 +110,10 @@ pub struct Welcome {
     pub admin_head: LogHead,
 }
 
-/// Code d'invitation à transmettre à la personne (il contient `S`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct PersonInvitation {
     pub user: UserId,
-    /// Code `ot2-…`.
     pub code: String,
-    /// QR ou lien : `oldtown://invite?s=<relais>&c=<code>`.
     pub uri: String,
     pub expires_at: OffsetDateTime,
 }
@@ -167,18 +127,13 @@ impl std::fmt::Debug for PersonInvitation {
     }
 }
 
-/// Réponse du relais à `invite_redeem`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteRedeemed {
     pub user: UserId,
     pub device_id: DeviceId,
-    /// Appareil de l'admin à qui envoyer la demande.
     pub inviter: DeviceId,
 }
 
-/// Invité, après `invite_redeem` et avant de démarrer le client : range
-/// l'invitation et l'ancre du code. Le client envoie la demande à chaque
-/// connexion jusqu'à la bienvenue.
 pub fn save_pending_invite(
     keyring: &dyn Keyring,
     code: &InviteCode,

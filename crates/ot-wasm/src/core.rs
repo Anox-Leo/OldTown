@@ -1,7 +1,3 @@
-//! Cœur de groupe de l'extension : [`ot_core::Secure`] au-dessus du coffre,
-//! plus les appairages en attente rangés pour survivre à l'arrêt du service
-//! worker (note 0023). Entrées et sorties en JSON ; aucune clé n'en sort.
-
 use std::sync::Arc;
 
 use ot_core::crypto::{CHUNK_TAG_LEN, chunk_count, chunk_len, sealed_size};
@@ -20,14 +16,11 @@ use zeroize::Zeroizing;
 
 use crate::vault::{PENDING_JOIN, PENDING_OFFER, VaultStore};
 
-/// Durée de validité d'un QR inversé affiché (comme la CLI).
 pub const OFFER_LIFETIME: Duration = Duration::minutes(10);
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingOffer {
-    /// Texte du QR, pour le réafficher après un redémarrage (il contient
-    /// le secret, comme `secret`).
     qr: String,
     secret: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -41,7 +34,6 @@ struct PendingJoin {
     sponsor: DeviceId,
 }
 
-/// Événement du cœur, pour le service worker.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventOut {
@@ -71,33 +63,26 @@ pub enum EventOut {
     KeyringError {
         message: String,
     },
-    /// Fichier annoncé (étape 5) ; sa clé reste dans le coffre.
     File {
         seq: i64,
         #[serde(flatten)]
         file: FileOut,
     },
-    /// Code à usage unique (note 0045) : `code`, `display`, `sender_name`,
-    /// `sender_domain`, `sender_verified`, `expires_at` (secondes Unix).
-    /// Annuaire relu (étape 10) : `people()` a changé.
     DirectoryChanged,
     DirectoryRejected {
         user: String,
         reason: String,
     },
-    /// Alerte de sécurité : le relais publie un autre groupe que le mien.
     DirectoryFork,
     KeysChanged {
         user: String,
     },
-    /// Admin : une personne invitée par cet appareil est certifiée.
     PersonJoined {
         user: String,
         name: String,
         device_name: String,
         fingerprint: String,
     },
-    /// Invité : ma personne est certifiée, mon groupe créé.
     Joined {
         user: String,
     },
@@ -114,14 +99,10 @@ pub enum EventOut {
         otp: Otp,
         #[serde(flatten)]
         origin: OriginOut,
-        /// Règle O2 : copier ou remplir d'office seulement si vrai (de ma
-        /// personne ou d'un service).
         auto_fill: bool,
     },
 }
 
-/// Personne de l'expéditeur et du destinataire (étape 10) ; champs absents
-/// pour un message de mon groupe.
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
 pub struct OriginOut {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,7 +123,6 @@ impl From<&Origin> for OriginOut {
     }
 }
 
-/// Fichier annoncé, sans clé.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct FileOut {
     pub msg_id: String,
@@ -172,8 +152,6 @@ impl From<FileInfo> for FileOut {
     }
 }
 
-/// Géométrie d'un fichier, pour le relais (tailles chiffrées) et la boucle
-/// de transfert (tailles en clair).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct Geometry {
     pub size: u64,
@@ -196,8 +174,6 @@ impl Geometry {
     }
 }
 
-/// Dépôt en cours, sans clé. `to` et `to_user` disent sa cible : une
-/// reprise n'a de sens que vers la même (comme `Client::send_file_info`).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct UploadOut {
     pub blob_id: String,
@@ -223,7 +199,6 @@ impl UploadOut {
 }
 
 impl EventOut {
-    /// `None` pour les événements du client réseau, que le cœur n'émet pas.
     fn from_event(event: Event) -> Option<Self> {
         Some(match event {
             Event::Message(m) => Self::Message {
@@ -274,8 +249,6 @@ impl EventOut {
     }
 }
 
-/// Résultat d'une opération : événements à traiter, enveloppes à envoyer
-/// (dans l'ordre).
 #[derive(Debug, Default, Serialize)]
 pub struct Output {
     pub events: Vec<EventOut>,
@@ -293,7 +266,6 @@ impl Output {
     }
 }
 
-/// État du groupe, pour l'écran « Groupe ».
 #[derive(Debug, Serialize)]
 pub struct GroupOut {
     pub epoch: u32,
@@ -332,7 +304,6 @@ impl From<GroupInfo> for GroupOut {
     }
 }
 
-/// QR inversé à afficher.
 #[derive(Debug, Serialize)]
 pub struct OfferOut {
     pub qr: String,
@@ -340,7 +311,6 @@ pub struct OfferOut {
     pub expires_at: OffsetDateTime,
 }
 
-/// Appairage en attente de la réponse du parrain.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PendingOut {
@@ -352,12 +322,10 @@ pub enum PendingOut {
     Join,
 }
 
-/// Personne de l'annuaire vérifié, sans clé (étape 10).
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct PersonOut {
     pub user: String,
     pub name: String,
-    /// `admin`, `member` ou `service`.
     pub role: &'static str,
     pub muted: bool,
     pub devices: Vec<PersonDeviceOut>,
@@ -399,8 +367,6 @@ impl From<Person> for PersonOut {
     }
 }
 
-/// Suite d'une page de l'annuaire : trame à envoyer (page ou tour
-/// suivants), ou fin de la lecture ; effets d'un tour complet.
 #[derive(Debug, Default, Serialize)]
 pub struct DirectoryStep {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -410,7 +376,6 @@ pub struct DirectoryStep {
     pub out: Output,
 }
 
-/// Ce qu'une entrée de mon journal doit changer, donné par le JavaScript.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PublishIn {
@@ -419,8 +384,6 @@ pub enum PublishIn {
     Revoke { user: UserId },
 }
 
-/// Réponse de `nextEntry` : trame `roster_publish`, ou rien (et la tête du
-/// journal qui engage déjà le changement).
 #[derive(Debug, Serialize)]
 pub struct PublishOut {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -429,9 +392,6 @@ pub struct PublishOut {
     pub head: Option<ot_core::crypto::directory::LogHead>,
 }
 
-/// Réponse d'`adminRoot` : trame `admin_init` à envoyer, ou certificat déjà
-/// publié par un autre appareil de mon groupe, adopté (`adopted`, avec ses
-/// effets) ; relire alors l'annuaire.
 #[derive(Debug, Default, Serialize)]
 pub struct AdminRootOut {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -445,16 +405,9 @@ pub struct CoreState {
     vault: Arc<VaultStore>,
     secure: Secure,
     pending: Option<PendingOut>,
-    /// Lecture de l'annuaire en cours.
     read: Option<DirectoryRead>,
-    /// Entrée envoyée (`roster_publish`), en attente de `roster_published`.
     publishing: Option<OwnEntry>,
-    /// Entrées de journaux de services envoyées (D47), en attente de leur
-    /// `roster_published` ; une par service.
     publishing_services: Vec<OwnEntry>,
-    /// Certificat racine envoyé (`admin_init`), en attente de
-    /// `admin_initialized`. Perdu à l'arrêt du service worker : la lecture
-    /// suivante trouve alors le certificat publié et l'adopte.
     admin_root: Option<SignedBlob>,
 }
 
@@ -463,8 +416,6 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 impl CoreState {
-    /// Ouvre le cœur de l'appareil `device_id` : l'identité doit être dans le
-    /// coffre. Reprend un appairage en attente encore valable.
     pub fn open(vault: Arc<VaultStore>, device_id: &str) -> Result<(Self, Output), String> {
         let me: DeviceId = device_id.parse().map_err(err)?;
         let identity = vault.identity()?.ok_or("identité de l'appareil absente")?;
@@ -499,8 +450,6 @@ impl CoreState {
         out.events.push(EventOut::KeyringError { message });
     }
 
-    /// Reprend l'appairage en attente, ou l'oublie s'il a expiré ou si le
-    /// groupe est déjà là.
     fn restore(&mut self, now: OffsetDateTime, out: &mut Output) {
         if self.secure.info().is_some() {
             self.clear_pending(out);
@@ -555,8 +504,6 @@ impl CoreState {
         self.pending.as_ref()
     }
 
-    /// Chiffre un texte (un lien s'il n'est fait que d'une URL) pour `to`,
-    /// des membres du roster ; vide : tous les autres appareils.
     pub fn seal_text(&self, text: &str, to: &[String]) -> Result<Envelope, String> {
         if text.trim().is_empty() {
             return Err("texte vide".into());
@@ -567,8 +514,6 @@ impl CoreState {
         self.secure.seal_content(&content, to).map_err(err)
     }
 
-    /// Traite un message livré. Les changements d'état sont dans le coffre
-    /// à la sortie : les ranger avant d'acquitter.
     pub fn process(&mut self, seq: i64, env: Envelope) -> Output {
         let mut out = Output::default();
         out.push(self.secure.process(seq, env, OffsetDateTime::now_utc()));
@@ -578,7 +523,6 @@ impl CoreState {
         out
     }
 
-    /// Nouvel appareil : QR inversé à afficher, valable [`OFFER_LIFETIME`].
     pub fn offer(&mut self, name: &str) -> Result<OfferOut, String> {
         if self.secure.info().is_some() {
             return Err("cet appareil est déjà dans un groupe".into());
@@ -597,8 +541,6 @@ impl CoreState {
         Ok(OfferOut { qr, expires_at })
     }
 
-    /// Nouvel appareil enregistré par le code : demande au parrain, à
-    /// envoyer une fois authentifié.
     pub fn start_join(
         &mut self,
         code: &str,
@@ -614,9 +556,6 @@ impl CoreState {
         Ok(env)
     }
 
-    // --- Fichiers (étape 5, note 0026) --------------------------------------
-
-    /// Dépôt en cours de cette source, s'il reste valable (avec sa cible).
     pub fn upload(&self, source_id: &str, size: u64) -> Result<Option<UploadOut>, String> {
         let now = OffsetDateTime::now_utc();
         self.secure
@@ -627,10 +566,6 @@ impl CoreState {
             .transpose()
     }
 
-    /// Nouveau dépôt, après la création du blob par le relais : tire la clé
-    /// du fichier et la range dans le coffre. Vers une autre personne
-    /// (`to_user`), `to` est la résolution de [`Self::recipients`], celle à
-    /// qui le blob a été ouvert ; l'annonce partira en `0x05`.
     #[allow(clippy::too_many_arguments)]
     pub fn start_upload(
         &self,
@@ -651,7 +586,6 @@ impl CoreState {
             to.iter().map(|id| id.parse::<DeviceId>().map_err(err)).collect::<Result<_, _>>()?;
         let to_user = to_user.map(str::parse::<UserId>).transpose().map_err(err)?;
         if to_user.is_some() && to.is_empty() {
-            // `to` est la résolution de `recipients`, jamais vide.
             return Err("envoi à une personne sans appareil destinataire".into());
         }
         let expires_at =
@@ -675,7 +609,6 @@ impl CoreState {
             .ok_or_else(|| "aucun envoi en cours pour ce fichier".to_owned())
     }
 
-    /// Chiffre le morceau `index` d'un dépôt en cours.
     pub fn seal_chunk(&self, source_id: &str, index: u32, plain: &[u8]) -> Result<Vec<u8>, String> {
         let p = self.pending_upload(source_id)?;
         let m = &p.meta;
@@ -686,8 +619,6 @@ impl CoreState {
         cipher.seal_chunk(index, index + 1 == m.chunks, plain).map_err(err)
     }
 
-    /// Annonce (enveloppe chiffrée) d'un dépôt terminé. Le dépôt reste
-    /// noté jusqu'à [`Self::forget_upload`], une fois l'annonce acceptée.
     pub fn seal_file(&self, source_id: &str) -> Result<Envelope, String> {
         let p = self.pending_upload(source_id)?;
         match p.to_user {
@@ -701,7 +632,6 @@ impl CoreState {
         self.secure.forget_upload(source_id).map_err(err)
     }
 
-    /// Fichiers annoncés encore téléchargeables.
     pub fn files(&self) -> Result<Vec<FileOut>, String> {
         Ok(self.secure.files().map_err(err)?.into_iter().map(FileOut::from).collect())
     }
@@ -711,14 +641,11 @@ impl CoreState {
         self.secure.file(&blob).map_err(err)?.ok_or_else(|| "fichier inconnu".to_owned())
     }
 
-    /// Géométrie d'un fichier annoncé.
     pub fn file_geometry(&self, blob_id: &str) -> Result<Geometry, String> {
         let f = self.stored(blob_id)?;
         Geometry::new(f.size, f.chunk_size)
     }
 
-    /// Déchiffre le morceau `index` d'un fichier annoncé ; refuse un morceau
-    /// altéré, déplacé ou de taille inattendue.
     pub fn open_chunk(&self, blob_id: &str, index: u32, sealed: &[u8]) -> Result<Vec<u8>, String> {
         let f = self.stored(blob_id)?;
         let plain = f
@@ -731,7 +658,6 @@ impl CoreState {
         Ok(plain.to_vec())
     }
 
-    /// Le SHA-256 du fichier reçu est-il celui annoncé ?
     pub fn check_file(&self, blob_id: &str, sha256: &[u8]) -> Result<bool, String> {
         Ok(self.stored(blob_id)?.sha256 == sha256)
     }
@@ -741,10 +667,6 @@ impl CoreState {
         self.secure.forget_file(&blob).map_err(err)
     }
 
-    // --- Étape 10 : annuaire, personnes, invitation, journal ---
-
-    /// Commence une lecture de l'annuaire (première trame `directory_get`) ;
-    /// `None` sans ancre. Une lecture en cours est abandonnée.
     pub fn directory_start(&mut self) -> Option<Frame> {
         if !self.secure.has_anchor() {
             return None;
@@ -754,8 +676,6 @@ impl CoreState {
         Some(frame)
     }
 
-    /// Range une trame `directory` du relais ; un tour complet est vérifié
-    /// et appliqué (ses effets à traiter : événements, envois).
     pub fn directory_page(&mut self, frame: Frame) -> Result<DirectoryStep, String> {
         let Frame::Directory { me, admin, users, next } = frame else {
             return Err("trame directory attendue".into());
@@ -786,8 +706,6 @@ impl CoreState {
         self.secure.people().into_iter().map(PersonOut::from).collect()
     }
 
-    /// Trame `device_update` qui déclare `users-v1` et `kind`, s'ils
-    /// manquent à mon profil (seul l'appareil déclare ses capacités).
     pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<Frame>, String> {
         let kind = kind
             .map(|k| serde_json::from_value::<ot_proto::DeviceKind>(serde_json::Value::String(k)))
@@ -796,8 +714,6 @@ impl CoreState {
         Ok(self.secure.declaration(kind))
     }
 
-    /// Appareils destinataires d'un envoi à `user` (défauts ou `device`,
-    /// copie à mes appareils), d'après l'annuaire vérifié.
     pub fn recipients(&self, user: &str, device: Option<&str>) -> Result<Vec<String>, String> {
         let user: UserId = user.parse().map_err(err)?;
         let device = device.map(str::parse::<DeviceId>).transpose().map_err(err)?;
@@ -805,7 +721,6 @@ impl CoreState {
         Ok(to.iter().map(ToString::to_string).collect())
     }
 
-    /// Chiffre un texte pour une autre personne (`0x05`).
     pub fn seal_text_to(
         &self,
         text: &str,
@@ -821,9 +736,6 @@ impl CoreState {
         self.secure.seal_content_to(&content, &user, device.as_ref()).map_err(err)
     }
 
-    /// Prochaine entrée de mon journal (`roster_publish`), ou rien à faire.
-    /// À la réponse `roster_published`, appeler [`Self::entry_published`] ;
-    /// sur `conflict`, relire l'annuaire et redemander.
     pub fn next_entry(&mut self, what: PublishIn) -> Result<PublishOut, String> {
         let what = match what {
             PublishIn::IfBehind => Publish::IfBehind,
@@ -845,8 +757,6 @@ impl CoreState {
         }
     }
 
-    /// `roster_published` reçu pour l'entrée en cours : mon journal avance,
-    /// mon groupe adopte sa version (envoi `roster`).
     pub fn entry_published(&mut self) -> Result<Output, String> {
         let own = self.publishing.take().ok_or("aucune publication en cours")?;
         let mut out = Output::default();
@@ -854,8 +764,6 @@ impl CoreState {
         Ok(out)
     }
 
-    /// Admin : `user_invited` reçu : range l'invitation et rend le code
-    /// `ot2-…` (secret compris, à transmettre à la personne seule).
     pub fn create_invite(
         &mut self,
         user: &str,
@@ -874,13 +782,10 @@ impl CoreState {
         Ok(code.encode().to_string())
     }
 
-    /// Admin : personnes dont la demande d'invitation est arrivée.
     pub fn invites_to_certify(&self) -> Vec<String> {
         self.secure.invites_to_certify().iter().map(ToString::to_string).collect()
     }
 
-    /// Admin : certificat de l'invité (le même à chaque reprise) et s'il est
-    /// déjà accepté par le relais (`user_certify`).
     pub fn invite_cert(&mut self, user: &str) -> Result<(SignedBlob, bool), String> {
         let user: UserId = user.parse().map_err(err)?;
         self.secure.invite_cert(&user, OffsetDateTime::now_utc()).map_err(err)
@@ -891,7 +796,6 @@ impl CoreState {
         self.secure.invite_certified(&user).map_err(err)
     }
 
-    /// Admin : bienvenue sous `S`, avec la tête qui engage le certificat.
     pub fn invite_welcome(
         &self,
         user: &str,
@@ -901,7 +805,6 @@ impl CoreState {
         self.secure.invite_welcome(&user, head).map_err(err)
     }
 
-    /// Admin : bienvenue acceptée par le relais, invitation terminée.
     pub fn invite_done(&mut self, user: &str) -> Result<Output, String> {
         let user: UserId = user.parse().map_err(err)?;
         let mut out = Output::default();
@@ -909,22 +812,14 @@ impl CoreState {
         Ok(out)
     }
 
-    /// Invité : demande à renvoyer à chaque connexion, jusqu'à la bienvenue.
     pub fn invite_request(&self) -> Option<Result<Envelope, String>> {
         self.secure.invite_request().map(|r| r.map_err(err))
     }
 
-    /// Invité : bienvenue reçue, l'annuaire est à relire.
     pub fn awaits_directory(&self) -> bool {
         self.secure.awaits_directory()
     }
 
-    // --- Admin : racine, appareils retirés, services (PR 5) ---
-
-    /// Début d'`admin_init` (note 0052) : trame `directory_get` qui dit qui
-    /// je suis et si le certificat de l'admin manque. Refusé sans groupe ou
-    /// si l'ancre est déjà là. Passer la trame `directory` reçue à
-    /// [`Self::admin_root`].
     pub fn admin_init_start(&self) -> Result<Frame, String> {
         if self.secure.info().is_none() {
             return Err(ClientError::NoGroup.to_string());
@@ -935,11 +830,6 @@ impl CoreState {
         Ok(Frame::DirectoryGet { known: Default::default(), after: None })
     }
 
-    /// Page de l'annuaire lue pour `admin_init` (comme `client.rs`) :
-    /// certificat de l'admin déjà publié par un autre appareil de mon
-    /// groupe, adopté s'il est le mien (`adopt_existing_root`) ; sinon
-    /// certificat racine et entrée 1 signés ici, à envoyer (`admin_init`),
-    /// adoptés à la réponse par [`Self::adopt_admin_root`].
     pub fn admin_root(&mut self, frame: Frame) -> Result<AdminRootOut, String> {
         let Frame::Directory { me, admin, users, .. } = frame else {
             return Err("trame directory attendue".into());
@@ -963,8 +853,6 @@ impl CoreState {
         Ok(res)
     }
 
-    /// `admin_initialized` reçu : l'ancre est mon certificat racine. Relire
-    /// ensuite l'annuaire ([`Self::directory_start`]).
     pub fn adopt_admin_root(&mut self, user: &str) -> Result<Output, String> {
         let user: UserId = user.parse().map_err(err)?;
         let cert = self.admin_root.as_ref().ok_or("aucun admin_init en cours")?;
@@ -979,32 +867,20 @@ impl CoreState {
         Ok(out)
     }
 
-    /// Admin : personnes dont le certificat a été signé par `device`, à
-    /// re-signer ([`Self::recertify`]) après le retrait de cet appareil.
     pub fn certified_by(&self, device: &str) -> Result<Vec<String>, String> {
         let device: DeviceId = device.parse().map_err(err)?;
         Ok(self.secure.certified_by(&device).iter().map(ToString::to_string).collect())
     }
 
-    /// Admin : certificat de `user` re-signé par cet appareil (même
-    /// `genesis`), renommé si `name` est donné. À rendre au relais
-    /// (`user_certify`), puis à engager (`nextEntry` `certify`).
     pub fn recertify(&self, user: &str, name: Option<&str>) -> Result<SignedBlob, String> {
         let user: UserId = user.parse().map_err(err)?;
         self.secure.recertify(&user, name, OffsetDateTime::now_utc()).map_err(err)
     }
 
-    /// Admin : services dont la dernière entrée vient d'un appareil retiré
-    /// de l'admin, à republier (D47, note 0054) ; vide hors de l'admin.
     pub fn services_to_republish(&self) -> Vec<String> {
         self.secure.services_to_republish().iter().map(ToString::to_string).collect()
     }
 
-    /// Admin : entrée suivante du journal du service `user` (même roster,
-    /// version + 1), ou rien à faire (`frame` absente, `head`). À la réponse
-    /// `roster_published`, [`Self::service_entry_published`] ; sur
-    /// `conflict`, relire l'annuaire et redemander. Ajouter un appareil de
-    /// service reste à la CLI et à Android.
     pub fn next_service_entry(&mut self, user: &str) -> Result<PublishOut, String> {
         let user: UserId = user.parse().map_err(err)?;
         match self.secure.next_service_entry(&user, None).map_err(err)? {
@@ -1023,7 +899,6 @@ impl CoreState {
         }
     }
 
-    /// `roster_published` reçu pour l'entrée `seq` du service `user`.
     pub fn service_entry_published(&mut self, user: &str, seq: u64) -> Result<Output, String> {
         let user: UserId = user.parse().map_err(err)?;
         let i = self
@@ -1037,8 +912,6 @@ impl CoreState {
         Ok(out)
     }
 
-    /// Nouvelle clé de groupe sans les membres `exclude`. Les `group_key` à
-    /// envoyer sont dans `sends`.
     pub fn rotate(&mut self, exclude: &[String]) -> Result<(u32, Output), String> {
         let exclude: Vec<DeviceId> =
             exclude.iter().map(|id| id.parse().map_err(err)).collect::<Result<_, _>>()?;
@@ -1058,7 +931,6 @@ mod tests {
     use ot_core::crypto::PairingOffer;
     use ot_core::{Identity, MemoryKeyring, init_group};
 
-    /// Parrain en Rust (comme le téléphone) et nouvel appareil « extension ».
     struct Sponsor {
         id: DeviceId,
         secure: Secure,
@@ -1093,7 +965,6 @@ mod tests {
         assert!(vault.has(PENDING_OFFER));
         let env = welcome(&mut phone, &offer.qr);
 
-        // Le service worker est arrêté puis relancé : l'offre est reprise.
         let (mut core, _) = CoreState::open(vault.clone(), &id).unwrap();
         assert!(matches!(core.pending(), Some(PendingOut::Offer { .. })));
         let out = core.process(1, env);
@@ -1175,7 +1046,6 @@ mod tests {
         let offer = core.offer("chrome").unwrap();
         core.process(1, welcome(&mut phone, &offer.qr));
 
-        // L'extension envoie un fichier de 40 octets en morceaux de 16.
         let data: Vec<u8> = (0..40).collect();
         let sha: [u8; 32] = {
             use sha2::Digest;
@@ -1209,8 +1079,6 @@ mod tests {
         core.forget_upload("f").unwrap();
         assert_eq!(core.upload("f", 40).unwrap(), None);
 
-        // Le téléphone reçoit l'annonce ; puis renvoie la même au cœur de
-        // l'extension pour tester le retrait.
         let fx = phone.secure.process(2, env, OffsetDateTime::now_utc());
         let Some(Effect::Emit(Event::File(f))) = fx.into_iter().next() else {
             panic!("fichier attendu")
@@ -1241,7 +1109,6 @@ mod tests {
         assert!(!core.check_file(&blob, &[0; 32]).unwrap());
         core.forget_file(&blob).unwrap();
         assert!(core.files().unwrap().is_empty());
-        // Ce qui sort vers le JavaScript ne contient aucune clé.
         let json = serde_json::to_string(&out).unwrap();
         assert!(!json.contains("\"key\"") && !json.contains("nonce"), "{json}");
     }
@@ -1286,10 +1153,6 @@ mod tests {
         assert_eq!(serde_json::to_value(&ev).unwrap()["type"], "directory_fork");
     }
 
-    // --- Admin : racine, retrait d'un appareil, services (PR 5) ---
-
-    /// Relais en miniature : l'annuaire tel que le relais le sert, journaux
-    /// complets, rendus après ce que le client connaît.
     #[derive(Default)]
     struct Relay {
         admin: Option<UserId>,
@@ -1350,7 +1213,6 @@ mod tests {
         }
     }
 
-    /// Lecture complète de l'annuaire par l'extension ; ses événements.
     fn read(core: &mut CoreState, relay: &Relay) -> Vec<EventOut> {
         let mut events = Vec::new();
         let mut frame = core.directory_start().expect("ancre");
@@ -1364,7 +1226,6 @@ mod tests {
         }
     }
 
-    /// Lecture complète par le téléphone (un tour suffit ici).
     fn phone_read(phone: &mut Sponsor, relay: &Relay) {
         let request = Frame::DirectoryGet { known: phone.secure.directory_known(), after: None };
         let Frame::Directory { me, admin, users, .. } = relay.page(&request) else {
@@ -1374,8 +1235,6 @@ mod tests {
         assert!(!fx.iter().any(|f| matches!(f, Effect::Emit(Event::DirectoryRejected { .. }))));
     }
 
-    /// Téléphone et extension dans un groupe, extension admin : elle signe
-    /// la racine (comme à la migration d'une installation) ; l'annuaire est lu.
     fn admin_pair() -> (Sponsor, CoreState, String, Relay, UserId) {
         let mut phone = sponsor();
         let (vault, id) = extension();
@@ -1418,7 +1277,6 @@ mod tests {
         let (_phone, _core, _, relay, admin) = admin_pair();
         let get = Frame::DirectoryGet { known: Default::default(), after: None };
 
-        // Un autre appareil du groupe : il adopte la racine publiée.
         let (vault, id) = extension();
         let mut other = CoreState::open(vault, &id).unwrap().0;
         assert!(other.admin_init_start().is_err(), "sans groupe");
@@ -1429,7 +1287,6 @@ mod tests {
         assert!(why.contains("hors de mon groupe"), "{why}");
         assert!(other.directory_start().is_none());
 
-        // L'extension d'un appareil qui n'est pas à l'admin est refusée.
         let Frame::Directory { admin: a, users, .. } = relay.page(&get) else { unreachable!() };
         let page = Frame::Directory { me: UserId::generate(), admin: a, users, next: None };
         let why = other.admin_root(page).unwrap_err();
@@ -1445,7 +1302,6 @@ mod tests {
         let mut second = CoreState::open(vault, &id).unwrap().0;
         let offer = second.offer("chrome-2").unwrap();
         second.process(1, welcome(&mut phone, &offer.qr));
-        // L'ancre vient avec la bienvenue (note 0076) : rien à adopter.
         assert!(second.awaits_directory(), "lecture de l'annuaire due");
         assert!(second.admin_init_start().is_err(), "ancre déjà là");
         assert!(second.directory_start().is_some());
@@ -1456,8 +1312,6 @@ mod tests {
         let (mut phone, mut core, _, mut relay, admin) = admin_pair();
         let now = OffsetDateTime::now_utc();
 
-        // Le téléphone crée le service « Notifier » (comme `ot admin service
-        // add`) : engagement du certificat, puis journal du service.
         let svc = UserId::generate();
         let mut notifier = Secure::load(
             DeviceId::generate(),
@@ -1506,8 +1360,6 @@ mod tests {
         assert!(core.services_to_republish().is_empty(), "signataire encore là");
         assert!(core.recertify(&admin.to_string(), None).is_err(), "la racine ne se re-signe pas");
 
-        // Retrait du téléphone depuis l'extension (`remove_device`) :
-        // rotation, roster publié, révocation par le relais.
         let (epoch, _) = core.rotate(std::slice::from_ref(&phone_id)).unwrap();
         assert_eq!(epoch, 2);
         let publish = core.next_entry(PublishIn::IfBehind).unwrap();
@@ -1516,7 +1368,6 @@ mod tests {
         relay.user(&admin).devices.retain(|d| d.id.to_string() != phone_id);
         assert_eq!(core.services_to_republish(), vec![svc.to_string()], "D47");
 
-        // Certificats signés par le téléphone re-signés ici et engagés.
         for user in core.certified_by(&phone_id).unwrap() {
             let cert = core.recertify(&user, None).unwrap();
             relay.user(&user.parse().unwrap()).cert = Some(cert.clone());
@@ -1526,7 +1377,6 @@ mod tests {
             core.entry_published().unwrap();
         }
 
-        // Republication du journal du service, même roster.
         let publish = core.next_service_entry(&svc.to_string()).unwrap();
         let frame = publish.frame.unwrap();
         let Frame::RosterPublish { seq, .. } = &frame else { panic!("{frame:?}") };
@@ -1539,8 +1389,6 @@ mod tests {
         let again = core.next_service_entry(&svc.to_string()).unwrap();
         assert!(again.frame.is_none() && again.head.is_some_and(|h| h.seq == 2));
 
-        // Relu depuis le relais, tout tient : rien de refusé, le service
-        // reste visible, signé par l'extension.
         let events = read(&mut core, &relay);
         assert!(
             !events.iter().any(|e| matches!(e, EventOut::DirectoryRejected { .. })),
@@ -1580,8 +1428,6 @@ mod tests {
         let json = serde_json::to_value(core.upload("f", 40).unwrap().unwrap()).unwrap();
         assert_eq!(json["to_user"], user);
         assert_eq!(json["to"][0], to[0]);
-        // L'annonce part en `0x05` : seuls les appareils de l'annuaire
-        // vérifié peuvent la recevoir.
         let env = core.seal_file("f").unwrap();
         assert_eq!(env.to, vec![phone.id.clone()]);
         let stranger = DeviceId::generate().to_string();
@@ -1589,7 +1435,6 @@ mod tests {
         let why = core.seal_file("f").unwrap_err();
         assert!(why.contains("annuaire vérifié"), "{why}");
 
-        // Sans personne : comme avant, `to_user` absent du JSON.
         start(&[], None).unwrap();
         let json = serde_json::to_value(core.upload("f", 40).unwrap().unwrap()).unwrap();
         assert!(json.get("to_user").is_none(), "{json}");

@@ -1,7 +1,3 @@
-//! Note 0045 : `ot otp-bridge` relaie un code lu sur le socket d'otp-relay
-//! (ici un faux socket) à un membre du groupe, qui le reçoit par `listen`.
-//! Étape 10 : depuis un appareil de service, vers des personnes
-//! (`--to-user`).
 #![cfg(unix)]
 
 mod common;
@@ -34,7 +30,6 @@ async fn bridge_relays_a_code_to_its_recipient() {
     let (home_brave, brave) = device(&store, root.path(), &url, "brave").await;
     group(&[(&home_bridge, bridge), (&home_brave, brave)]);
 
-    // Faux otp-relay : un code expiré (ignoré), puis un code valide.
     let socket = root.path().join("otp-relay.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let now = OffsetDateTime::now_utc();
@@ -49,7 +44,6 @@ async fn bridge_relays_a_code_to_its_recipient() {
         for line in lines {
             stream.write_all(format!("{line}\n").as_bytes()).await.unwrap();
         }
-        // Le socket reste ouvert, comme celui du vrai daemon.
         std::future::pending::<()>().await;
     });
 
@@ -84,14 +78,12 @@ async fn bridge_relays_a_code_to_its_recipient() {
     assert_eq!(got["sender_verified"], true);
     assert_eq!(got["from_name"], "relais-otp");
 
-    // Le pont retient le code envoyé, dans un fichier privé.
     let sent = home_bridge.join("otp-sent.json");
     let text = std::fs::read_to_string(&sent).unwrap();
     assert!(text.contains("\"new\"") && !text.contains("\"old\""), "{text}");
     assert_eq!(std::fs::metadata(&sent).unwrap().permissions().mode() & 0o777, 0o600);
 }
 
-/// Faux otp-relay sur `socket` : le salut, puis ces codes ; reste ouvert.
 fn fake_relay(socket: &std::path::Path, codes: Vec<(&'static str, &'static str)>) {
     let listener = UnixListener::bind(socket).unwrap();
     let now = OffsetDateTime::now_utc();
@@ -121,10 +113,8 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
     ot(&alice, &["admin", "link", "add", "Notifier", "Carol"]).await;
     ot(&carol, &["mute", "Notifier", "on"]).await;
 
-    // --to et --to-user ne se combinent pas.
     let err = ot_fails(&notifier, &["otp-bridge", "--to", "x", "--to-user", "Bob"]).await;
     assert!(err.contains("ne se combinent pas"), "{err}");
-    // --device ne vise qu'une personne.
     let err =
         ot_fails(&notifier, &["otp-bridge", "--to-user", "Alice,Bob", "--device", "bob-cli"]).await;
     assert!(err.contains("une seule personne"), "{err}");
@@ -140,7 +130,6 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    // Un seul message pour Alice et Bob.
     for home in [&alice, &bob] {
         let (_listen, mut lines) = spawn(home, &["listen", "--json"]);
         let line = tokio::time::timeout(Duration::from_secs(20), line_starting(&mut lines, "{"))
@@ -153,8 +142,6 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
         assert_eq!(got["from_name"], "Notifier/notifier-1");
     }
 
-    // Carol a coupé le service : sautée, signalée par son identifiant ; aucun
-    // code dans le journal du pont.
     let mut err = BufReader::new(bridge.stderr.take().unwrap()).lines();
     let mut log = Vec::new();
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -183,7 +170,6 @@ async fn bridge_sends_to_one_device_of_a_person() {
     let notifier = service(&alice, root.path(), &url, "Notifier", "notifier-1").await;
     ot(&alice, &["admin", "link", "add", "Notifier", "Bob"]).await;
 
-    // Un appareil inconnu se voit dès le démarrage.
     let err = ot_fails(
         &notifier,
         &["otp-bridge", "--to-user", "Bob", "--device", "nope", "--socket", "/nonexistent"],

@@ -1,5 +1,3 @@
-"""Chargement et validation de la configuration (TOML)."""
-
 from __future__ import annotations
 
 import ipaddress
@@ -32,12 +30,10 @@ class ImapConfig:
     password_file: Path | None = None
     host: str = "imap.gmail.com"
     port: int = 993
-    security: str = "ssl"  # ssl | starttls | none (boucle locale uniquement, pour les tests)
+    security: str = "ssl"
     mailbox: str = "INBOX"
-    # Renouvellement de l'IDLE, qui refait aussi une recherche des nouveaux mails
-    # (Gmail tarde parfois à signaler un mail) ; Gmail coupe un IDLE vers 29 min.
     idle_refresh: int = 600
-    max_age: int = 900  # un mail plus vieux que ça n'est jamais diffusé
+    max_age: int = 900
     connect_timeout: int = 30
 
     def password(self) -> str:
@@ -53,7 +49,6 @@ class ImapConfig:
             raise ConfigError(f"fichier de mot de passe introuvable : {path}") from None
         if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
             raise ConfigError(f"{path} est lisible par d'autres utilisateurs : chmod 600 {path}")
-        # Les mots de passe d'application Google s'affichent par groupes de 4 séparés d'espaces.
         value = path.read_text().strip().replace(" ", "")
         if not value:
             raise ConfigError(f"{path} est vide")
@@ -118,8 +113,6 @@ def load(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         raise ConfigError("imap.security doit valoir ssl, starttls ou none")
     if imap.security == "none" and not _is_loopback(imap.host):
         raise ConfigError("imap.security = none n'est autorisé que vers 127.0.0.1 (tests)")
-    # Bas : Gmail tarde parfois à signaler un mail en IDLE ; chaque renouvellement
-    # refait un UID SEARCH, qui le trouve sans attendre ce signal.
     if not 5 <= imap.idle_refresh <= 1500:
         raise ConfigError("imap.idle_refresh doit être compris entre 5 et 1500 secondes")
 

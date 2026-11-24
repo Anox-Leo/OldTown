@@ -1,5 +1,3 @@
-"""Ligne de commande : run | check | tail | extract."""
-
 from __future__ import annotations
 
 import argparse
@@ -19,7 +17,7 @@ from .config import DEFAULT_CONFIG_PATH, ConfigError, default_socket_path, load
 
 def _logging(level: str) -> None:
     fmt = "%(levelname)s %(name)s: %(message)s"
-    if not os.environ.get("JOURNAL_STREAM"):  # journald horodate déjà
+    if not os.environ.get("JOURNAL_STREAM"):
         fmt = "%(asctime)s " + fmt
     logging.basicConfig(level=level, format=fmt, stream=sys.stderr)
 

@@ -1,19 +1,4 @@
 #!/bin/sh
-# Diagnostic du relais envoyé par OldTown (note 0025) : alimentation, batterie
-# et erreurs disque relevées par le noyau.
-#
-#   ot-diag.sh report    rapport complet (ot-diag.timer : 00:00 et 12:00)
-#   ot-diag.sh power     changement d'alimentation (règle udev) : attend que
-#                        l'état se stabilise, n'envoie que s'il a changé depuis
-#                        le dernier envoi, au plus un envoi par intervalle
-#   ot-diag.sh preview   affiche le rapport sans l'envoyer
-#
-# Envoi par `ot send` sous l'identité dédiée (OT_HOME), à OT_DIAG_TO (noms de
-# membres séparés par des espaces ; vide : tous les autres membres), ou, pour
-# un appareil de service (`ot pair join --qr --service`), à OT_DIAG_TO_USER
-# (personnes séparées par des espaces, un envoi chacune, `ot send --to-user`) ;
-# avec une seule personne, OT_DIAG_DEVICE vise un de ses appareils au lieu de
-# ses appareils par défaut (`ot send --to-user … --device …`).
 set -eu
 
 STATE=${OT_DIAG_STATE:-${STATE_DIRECTORY:-/var/lib/ot-diag}}
@@ -25,23 +10,16 @@ HOURS=${OT_DIAG_WINDOW_HOURS:-12}
 DEBOUNCE=${OT_DIAG_DEBOUNCE:-30}
 MIN_INTERVAL=${OT_DIAG_MIN_INTERVAL:-600}
 
-# Messages du noyau qui signalent un problème de disque ou de système de
-# fichiers, appliqués à des lignes « HH:MM message ». Les avertissements bénins
-# (ACPI, pare-feu, `nvme … using unchecked data buffer`) ne doivent pas y
-# correspondre : voir les tests.
 DISK_PATTERN='^[^ ]+ (nvme [^ ]+: .*(timeout|reset|controller is down|abort|failed|error)'
 DISK_PATTERN="$DISK_PATTERN|ata[0-9.]+: .*(exception|failed command|error|hard resetting))"
 DISK_PATTERN="$DISK_PATTERN|I/O error|medium error|unrecovered read error"
 DISK_PATTERN="$DISK_PATTERN|EXT4-fs error|BTRFS (error|critical)|XFS .*(error|corruption)"
 DISK_PATTERN="$DISK_PATTERN|remounting filesystem read-only"
 
-# Fichier d'une source d'alimentation, vide s'il n'existe pas.
 attr() {
     if [ -r "$1/$2" ]; then cat "$1/$2"; fi
 }
 
-# Source d'alimentation actuelle : `mains` ou `battery`. Les sources du
-# système (secteur, USB-C) font foi ; sans elles, l'état de la batterie.
 power_source() {
     found=0
     for d in "$SYSFS"/*; do
@@ -63,7 +41,6 @@ power_source() {
     fi
 }
 
-# Dossier de la batterie du système (pas celle d'une souris), vide sinon.
 battery_dir() {
     for d in "$SYSFS"/*; do
         [ "$(attr "$d" type)" = Battery ] || continue
@@ -73,9 +50,6 @@ battery_dir() {
     done
 }
 
-# « Alimentation : secteur, 59 % (en charge) » : source, niveau et état de
-# la batterie, comme percentage et state de `upower -i`. Batterie en attente
-# de charge (seuil de charge atteint) : pas d'état, il n'apprend rien.
 power_line() {
     if [ "$(power_source)" = mains ]; then source=secteur; else source=batterie; fi
     bat=$(battery_dir)
@@ -93,20 +67,12 @@ power_line() {
     echo "Alimentation : $source, $(attr "$bat" capacity) %$state"
 }
 
-# Erreurs disque des $HOURS dernières heures, dans le journal du noyau.
 disk_lines() {
-    # Le noyau écrit toujours dans le journal au démarrage : un journal vide
-    # veut dire qu'il est illisible (groupe systemd-journal manquant), pas
-    # qu'il n'y a rien à signaler.
     if [ -z "$(journalctl -k -b -q --no-pager -n 1 -o cat)" ]; then
         echo "SSD : journal du noyau illisible, diagnostic impossible"
         return
     fi
-    # _TRANSPORT=kernel plutôt que -k, limité au démarrage en cours : une
-    # erreur disque suivie d'un plantage et d'un redémarrage doit rester visible.
     log=$(journalctl _TRANSPORT=kernel -q --no-pager -o short-iso -p warning --since "-${HOURS}h")
-    # « 2026-10-12T03:12:45+02:00 hôte kernel: message » → « 03:12 message ».
-    # grep rend 1 quand rien ne correspond : ce n'est pas une erreur.
     alerts=$(printf '%s\n' "$log" \
         | sed -n 's/^[0-9-]*T\([0-9][0-9]:[0-9][0-9]\)[^ ]* [^ ]* kernel: \(.*\)$/\1 \2/p' \
         | grep -E -i -e "$DISK_PATTERN" || [ $? -eq 1 ])
@@ -121,12 +87,10 @@ disk_lines() {
     else
         echo "SSD : $count erreurs détectées sur $HOURS h, dernière à $last :"
     fi
-    # Les trois messages distincts les plus récents, tronqués.
     printf '%s\n' "$alerts" | cut -d ' ' -f 2- | tac | awk '!seen[$0]++' | head -n 3 | tac \
         | cut -c 1-100 | sed 's/^/- /'
 }
 
-# Rapport : une ligne d'alimentation, puis l'état du disque.
 build_report() {
     power_line
     disk_lines
@@ -144,7 +108,7 @@ send() {
             return 2
         fi
         if [ -n "$DEVICE" ]; then
-            # shellcheck disable=SC2086 # une personne par mot, comme plus bas
+            # shellcheck disable=SC2086
             set -- $TO_USER
             if [ "$#" -ne 1 ]; then
                 echo "OT_DIAG_DEVICE demande une seule personne dans OT_DIAG_TO_USER" >&2
@@ -153,7 +117,6 @@ send() {
             printf '%s\n' "$message" | ot send --to-user "$1" --device "$DEVICE"
             return
         fi
-        # Une personne injoignable n'empêche pas l'envoi aux suivantes.
         status=0
         for person in $TO_USER; do
             printf '%s\n' "$message" | ot send --to-user "$person" || status=$?
@@ -165,8 +128,6 @@ send() {
     printf '%s\n' "$message" | ot send "$@"
 }
 
-# Un seul envoi à la fois : deux `ot send` de la même identité se couperaient
-# (note 0009).
 lock() {
     exec 9>"$STATE/lock"
     flock 9
@@ -179,12 +140,8 @@ unlock() {
 report() {
     lock
     source=$(power_source)
-    # Assignation à part : une erreur pendant le rapport arrête le script au
-    # lieu d'envoyer un rapport tronqué.
     message=$(build_report)
     send "$message"
-    # Le rapport fait connaître l'alimentation : un événement qui n'y change
-    # rien ne donnera pas de message.
     echo "$source" >"$STATE/power.last"
     unlock
 }
@@ -202,7 +159,6 @@ power() {
         sent=$(attr "$STATE" power.sent)
         wait=$((${sent:-0} + MIN_INTERVAL - $(date +%s)))
         if [ "$wait" -gt 0 ]; then
-            # Trop tôt : attendre, puis relire l'état, qui a pu revenir.
             unlock
             sleep "$wait"
             continue

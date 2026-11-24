@@ -1,5 +1,3 @@
-//! Encodage base64 (alphabet standard, avec remplissage) des champs binaires.
-
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Deserializer, Serializer, de};
@@ -12,7 +10,6 @@ pub fn decode(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
     STANDARD.decode(s)
 }
 
-/// Décode une chaîne base64 en tableau de taille fixe.
 pub fn decode_array<const N: usize>(s: &str) -> Option<[u8; N]> {
     decode(s).ok()?.try_into().ok()
 }
@@ -45,7 +42,6 @@ pub mod bytes {
     }
 }
 
-/// Comme [`array`], pour un champ facultatif (`null` ou absent : `None`).
 pub mod opt_array {
     use super::*;
 

@@ -1,8 +1,3 @@
-//! Étape 10, § 6.1 et 6.2 : personnes de service de bout en bout, clients
-//! `ot-core` et relais en processus. Noms neutres : Alice (admin, deux
-//! appareils), Bob (invité), service « Notifier » (`notifier-1`,
-//! `notifier-2`).
-
 mod common;
 
 use std::sync::Arc;
@@ -22,8 +17,6 @@ struct Admin {
     a: Vec<TestDevice>,
 }
 
-/// Alice et ses deux appareils, racine publiée par `a1`, ancre adoptée
-/// par `a2`.
 async fn admin() -> Admin {
     let store = Store::in_memory().await.unwrap();
     let a1 = add_device(&store, "alice-phone").await;
@@ -46,7 +39,6 @@ async fn online(dev: &TestDevice, url: &str) -> (Client, Events) {
     (client, events)
 }
 
-/// Bob, invité par `admin` et certifié ; son client tourne.
 async fn bob(admin: &Client, admin_events: &mut Events, alice: &UserId, url: &str) -> Guest {
     let invitation = within(admin.invite("Bob", vec![alice.clone()])).await.unwrap();
     let identity = Identity::generate();
@@ -71,8 +63,6 @@ struct Guest {
     events: Events,
 }
 
-/// Nouvel appareil de service : QR inversé affiché, client démarré (son
-/// authentification échoue jusqu'à l'enregistrement par l'admin).
 async fn service_device(url: &str, name: &str) -> (TestDevice, Client, Events, String) {
     let dev = TestDevice {
         id: DeviceId::generate(),
@@ -115,7 +105,6 @@ fn person<'a>(people: &'a [Person], user: &UserId) -> Option<&'a Person> {
     people.iter().find(|p| &p.id == user)
 }
 
-/// `user` est vérifié et a `n` appareils dans son roster.
 fn listed(people: &[Person], user: &UserId, n: usize) -> bool {
     person(people, user).is_some_and(|p| p.roster.members.len() == n)
 }
@@ -146,7 +135,6 @@ async fn service_devices_are_added_and_send_codes_to_people() {
     let (ca1, mut ea1) = online(&net.a[0], &url).await;
     let mut bob = bob(&ca1, &mut ea1, &alice, &url).await;
 
-    // Premier appareil : le service est créé.
     let (n1, cn1, mut en1, qr) = service_device(&url, "notifier-1").await;
     let added = within(ca1.add_service_device("Notifier", &qr)).await.unwrap();
     assert!(added.created);
@@ -154,13 +142,10 @@ async fn service_devices_are_added_and_send_codes_to_people() {
     let notifier = added.user.clone();
     assert_eq!(joined(&mut en1).await, notifier);
     assert!(within(cn1.group()).await.unwrap().is_none(), "un service n'a pas de groupe");
-    // Relancé avec le même QR : rien de neuf, pas d'erreur.
     let again = within(ca1.add_service_device("Notifier", &qr)).await.unwrap();
     assert!(!again.created);
     assert_eq!(again.user, notifier);
 
-    // Liens à sens unique vers Alice et Bob ; le service les voit, et eux
-    // le voient avec son appareil.
     within(ca1.link_set(&notifier, &alice, true)).await.unwrap();
     within(ca1.link_set(&notifier, &bob.user, true)).await.unwrap();
     people_until(&cn1, &mut en1, |p| {
@@ -170,8 +155,6 @@ async fn service_devices_are_added_and_send_codes_to_people() {
     let seen = people_until(&bob.client, &mut bob.events, |p| listed(p, &notifier, 1)).await;
     assert_eq!(person(&seen, &notifier).unwrap().name, "Notifier");
 
-    // Un code pour les deux personnes : un message, origine « service »,
-    // remplissage d'office permis (O2).
     within(cn1.send_otp_to(&[alice.clone(), bob.user.clone()], &code("482913"))).await.unwrap();
     let got = next_otp(&mut bob.events).await;
     assert_eq!(got.otp.code, "482913");
@@ -179,7 +162,6 @@ async fn service_devices_are_added_and_send_codes_to_people() {
     assert!(got.origin.from_service && got.auto_fill());
     assert_eq!(next_otp(&mut ea1).await.otp.code, "482913");
 
-    // Second appareil du même service.
     let (n2, cn2, mut en2, qr2) = service_device(&url, "notifier-2").await;
     let added2 = within(ca1.add_service_device("Notifier", &qr2)).await.unwrap();
     assert!(!added2.created);
@@ -190,8 +172,6 @@ async fn service_devices_are_added_and_send_codes_to_people() {
     let got = next_otp(&mut bob.events).await;
     assert_eq!((got.otp.code.as_str(), &got.from), ("135790", &n2.id));
 
-    // Bob coupe le service : le service le voit, et le relais refuse ses
-    // envois vers Bob.
     within(bob.client.mute_service(&notifier, true)).await.unwrap();
     people_until(&cn1, &mut en1, |p| person(p, &bob.user).is_some_and(|b| b.muted)).await;
     let refused = within(cn1.send_otp_to(std::slice::from_ref(&bob.user), &code("246802"))).await;
@@ -210,10 +190,8 @@ async fn a_service_is_republished_after_its_admin_device_is_removed() {
     let alice = net.alice.clone();
     let (ca1, mut ea1) = online(&net.a[0], &url).await;
     let (ca2, mut ea2) = online(&net.a[1], &url).await;
-    // L'admin doit avoir lu son annuaire avant d'agir.
     people_until(&ca2, &mut ea2, |p| person(p, &alice).is_some()).await;
 
-    // Le service est créé par a2 : certificat et journal signés par a2.
     let (_n1, cn1, mut en1, qr) = service_device(&url, "notifier-1").await;
     let notifier = within(ca2.add_service_device("Notifier", &qr)).await.unwrap().user;
     joined(&mut en1).await;
@@ -221,8 +199,6 @@ async fn a_service_is_republished_after_its_admin_device_is_removed() {
     people_until(&ca1, &mut ea1, |p| listed(p, &notifier, 1)).await;
     within(ca2.shutdown()).await;
 
-    // a1 retire a2 : il re-signe le certificat du service et republie son
-    // journal (D47) ; le service reste visible et joignable.
     within(ca1.remove_device(&net.a[1].id)).await.unwrap();
     let a1 = net.a[0].id.clone();
     within(async {
@@ -260,7 +236,6 @@ async fn only_the_admin_adds_service_devices() {
     let (_n1, _cn1, _en1, qr) = service_device(&url, "notifier-1").await;
     let refused = within(bob.client.add_service_device("Notifier", &qr)).await;
     assert!(matches!(refused, Err(ot_core::ClientError::Invalid(_))), "{refused:?}");
-    // Un QR altéré est refusé avant tout envoi au relais.
     let mut tampered = ot_core::PairingOffer::parse(&qr).unwrap();
     tampered.name = "notifier-x".into();
     let refused = within(ca1.add_service_device("Notifier", &tampered.encode())).await;

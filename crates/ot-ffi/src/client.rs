@@ -1,6 +1,3 @@
-//! [`OtClient`] : la connexion au relais, tenue par le service de premier
-//! plan de l'appli (note 0009).
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -18,22 +15,17 @@ use crate::{
     PersonItem, RUNTIME, Received, RelayDevice, SecretStore, ServiceAdded, Sponsored, on_runtime,
 };
 
-/// Client du relais : se connecte et se reconnecte seul tant qu'il existe.
 #[derive(uniffi::Object)]
 pub struct OtClient {
     client: Client,
     local: Local,
     device: DeviceState,
     events: tokio::sync::Mutex<mpsc::Receiver<Event>>,
-    /// Vers le flux d'événements, pour signaler les envois rangés. Faible :
-    /// le flux se ferme quand le client s'arrête.
     events_tx: mpsc::WeakSender<Event>,
 }
 
 #[uniffi::export]
 impl OtClient {
-    /// Démarre le client de l'appareil enregistré dans `store`. Si un
-    /// appairage par code est en cours, envoie la demande au parrain.
     #[uniffi::constructor]
     pub fn start(store: Arc<dyn SecretStore>) -> Result<Arc<Self>, OtError> {
         let local = Local::new(store);
@@ -71,27 +63,15 @@ impl OtClient {
         self.device.clone()
     }
 
-    /// Prochain événement ; `None` une fois le client arrêté.
     pub async fn next_event(&self) -> Option<Event> {
         self.events.lock().await.recv().await
     }
 
-    /// Envoie un texte (un lien s'il n'est fait que d'une URL) à `to`, des
-    /// identifiants de membres ; vide : tous les autres appareils. Hors
-    /// ligne, l'envoi part à la reconnexion. Renvoie le `msg_id`.
-    ///
-    /// L'élément est rangé dans l'historique avant l'envoi (`pending`), puis
-    /// marqué accepté à l'accusé du relais, ou retiré si l'envoi échoue
-    /// (note 0033) ; chaque étape est signalée (`Event::Sent`, `Unsent`).
     pub async fn send_text(&self, text: String, to: Vec<String>) -> Result<String, OtError> {
         let target = parse_ids(&to).map(Target::MyDevices);
         self.send_text_target(text, target).await
     }
 
-    /// Envoie un texte à une autre personne (étape 10) : à `device`, un de
-    /// ses appareils, ou à ses appareils par défaut ; une copie part vers
-    /// mes autres appareils. Même historique que [`OtClient::send_text`],
-    /// l'élément porte `to_user`.
     pub async fn send_text_to_user(
         &self,
         text: String,
@@ -103,9 +83,6 @@ impl OtClient {
         self.send_text_target(text, target).await
     }
 
-    /// Envoie un fichier à une autre personne (étape 10), comme
-    /// [`OtClient::send_file`] : à `device` ou à ses appareils par défaut,
-    /// copie à mes autres appareils.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_file_to_user(
         &self,
@@ -128,26 +105,16 @@ impl OtClient {
         self.send_outgoing_file(file, source, listener).await
     }
 
-    /// Admin : publie le certificat racine (première fois), ou adopte celui
-    /// d'un autre appareil de l'admin. Refusé (`Invalid`) s'il est déjà
-    /// adopté. Renvoie la personne de l'admin.
     pub async fn admin_init(&self) -> Result<String, OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.admin_init().await?.to_string()) }).await
     }
 
-    /// Racine de l'annuaire (D51) : adopte celle qu'un appareil de mon
-    /// groupe a publiée ; sinon la publie si `create`, ou rend `Missing`
-    /// avec le nom qui sera signé. À appeler à chaque connexion avec
-    /// `create` faux, et avec `create` vrai sur « Publier l'annuaire ».
     pub async fn admin_root(&self, create: bool) -> Result<AdminRoot, OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.admin_root(create).await?.into()) }).await
     }
 
-    /// Admin : invite une personne, liée dans les deux sens à `links`. La
-    /// certification se fait d'office à l'arrivée de sa demande
-    /// (`Event::PersonJoined`), par ce téléphone.
     pub async fn invite(&self, name: String, links: Vec<String>) -> Result<PersonInvite, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -157,8 +124,6 @@ impl OtClient {
         .await
     }
 
-    /// Admin : nouvelle invitation pour une personne qui a perdu ses
-    /// appareils.
     pub async fn reinvite(&self, user: String) -> Result<PersonInvite, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -168,7 +133,6 @@ impl OtClient {
         .await
     }
 
-    /// Admin : toutes les personnes, telles que le relais les connaît.
     pub async fn users(&self) -> Result<Vec<AdminUserItem>, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -177,7 +141,6 @@ impl OtClient {
         .await
     }
 
-    /// Admin : pose ou retire un lien.
     pub async fn link_set(&self, from: String, to: String, allowed: bool) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -186,20 +149,16 @@ impl OtClient {
         .await
     }
 
-    /// Admin : révoque une personne.
     pub async fn revoke_user(&self, user: String) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.revoke_user(&parse_user(&user)?).await?) }).await
     }
 
-    /// Admin : renomme une personne (son certificat est re-signé).
     pub async fn rename_user(&self, user: String, name: String) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.rename_user(&parse_user(&user)?, &name).await?) }).await
     }
 
-    /// Règle un appareil de ma personne (l'admin : de tous) ; `None` :
-    /// inchangé. `kind` : `phone`, `laptop`, `desktop`, `browser`, `cli`.
     pub async fn update_device(
         &self,
         device: String,
@@ -223,8 +182,6 @@ impl OtClient {
         .await
     }
 
-    /// Retire un appareil : de mon groupe, nouvelle clé sans lui puis
-    /// révocation ; d'une autre personne (admin), révocation.
     pub async fn remove_device(&self, device: String) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -234,17 +191,12 @@ impl OtClient {
         .await
     }
 
-    /// Coupe ou rouvre un service lié à ma personne.
     pub async fn mute_service(&self, service: String, muted: bool) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.mute_service(&parse_user(&service)?, muted).await?) })
             .await
     }
 
-    /// Admin : ajoute l'appareil de service dont `qr` est le QR inversé
-    /// (`ot pair join --qr --service`) au service `service` (nom ou
-    /// identifiant), créé à son premier appareil. Relancé avec le même QR
-    /// après une coupure, reprend où il s'était arrêté.
     pub async fn add_service_device(
         &self,
         service: String,
@@ -263,7 +215,6 @@ impl OtClient {
         .await
     }
 
-    /// Personnes de l'annuaire vérifié, moi compris (vide sans annuaire).
     pub async fn people(&self) -> Result<Vec<PersonItem>, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -272,10 +223,6 @@ impl OtClient {
         .await
     }
 
-    /// Envoie un fichier (étape 5) : dépôt chiffré par morceaux, puis
-    /// annonce aux destinataires (vide : tous les autres). `source_id`
-    /// identifie la source (son URI) : relancer l'envoi de la même source
-    /// reprend là où il s'est arrêté. Renvoie le `msg_id` de l'annonce.
     pub async fn send_file(
         &self,
         source: Arc<dyn FileSource>,
@@ -289,16 +236,11 @@ impl OtClient {
         self.send_outgoing_file(file, source, listener).await
     }
 
-    /// Abandonne l'envoi en cours de cette source (libère la place sur le
-    /// relais).
     pub async fn cancel_upload(&self, source_id: String) -> Result<(), OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.cancel_upload(&source_id).await?) }).await
     }
 
-    /// Télécharge le fichier annoncé par l'élément `msg_id` dans `sink`,
-    /// vérifie son SHA-256 et note son URI dans l'historique. Renvoie
-    /// l'élément mis à jour.
     pub async fn download(
         &self,
         msg_id: String,
@@ -325,13 +267,11 @@ impl OtClient {
         .await
     }
 
-    /// Groupe vu par ce téléphone ; `None` avant la fin de l'appairage.
     pub async fn group(&self) -> Result<Option<Group>, OtError> {
         let (client, me) = (self.client.clone(), self.device.device_id.clone());
         on_runtime(async move { Ok(client.group().await?.map(|g| Group::from_info(g, &me))) }).await
     }
 
-    /// Appareils connus du relais, avec leur présence (connexion requise).
     pub async fn devices(&self) -> Result<Vec<RelayDevice>, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -350,8 +290,6 @@ impl OtClient {
         .await
     }
 
-    /// Code d'appairage pour un nouvel appareil (valable 10 minutes, tant
-    /// que ce client tourne).
     pub async fn pair_new(&self) -> Result<Invitation, OtError> {
         let (client, server_url) = (self.client.clone(), self.device.server_url.clone());
         on_runtime(async move {
@@ -366,7 +304,6 @@ impl OtClient {
         .await
     }
 
-    /// Parraine l'appareil dont `qr` est le QR inversé scanné.
     pub async fn sponsor(&self, qr: String) -> Result<Sponsored, OtError> {
         let client = self.client.clone();
         on_runtime(async move {
@@ -376,25 +313,19 @@ impl OtClient {
         .await
     }
 
-    /// Nouvelle clé de groupe, sans les membres `exclude` (téléphone perdu,
-    /// ordinateur revendu…). Renvoie la nouvelle époque.
     pub async fn rotate(&self, exclude: Vec<String>) -> Result<u32, OtError> {
         let client = self.client.clone();
         on_runtime(async move { Ok(client.rotate(parse_ids(&exclude)?).await?) }).await
     }
 
-    /// Le réseau a changé : reconnexion immédiate.
     pub fn reconnect_now(&self) {
         self.client.reconnect_now();
     }
 
-    /// Relit l'annuaire maintenant (présence des autres personnes, au
-    /// premier plan) ; `Event::DirectoryChanged` signale un changement.
     pub fn refresh_directory(&self) {
         self.client.refresh_directory();
     }
 
-    /// Ferme proprement la connexion ; le client ne sert plus ensuite.
     pub async fn shutdown(&self) {
         let client = self.client.clone();
         let _ = on_runtime(async move {
@@ -406,8 +337,6 @@ impl OtClient {
 }
 
 impl OtClient {
-    /// Envoi d'un texte : rangé dans l'historique avant l'envoi (`pending`),
-    /// marqué accepté à l'accusé du relais, retiré si l'envoi échoue.
     async fn send_text_target(
         &self,
         text: String,
@@ -450,8 +379,6 @@ impl OtClient {
         .await
     }
 
-    /// Envoi d'un fichier : rangé une fois déposé et annoncé (pendant le
-    /// dépôt, la progression suffit, comme l'extension, note 0030).
     async fn send_outgoing_file(
         &self,
         file: OutgoingFile,
@@ -492,7 +419,6 @@ impl OtClient {
     }
 }
 
-/// Range les envois de ce téléphone dans l'historique et les signale.
 struct Outbox {
     local: Local,
     tx: mpsc::WeakSender<Event>,
@@ -535,7 +461,6 @@ impl Outbox {
         }
     }
 
-    /// Un historique impossible à écrire ne bloque pas l'envoi : signalé.
     async fn add(&self, item: Received) {
         match self.local.push_history(item.clone()) {
             Ok(()) => self.emit(Event::Sent { item }).await,
@@ -559,7 +484,6 @@ impl Outbox {
     }
 }
 
-/// Identifiants d'appareils donnés par Kotlin.
 fn parse_ids(ids: &[String]) -> Result<Vec<DeviceId>, OtError> {
     ids.iter()
         .map(|id| id.parse::<DeviceId>().map_err(|e| OtError::Invalid { message: e.to_string() }))
@@ -587,7 +511,6 @@ fn parse_users(users: &[String]) -> Result<Vec<UserId>, OtError> {
     users.iter().map(|u| parse_user(u)).collect()
 }
 
-/// Personne et appareil donnés par Kotlin.
 fn parse_person(user: &str, device: Option<&str>) -> Result<(UserId, Option<DeviceId>), OtError> {
     let user = user.parse::<UserId>().map_err(|e| OtError::Invalid { message: e.to_string() })?;
     let device = device
@@ -597,7 +520,6 @@ fn parse_person(user: &str, device: Option<&str>) -> Result<(UserId, Option<Devi
     Ok((user, device))
 }
 
-/// Noms des membres, pour afficher l'expéditeur.
 fn names(keyring: &StoreKeyring) -> HashMap<DeviceId, String> {
     ot_core::group_info(keyring)
         .ok()
@@ -612,8 +534,6 @@ async fn send_join(client: Client, pending: PendingJoin, tx: mpsc::Sender<Event>
     }
 }
 
-/// Traduit les événements du cœur, range les éléments reçus (vus,
-/// historique) et tient les noms des membres à jour.
 struct Forwarder {
     client: Client,
     local: Local,
@@ -652,7 +572,6 @@ impl Forwarder {
             }
             E::GroupChanged { epoch } => {
                 *self.names.lock().unwrap_or_else(|e| e.into_inner()) = names(&self.keyring);
-                // Le groupe est là : l'appairage par code est terminé.
                 if let Ok(Some(_)) = self.client.group().await
                     && let Err(e) = self.local.clear_pending_join()
                 {
@@ -665,7 +584,6 @@ impl Forwarder {
             }
             E::KeyringError { message } => Event::StorageError { message },
             E::DirectoryChanged => {
-                // Noms des appareils des autres personnes, pour l'expéditeur.
                 if let Ok(people) = self.client.directory().await {
                     let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
                     for d in people.iter().flat_map(|p| &p.devices) {
@@ -707,8 +625,6 @@ impl Forwarder {
                 self.remember(m.msg_id, &received, &mut out);
                 Event::Message { received }
             }
-            // Code à usage unique (note 0045) : l'appli ne le remplit nulle
-            // part ; elle le montre comme un texte, le code seul, à copier.
             E::Otp(o) => {
                 let auto_fill = o.auto_fill();
                 let received = Received {
@@ -763,7 +679,6 @@ impl Forwarder {
         out
     }
 
-    /// Range un élément reçu : vu, et dans l'historique.
     fn remember(&mut self, msg_id: ot_core::Ulid, received: &Received, out: &mut Vec<Event>) {
         self.seen.insert(msg_id);
         let saved = self

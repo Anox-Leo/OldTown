@@ -1,10 +1,3 @@
-//! Personnes et profils d'appareils (étape 10) : identifiants, rôles, objets
-//! signés opaques pour le relais, et contenu des trames d'annuaire.
-//!
-//! Le relais range les objets signés (certificats, entrées du journal de
-//! roster) sans les lire ni les vérifier : ce sont les clients qui les
-//! vérifient, jusqu'au certificat de l'admin.
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
@@ -14,7 +7,6 @@ use ulid::Ulid;
 
 use crate::{DeviceId, b64};
 
-/// Identifiant de personne : `usr_` suivi d'un ULID.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct UserId(String);
@@ -35,7 +27,6 @@ impl UserId {
     }
 
     pub fn ulid(&self) -> Ulid {
-        // Invariant : un `UserId` n'est construit que d'un ULID valide.
         Ulid::from_string(&self.0[Self::PREFIX.len()..]).expect("UserId toujours valide")
     }
 
@@ -48,7 +39,6 @@ impl FromStr for UserId {
     type Err = InvalidUserId;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Forme canonique seulement, comme `DeviceId`.
         match s.strip_prefix(Self::PREFIX).map(|u| (u, Ulid::from_string(u))) {
             Some((u, Ok(ulid))) if ulid.to_string() == u => Ok(Self(s.to_owned())),
             _ => Err(InvalidUserId(s.to_owned())),
@@ -76,14 +66,11 @@ impl fmt::Display for UserId {
     }
 }
 
-/// Rôle d'une personne. Un seul `admin` actif par relais.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Admin,
     Member,
-    /// Compte de service (diagnostic, pont de codes…) : sans groupe, il
-    /// n'écrit qu'aux personnes vers qui l'admin l'a lié, et ne reçoit rien.
     Service,
 }
 
@@ -110,7 +97,6 @@ impl FromStr for Role {
     }
 }
 
-/// État d'une personne : `pending` tant qu'elle est invitée sans certificat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UserState {
@@ -142,8 +128,6 @@ impl FromStr for UserState {
     }
 }
 
-/// Catégorie d'un appareil, déclarée par le client ou rangée par sa
-/// personne. Les clients devinent au nom quand elle manque (note 0031).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
@@ -151,11 +135,7 @@ pub enum DeviceKind {
     Laptop,
     Desktop,
     Browser,
-    /// Ligne de commande : jamais joignable ni par défaut.
     Cli,
-    /// Catégorie ajoutée par une version plus récente : affichée comme un
-    /// appareil sans catégorie par les clients, jamais enregistrée par le
-    /// relais.
     #[serde(other)]
     Unknown,
 }
@@ -188,15 +168,12 @@ impl FromStr for DeviceKind {
     }
 }
 
-/// Capacité annoncée par un client : `[a-z0-9-]{1,32}`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Feature(String);
 
-/// Client qui sait parler aux autres personnes (annuaire, schéma `0x05`).
 pub const FEATURE_USERS_V1: &str = "users-v1";
 
-/// Nombre maximal de capacités par appareil.
 pub const MAX_FEATURES: usize = 16;
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -237,8 +214,6 @@ impl From<Feature> for String {
     }
 }
 
-/// Objet signé, opaque pour le relais : `data` est le JSON exact signé,
-/// `sig` la signature Ed25519 de `domaine ‖ data` (format dans `ot-crypto`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedBlob {
@@ -248,12 +223,9 @@ pub struct SignedBlob {
     pub sig: [u8; 64],
 }
 
-/// Taille maximale d'un objet signé (certificat, entrée de journal), `data`
-/// et signature compris, avant base64.
 pub const MAX_SIGNED_BYTES: usize = 16 * 1024;
 
 impl SignedBlob {
-    /// Taille brute, comparée à [`MAX_SIGNED_BYTES`].
     pub fn len(&self) -> usize {
         self.data.len() + self.sig.len()
     }
@@ -263,7 +235,6 @@ impl SignedBlob {
     }
 }
 
-/// Entrée du journal de roster d'une personne, telle que le relais la rend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LogEntry {
@@ -271,7 +242,6 @@ pub struct LogEntry {
     pub entry: SignedBlob,
 }
 
-/// Une personne de l'annuaire (`directory`), filtrée par le réseau.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryUser {
@@ -279,30 +249,18 @@ pub struct DirectoryUser {
     pub name: String,
     pub role: Role,
     pub state: UserState,
-    /// Certificat signé par l'admin ; absent tant que la personne n'est pas
-    /// certifiée (ou, pour l'admin, avant `admin_init`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert: Option<SignedBlob>,
-    /// Entrées du journal après celles que le client connaît (`known`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log: Vec<LogEntry>,
-    /// D'autres entrées suivent : relire avec `known` à jour (une trame ne
-    /// dépasse jamais `MAX_FRAME_BYTES`). Les autres personnes ne sont pas
-    /// retardées pour autant : elles suivent par `next`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub more: bool,
-    /// Entre un service et cette personne : la personne a coupé le service
-    /// (vu par elle comme par le service).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
-    /// Profils non signés : tous mes appareils, seulement les joignables
-    /// d'une autre personne.
     #[serde(default)]
     pub devices: Vec<DirectoryDevice>,
 }
 
-/// Profil d'appareil tenu par le relais, non signé : les clients ne le
-/// gardent que pour un appareil du roster vérifié de sa personne.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryDevice {
@@ -317,7 +275,6 @@ pub struct DirectoryDevice {
     pub online: bool,
 }
 
-/// Une personne vue par l'admin (`users`), avec tous ses appareils actifs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdminUser {
@@ -325,13 +282,10 @@ pub struct AdminUser {
     pub name: String,
     pub role: Role,
     pub state: UserState,
-    /// Millisecondes Unix.
     pub created_at: i64,
     pub devices: Vec<AdminDevice>,
-    /// Personnes vers qui elle peut écrire.
     #[serde(default)]
     pub links: Vec<UserId>,
-    /// Services qu'elle a coupés.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub muted: Vec<UserId>,
 }
@@ -348,16 +302,12 @@ pub struct AdminDevice {
     #[serde(default)]
     pub features: Vec<Feature>,
     pub online: bool,
-    /// Dernière fin de session, en millisecondes Unix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<i64>,
 }
 
-/// Dernier `seq` vérifié par le client, par personne (`directory_get`).
 pub type Known = BTreeMap<UserId, u64>;
 
-/// Nom de personne accepté par le relais : mêmes règles qu'un nom
-/// d'appareil.
 pub fn valid_user_name(name: &str) -> bool {
     crate::valid_device_name(name)
 }

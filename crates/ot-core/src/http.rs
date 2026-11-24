@@ -1,7 +1,3 @@
-//! Client HTTP/1.1 de l'API des fichiers (étape 5, note 0026), sur `hyper` :
-//! même relais, même écoute et mêmes autorités TLS que le WebSocket. Une
-//! connexion est gardée ouverte et réutilisée tant qu'elle répond.
-
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -17,15 +13,12 @@ use tokio_rustls::TlsConnector;
 
 use crate::tls::TlsRoots;
 
-/// Délai d'ouverture d'une connexion (TCP et TLS).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Adresse HTTP du relais, tirée de son URL (`ws`, `wss`, `http`, `https`).
 #[derive(Clone)]
 pub(crate) struct HttpTarget {
     host: String,
     port: u16,
-    /// Valeur de l'en-tête `Host`.
     authority: String,
     tls: Option<(TlsConnector, ServerName<'static>)>,
 }
@@ -52,7 +45,6 @@ impl HttpTarget {
     }
 }
 
-/// `hôte:port`, `hôte` seul ou `[ipv6]:port`.
 fn split_host_port(authority: &str, default_port: u16) -> Result<(String, u16), String> {
     let bad = || format!("adresse du relais invalide : {authority:?}");
     let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
@@ -77,8 +69,6 @@ fn split_host_port(authority: &str, default_port: u16) -> Result<(String, u16), 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
-/// Connexion au relais, ouverte à la première requête et rouverte après une
-/// erreur.
 pub(crate) struct HttpConn {
     target: HttpTarget,
     sender: Option<SendRequest<Full<Bytes>>>,
@@ -108,14 +98,11 @@ impl HttpConn {
         let (sender, conn) =
             http1::handshake(TokioIo::new(io)).await.map_err(|e| format!("HTTP : {e}"))?;
         tokio::spawn(async move {
-            // Fin de la connexion : la prochaine requête en rouvrira une.
             let _ = conn.await;
         });
         Ok(sender)
     }
 
-    /// Envoie une requête et lit toute la réponse, en `limit` au plus. Une
-    /// erreur ferme la connexion.
     pub(crate) async fn request(
         &mut self,
         method: Method,

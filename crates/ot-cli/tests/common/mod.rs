@@ -1,7 +1,3 @@
-//! Utilitaires des tests de la CLI : appareils réels (`ot init`) contre un
-//! relais en processus, mis dans un même groupe ; depuis l'étape 10,
-//! personnes invitées et appareils de service, par les commandes `ot`.
-// Chaque fichier de test n'en utilise qu'une partie.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -17,7 +13,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdout, Command};
 use zeroize::Zeroizing;
 
-/// `SecretStore` sur le dossier de la CLI : un fichier par nom, comme `ot`.
 struct Dir(PathBuf);
 
 impl SecretStore for Dir {
@@ -33,14 +28,12 @@ impl SecretStore for Dir {
     }
 }
 
-/// `ot --home <home> <args>`, qui doit échouer ; renvoie sa sortie d'erreur.
 pub async fn ot_fails(home: &Path, args: &[&str]) -> String {
     let out = run(home, args).await;
     assert!(!out.status.success(), "ot {args:?} aurait dû échouer");
     String::from_utf8(out.stderr).unwrap()
 }
 
-/// Sortie standard de `ot --home <home> <args>`, qui doit réussir.
 pub async fn ot_stdout(home: &Path, args: &[&str]) -> String {
     String::from_utf8(ot(home, args).await.stdout).unwrap()
 }
@@ -66,7 +59,6 @@ pub async fn ot(home: &Path, args: &[&str]) -> Output {
     out
 }
 
-/// Crée l'appareil `name` (`ot init`) et l'enregistre sur le relais.
 pub async fn device(store: &Store, root: &Path, url: &str, name: &str) -> (PathBuf, Member) {
     let home = root.join(name);
     let out = ot(&home, &["init", "--server", url, "--name", name]).await;
@@ -90,7 +82,6 @@ pub async fn device(store: &Store, root: &Path, url: &str, name: &str) -> (PathB
     (home, member)
 }
 
-/// Relais en processus dans `root` ; renvoie son magasin et son URL.
 pub async fn relay(root: &Path) -> (Store, String) {
     let store = Store::open(&root.join("ot.db")).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -101,7 +92,6 @@ pub async fn relay(root: &Path) -> (Store, String) {
     (store, url)
 }
 
-/// Met les appareils dans un même groupe, époque 1.
 pub fn group(devices: &[(&PathBuf, Member)]) {
     let roster =
         Roster { epoch: 1, version: 1, members: devices.iter().map(|(_, m)| m.clone()).collect() };
@@ -113,7 +103,6 @@ pub fn group(devices: &[(&PathBuf, Member)]) {
     }
 }
 
-/// `ot` lancé en tâche de fond, sortie standard lue ligne à ligne.
 pub fn spawn(home: &Path, args: &[&str]) -> (Child, Lines<BufReader<ChildStdout>>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ot"))
         .arg("--home")
@@ -128,7 +117,6 @@ pub fn spawn(home: &Path, args: &[&str]) -> (Child, Lines<BufReader<ChildStdout>
     (child, lines)
 }
 
-/// Première ligne (sans ses espaces) qui commence par `prefix`.
 pub async fn line_starting(lines: &mut Lines<BufReader<ChildStdout>>, prefix: &str) -> String {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -142,7 +130,6 @@ pub async fn line_starting(lines: &mut Lines<BufReader<ChildStdout>>, prefix: &s
     .expect("ligne attendue")
 }
 
-/// Attend la fin d'un `ot` lancé en tâche de fond, qui doit réussir.
 pub async fn finished(mut child: Child) {
     let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
         .await
@@ -157,12 +144,8 @@ pub async fn finished(mut child: Child) {
     }
 }
 
-/// Premier appareil de l'admin (Alice), seul dans son groupe, annuaire ouvert
-/// (`ot group init`, `ot admin init`).
 pub async fn admin(store: &Store, root: &Path, url: &str) -> PathBuf {
     let (home, _) = device(store, root, url, "alice-laptop").await;
-    // Le nom de l'admin est signé dans son certificat : le donner avant
-    // (`ot-server user rename owner Alice`).
     let owner = store.admin().await.unwrap().id;
     store.rename_user(&owner, "Alice").await.unwrap();
     ot(&home, &["group", "init"]).await;
@@ -170,8 +153,6 @@ pub async fn admin(store: &Store, root: &Path, url: &str) -> PathBuf {
     home
 }
 
-/// Invite `name` (lié à `links`) depuis l'appareil de l'admin et le fait
-/// rejoindre avec l'appareil `device` ; renvoie le dossier de l'invité.
 pub async fn invite(
     admin: &Path,
     root: &Path,
@@ -191,8 +172,6 @@ pub async fn invite(
     home
 }
 
-/// Appareil de service `device` ajouté par l'admin au service `service`
-/// (`ot pair join --qr --service`, puis `ot admin service add`).
 pub async fn service(admin: &Path, root: &Path, url: &str, service: &str, device: &str) -> PathBuf {
     let home = root.join(device);
     let (child, mut lines) =

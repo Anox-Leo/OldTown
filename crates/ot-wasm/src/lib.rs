@@ -1,16 +1,3 @@
-//! Cœur OldTown sans réseau, compilé en WebAssembly pour l'extension Chrome
-//! (étape 4, note 0023).
-//!
-//! Le service worker tient la connexion et le stockage ; ce module tient les
-//! clés et tout ce qui les touche : identité, signatures d'authentification
-//! et d'appairage, chiffrement, roster, époques, quarantaine. Les valeurs
-//! secrètes vivent dans un [`Vault`] ; le JavaScript n'en relève que les
-//! changements, pour les chiffrer et les ranger.
-//!
-//! Les structures passent en JSON (chaînes) : enveloppes chiffrées, trames,
-//! événements. Les erreurs sont des `Error` JavaScript au message lisible,
-//! sans secret.
-
 use std::sync::Arc;
 
 use ot_core::crypto::{InviteCode, PairingCode, token_hash};
@@ -36,32 +23,25 @@ fn to_json<T: Serialize + ?Sized>(value: &T) -> Result<String, JsError> {
     serde_json::to_string(value).map_err(js)
 }
 
-/// Version de `ot-wasm` (celle du dépôt).
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
-/// Identifiant d'appareil neuf, choisi par l'appareil pour le QR inversé.
 #[wasm_bindgen(js_name = newDeviceId)]
 pub fn new_device_id() -> String {
     DeviceId::generate().to_string()
 }
 
-/// Valide une trame reçue du relais (version, type, champs) et la renvoie en
-/// JSON normalisé.
 #[wasm_bindgen(js_name = decodeFrame)]
 pub fn decode_frame(text: &str) -> Result<String, JsError> {
     Ok(Frame::from_json(text).map_err(js)?.to_json())
 }
 
-/// Valide une enveloppe JSON (avant de la remettre au cœur ou de la ranger).
 fn parse_envelope(json: &str) -> Result<Envelope, JsError> {
     serde_json::from_str(json).map_err(|e| js(format!("enveloppe invalide : {e}")))
 }
 
-/// Invitation collée ou scannée (`oldtown://invite?s=…&c=…`) : renvoie
-/// `{"server_url": …, "code": …}` (étape 10).
 #[wasm_bindgen(js_name = parseInvite)]
 pub fn parse_invite(text: &str) -> Result<String, JsError> {
     #[derive(Serialize)]
@@ -73,17 +53,12 @@ pub fn parse_invite(text: &str) -> Result<String, JsError> {
     to_json(&Out { server_url: uri.server_url, code: uri.code })
 }
 
-/// Lien d'invitation à transmettre (`oldtown://invite?s=…&c=…`, comme
-/// `ot admin invite`) : le relais et le code `ot2-…`, secret compris.
 #[wasm_bindgen(js_name = inviteUri)]
 pub fn invite_uri(server_url: &str, code: &str) -> Result<String, JsError> {
     InviteCode::parse(code).map_err(js)?;
     Ok(InviteUri { server_url: server_url.to_owned(), code: code.to_owned() }.encode())
 }
 
-/// Texte collé pour rejoindre un groupe : QR « rejoindre »
-/// (`oldtown://pair?s=…&c=…`) ou code `ot1-…` seul. Renvoie
-/// `{"server_url": …|null, "code": …}`.
 #[wasm_bindgen(js_name = parseJoin)]
 pub fn parse_join(text: &str) -> Result<String, JsError> {
     #[derive(Serialize)]
@@ -102,7 +77,6 @@ pub fn parse_join(text: &str) -> Result<String, JsError> {
     to_json(&join)
 }
 
-/// SHA-256 en flux, pour hacher un gros fichier morceau par morceau.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct Hasher(sha2::Sha256);
@@ -118,29 +92,23 @@ impl Hasher {
         sha2::Digest::update(&mut self.0, data);
     }
 
-    /// Empreinte finale (32 octets) ; le hacheur repart de zéro.
     pub fn finish(&mut self) -> Vec<u8> {
         sha2::Digest::finalize_reset(&mut self.0).to_vec()
     }
 }
 
-/// Géométrie d'un fichier de `size` octets en morceaux de `chunk_size` :
-/// `{"size", "chunk_size", "chunks", "sealed_size", "sealed_chunk_size"}`.
 #[wasm_bindgen(js_name = fileGeometry)]
 pub fn file_geometry(size: f64, chunk_size: u32) -> Result<String, JsError> {
     to_json(&crate::core::Geometry::new(exact_u64(size)?, chunk_size).map_err(js)?)
 }
 
-/// Entier positif exact passé par le JavaScript (taille de fichier).
 fn exact_u64(n: f64) -> Result<u64, JsError> {
     if n.fract() != 0.0 || !(0.0..=9_007_199_254_740_991.0).contains(&n) {
         return Err(js("taille invalide"));
     }
-    // Entier exact, vérifié juste au-dessus.
     Ok(n as u64)
 }
 
-/// Modules d'un QR code (`size` × `size`, ligne par ligne, 1 = noir).
 #[wasm_bindgen]
 pub struct QrCode {
     size: u32,
@@ -169,7 +137,6 @@ pub fn qr_code(text: &str) -> Result<QrCode, JsError> {
     Ok(QrCode { size, modules })
 }
 
-/// Valeur modifiée dans le coffre ; `value` absente : effacée.
 #[wasm_bindgen]
 pub struct Change {
     name: String,
@@ -183,14 +150,12 @@ impl Change {
         self.name.clone()
     }
 
-    /// Valeur en clair, à chiffrer aussitôt ; `undefined` si effacée.
     #[wasm_bindgen(getter)]
     pub fn value(&self) -> Option<Vec<u8>> {
         self.value.clone()
     }
 }
 
-/// Coffre des secrets de l'appareil, en mémoire du WebAssembly.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct Vault {
@@ -204,7 +169,6 @@ impl Vault {
         Self::default()
     }
 
-    /// Valeur relue (et déchiffrée) du stockage au démarrage.
     pub fn load(&self, name: &str, value: &[u8]) {
         self.inner.load(name, value);
     }
@@ -213,7 +177,6 @@ impl Vault {
         self.inner.has(name)
     }
 
-    /// Changements depuis le dernier relevé, à chiffrer et ranger.
     #[wasm_bindgen(js_name = takeChanges)]
     pub fn take_changes(&self) -> Vec<Change> {
         self.inner
@@ -223,19 +186,15 @@ impl Vault {
             .collect()
     }
 
-    /// Efface tout (oubli de l'appareil) ; chaque nom devient un changement.
     pub fn clear(&self) {
         self.inner.clear();
     }
 
-    /// Crée l'identité Ed25519 si elle manque ; renvoie la clé publique en
-    /// base64.
     #[wasm_bindgen(js_name = ensureIdentity)]
     pub fn ensure_identity(&self) -> Result<String, JsError> {
         Ok(self.inner.ensure_identity().map_err(js)?.public_key_b64())
     }
 
-    /// Trame `auth` qui répond au défi `nonce` (base64).
     #[wasm_bindgen(js_name = authFrame)]
     pub fn auth_frame(&self, nonce: &str, device_id: &str) -> Result<String, JsError> {
         let identity = self.inner.identity().map_err(js)?.ok_or_else(|| js("identité absente"))?;
@@ -245,8 +204,6 @@ impl Vault {
         Ok(Frame::Auth { device_id, sig }.to_json())
     }
 
-    /// Trame `pair_redeem` : enregistrement auprès du relais avec le jeton du
-    /// code. Le secret du code ne quitte pas l'appareil.
     #[wasm_bindgen(js_name = pairRedeemFrame)]
     pub fn pair_redeem_frame(
         &self,
@@ -267,9 +224,6 @@ impl Vault {
         .to_json())
     }
 
-    /// Trame `invite_redeem` (étape 10) : premier appareil d'une personne
-    /// invitée, enregistré avec le jeton du code `ot2-…`. Le secret et
-    /// l'ancre ne quittent pas l'appareil.
     #[wasm_bindgen(js_name = inviteRedeemFrame)]
     pub fn invite_redeem_frame(
         &self,
@@ -290,9 +244,6 @@ impl Vault {
         .to_json())
     }
 
-    /// Après `invite_redeemed` : range l'invitation (secret compris) et
-    /// l'ancre de l'annuaire, avant d'ouvrir le cœur. La demande à l'admin
-    /// part ensuite à chaque connexion (`Core.inviteRequest`).
     #[wasm_bindgen(js_name = savePendingInvite)]
     pub fn save_pending_invite(
         &self,
@@ -312,8 +263,6 @@ impl Vault {
         ot_core::save_pending_invite(&keyring, &code, &redeemed, name).map_err(js)
     }
 
-    /// En-têtes d'une requête HTTP de fichiers signée par cet appareil
-    /// (étape 5) : objet JSON `{nom: valeur}`.
     #[wasm_bindgen(js_name = signHttp)]
     pub fn sign_http(
         &self,
@@ -337,8 +286,6 @@ impl Vault {
         to_json(&map)
     }
 
-    /// Crée un groupe dont cet appareil est le seul membre (premier appareil,
-    /// et tests). Refuse d'écraser un groupe existant.
     #[wasm_bindgen(js_name = initGroup)]
     pub fn init_group(&self, device_id: &str, name: &str) -> Result<(), JsError> {
         let identity = self.inner.ensure_identity().map_err(js)?;
@@ -349,7 +296,6 @@ impl Vault {
     }
 }
 
-/// Cœur de groupe de l'appareil : chiffre, ouvre, tient le roster.
 #[wasm_bindgen]
 pub struct Core {
     state: CoreState,
@@ -358,68 +304,50 @@ pub struct Core {
 
 #[wasm_bindgen]
 impl Core {
-    /// Ouvre le cœur de l'appareil `device_id` avec les secrets du coffre.
     pub fn open(vault: &Vault, device_id: &str) -> Result<Core, JsError> {
         let (state, out) = CoreState::open(vault.inner.clone(), device_id).map_err(js)?;
         Ok(Self { state, startup: to_json(&out)? })
     }
 
-    /// Événements produits à l'ouverture (`{"events": […], "sends": []}`).
     #[wasm_bindgen(js_name = startupOutput)]
     pub fn startup_output(&self) -> String {
         self.startup.clone()
     }
 
-    /// État du groupe en JSON, `undefined` sans groupe.
     pub fn group(&self) -> Result<Option<String>, JsError> {
         self.state.info().map(|g| to_json(&g)).transpose()
     }
 
-    /// Appairage en attente (`{"kind": "offer", "qr": …, "expires_at": …}`
-    /// ou `{"kind": "join"}`), `undefined` sinon.
     pub fn pending(&self) -> Result<Option<String>, JsError> {
         self.state.pending().map(to_json).transpose()
     }
 
-    /// Enveloppe chiffrée (JSON) d'un texte pour `to` ; vide : tous.
     #[wasm_bindgen(js_name = sealText)]
     pub fn seal_text(&self, text: &str, to: Vec<String>) -> Result<String, JsError> {
         to_json(&self.state.seal_text(text, &to).map_err(js)?)
     }
 
-    /// Traite une enveloppe livrée sous `seq` ; renvoie
-    /// `{"events": […], "sends": [enveloppes]}`.
     pub fn process(&mut self, seq: f64, envelope: &str) -> Result<String, JsError> {
         let env = parse_envelope(envelope)?;
         if seq.fract() != 0.0 || !(0.0..=9_007_199_254_740_991.0).contains(&seq) {
             return Err(js("seq invalide"));
         }
-        // Entier exact, vérifié juste au-dessus.
         to_json(&self.state.process(seq as i64, env))
     }
 
-    /// QR inversé à afficher : `{"qr": …, "expires_at": …}`.
     pub fn offer(&mut self, name: &str) -> Result<String, JsError> {
         to_json(&self.state.offer(name).map_err(js)?)
     }
 
-    /// Demande au parrain après l'enregistrement par code (enveloppe JSON).
     #[wasm_bindgen(js_name = startJoin)]
     pub fn start_join(&mut self, code: &str, sponsor: &str, name: &str) -> Result<String, JsError> {
         to_json(&self.state.start_join(code, sponsor, name).map_err(js)?)
     }
 
-    /// Dépôt en cours de cette source (`{"blob_id", "expires_at", "to",
-    /// "to_user"?, …géométrie}`), `undefined` sinon. Ne le reprendre que vers
-    /// la même cible.
     pub fn upload(&self, source_id: &str, size: f64) -> Result<Option<String>, JsError> {
         self.state.upload(source_id, exact_u64(size)?).map_err(js)?.map(|u| to_json(&u)).transpose()
     }
 
-    /// Nouveau dépôt après `POST /v1/blobs` ; la clé reste ici. Vers une
-    /// autre personne : `toUser`, et `to` rendu par `recipients` (les
-    /// appareils à qui le blob est ouvert) ; `sealFile` scelle alors en
-    /// `0x05`.
     #[wasm_bindgen(js_name = startUpload)]
     #[allow(clippy::too_many_arguments)]
     pub fn start_upload(
@@ -453,7 +381,6 @@ impl Core {
         to_json(&up)
     }
 
-    /// Morceau `index` chiffré, prêt à déposer.
     #[wasm_bindgen(js_name = sealChunk)]
     pub fn seal_chunk(
         &self,
@@ -464,36 +391,30 @@ impl Core {
         self.state.seal_chunk(source_id, index, plain).map_err(js)
     }
 
-    /// Annonce (enveloppe JSON) d'un dépôt terminé.
     #[wasm_bindgen(js_name = sealFile)]
     pub fn seal_file(&self, source_id: &str) -> Result<String, JsError> {
         to_json(&self.state.seal_file(source_id).map_err(js)?)
     }
 
-    /// Oublie le dépôt de cette source (annonce acceptée, ou abandon).
     #[wasm_bindgen(js_name = forgetUpload)]
     pub fn forget_upload(&self, source_id: &str) -> Result<(), JsError> {
         self.state.forget_upload(source_id).map_err(js)
     }
 
-    /// Fichiers annoncés encore téléchargeables (JSON, sans clé).
     pub fn files(&self) -> Result<String, JsError> {
         to_json(&self.state.files().map_err(js)?)
     }
 
-    /// Géométrie d'un fichier annoncé.
     #[wasm_bindgen(js_name = fileGeometry)]
     pub fn file_geometry(&self, blob_id: &str) -> Result<String, JsError> {
         to_json(&self.state.file_geometry(blob_id).map_err(js)?)
     }
 
-    /// Morceau `index` déchiffré et vérifié.
     #[wasm_bindgen(js_name = openChunk)]
     pub fn open_chunk(&self, blob_id: &str, index: u32, sealed: &[u8]) -> Result<Vec<u8>, JsError> {
         self.state.open_chunk(blob_id, index, sealed).map_err(js)
     }
 
-    /// Le fichier reçu a-t-il le SHA-256 annoncé ?
     #[wasm_bindgen(js_name = checkFile)]
     pub fn check_file(&self, blob_id: &str, sha256: &[u8]) -> Result<bool, JsError> {
         self.state.check_file(blob_id, sha256).map_err(js)
@@ -504,43 +425,30 @@ impl Core {
         self.state.forget_file(blob_id).map_err(js)
     }
 
-    // --- Étape 10 ---
-
-    /// Première trame `directory_get` d'une lecture de l'annuaire,
-    /// `undefined` sans ancre (installation à une personne).
     #[wasm_bindgen(js_name = directoryStart)]
     pub fn directory_start(&mut self) -> Option<String> {
         self.state.directory_start().map(|f| f.to_json())
     }
 
-    /// Trame `directory` reçue : `{"frame": trame suivante?, "done": bool,
-    /// "events": […], "sends": […]}`. Un tour complet est vérifié jusqu'à
-    /// l'ancre ; rien n'est cru sur la parole du relais.
     #[wasm_bindgen(js_name = directoryPage)]
     pub fn directory_page(&mut self, frame: &str) -> Result<String, JsError> {
         let frame = Frame::from_json(frame).map_err(js)?;
         to_json(&self.state.directory_page(frame).map_err(js)?)
     }
 
-    /// Personnes vérifiées, moi compris, sans clé (JSON).
     pub fn people(&self) -> Result<String, JsError> {
         to_json(&self.state.people())
     }
 
-    /// Trame `device_update` qui déclare `users-v1` si mon profil ne l'a
-    /// pas, et `kind` (`browser`…) s'il n'a pas de catégorie ; `undefined`
-    /// sinon. À envoyer après chaque lecture complète.
     #[wasm_bindgen(js_name = declarationFrame)]
     pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<String>, JsError> {
         Ok(self.state.declaration_frame(kind).map_err(js)?.map(|f| f.to_json()))
     }
 
-    /// Appareils destinataires d'un envoi à `user` (JSON).
     pub fn recipients(&self, user: &str, device: Option<String>) -> Result<String, JsError> {
         to_json(&self.state.recipients(user, device.as_deref()).map_err(js)?)
     }
 
-    /// Enveloppe `0x05` (JSON) d'un texte pour une autre personne.
     #[wasm_bindgen(js_name = sealTextTo)]
     pub fn seal_text_to(
         &self,
@@ -551,22 +459,17 @@ impl Core {
         to_json(&self.state.seal_text_to(text, user, device.as_deref()).map_err(js)?)
     }
 
-    /// Prochaine entrée de mon journal : `what` vaut `{"kind":"if_behind"}`,
-    /// `{"kind":"certify","user","cert"}` ou `{"kind":"revoke","user"}`.
-    /// Renvoie `{"frame": roster_publish?, "head": tête?}`.
     #[wasm_bindgen(js_name = nextEntry)]
     pub fn next_entry(&mut self, what: &str) -> Result<String, JsError> {
         let what = serde_json::from_str(what).map_err(js)?;
         to_json(&self.state.next_entry(what).map_err(js)?)
     }
 
-    /// `roster_published` reçu : `{"events", "sends"}`.
     #[wasm_bindgen(js_name = entryPublished)]
     pub fn entry_published(&mut self) -> Result<String, JsError> {
         to_json(&self.state.entry_published().map_err(js)?)
     }
 
-    /// Admin, `user_invited` reçu : code `ot2-…` à transmettre.
     #[wasm_bindgen(js_name = createInvite)]
     pub fn create_invite(
         &mut self,
@@ -578,13 +481,11 @@ impl Core {
         self.state.create_invite(user, name, token, expires_at).map_err(js)
     }
 
-    /// Admin : personnes à certifier (JSON).
     #[wasm_bindgen(js_name = invitesToCertify)]
     pub fn invites_to_certify(&self) -> Result<String, JsError> {
         to_json(&self.state.invites_to_certify())
     }
 
-    /// Admin : `{"cert": {data, sig}, "certified": bool}`.
     #[wasm_bindgen(js_name = inviteCert)]
     pub fn invite_cert(&mut self, user: &str) -> Result<String, JsError> {
         #[derive(Serialize)]
@@ -601,89 +502,67 @@ impl Core {
         self.state.invite_certified(user).map_err(js)
     }
 
-    /// Admin : bienvenue (enveloppe JSON) ; `head` est celle rendue par
-    /// `nextEntry` (`{"seq", "hash"}`).
     #[wasm_bindgen(js_name = inviteWelcome)]
     pub fn invite_welcome(&self, user: &str, head: &str) -> Result<String, JsError> {
         let head = serde_json::from_str(head).map_err(js)?;
         to_json(&self.state.invite_welcome(user, head).map_err(js)?)
     }
 
-    /// Admin : bienvenue acceptée ; `{"events", "sends"}`.
     #[wasm_bindgen(js_name = inviteDone)]
     pub fn invite_done(&mut self, user: &str) -> Result<String, JsError> {
         to_json(&self.state.invite_done(user).map_err(js)?)
     }
 
-    /// Invité : demande à l'admin (enveloppe JSON), `undefined` une fois la
-    /// bienvenue reçue.
     #[wasm_bindgen(js_name = inviteRequest)]
     pub fn invite_request(&self) -> Result<Option<String>, JsError> {
         self.state.invite_request().map(|r| r.map_err(js).and_then(|e| to_json(&e))).transpose()
     }
 
-    /// Invité : bienvenue reçue, relire l'annuaire.
     #[wasm_bindgen(js_name = awaitsDirectory)]
     pub fn awaits_directory(&self) -> bool {
         self.state.awaits_directory()
     }
 
-    /// Admin, début d'`admin_init` : trame `directory_get` à envoyer ; la
-    /// trame `directory` reçue va à `adminRoot`.
     #[wasm_bindgen(js_name = adminInitStart)]
     pub fn admin_init_start(&self) -> Result<String, JsError> {
         Ok(self.state.admin_init_start().map_err(js)?.to_json())
     }
 
-    /// Admin : `{"frame": admin_init?, "adopted": bool, "events", "sends"}`.
-    /// Sans `frame`, le certificat publié par un autre appareil de mon groupe
-    /// est adopté : relire l'annuaire.
     #[wasm_bindgen(js_name = adminRoot)]
     pub fn admin_root(&mut self, frame: &str) -> Result<String, JsError> {
         let frame = Frame::from_json(frame).map_err(js)?;
         to_json(&self.state.admin_root(frame).map_err(js)?)
     }
 
-    /// Admin, `admin_initialized` reçu : `{"events", "sends"}`, puis relire
-    /// l'annuaire.
     #[wasm_bindgen(js_name = adoptAdminRoot)]
     pub fn adopt_admin_root(&mut self, user: &str) -> Result<String, JsError> {
         to_json(&self.state.adopt_admin_root(user).map_err(js)?)
     }
 
-    /// Admin : personnes certifiées par cet appareil retiré (JSON).
     #[wasm_bindgen(js_name = certifiedBy)]
     pub fn certified_by(&self, device: &str) -> Result<String, JsError> {
         to_json(&self.state.certified_by(device).map_err(js)?)
     }
 
-    /// Admin : certificat re-signé ici (`{data, sig}`), pour `user_certify`
-    /// puis `nextEntry` `certify` ; `name` le renomme.
     pub fn recertify(&self, user: &str, name: Option<String>) -> Result<String, JsError> {
         to_json(&self.state.recertify(user, name.as_deref()).map_err(js)?)
     }
 
-    /// Admin : services à republier (D47), JSON. À regarder après chaque
-    /// lecture de l'annuaire et chaque publication de mon journal.
     #[wasm_bindgen(js_name = servicesToRepublish)]
     pub fn services_to_republish(&self) -> Result<String, JsError> {
         to_json(&self.state.services_to_republish())
     }
 
-    /// Admin : `{"frame": roster_publish?, "head": tête?}` pour le journal
-    /// du service `user`.
     #[wasm_bindgen(js_name = nextServiceEntry)]
     pub fn next_service_entry(&mut self, user: &str) -> Result<String, JsError> {
         to_json(&self.state.next_service_entry(user).map_err(js)?)
     }
 
-    /// Admin, `roster_published` reçu pour un service : `{"events", "sends"}`.
     #[wasm_bindgen(js_name = serviceEntryPublished)]
     pub fn service_entry_published(&mut self, user: &str, seq: f64) -> Result<String, JsError> {
         to_json(&self.state.service_entry_published(user, exact_u64(seq)?).map_err(js)?)
     }
 
-    /// Rotation : `{"epoch": n, "events": […], "sends": [group_key…]}`.
     pub fn rotate(&mut self, exclude: Vec<String>) -> Result<String, JsError> {
         #[derive(Serialize)]
         struct Rotation {

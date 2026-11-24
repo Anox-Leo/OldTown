@@ -1,11 +1,3 @@
-//! Pont UniFFI entre `ot-core` et l'appli Android (étape 3, T2).
-//!
-//! Kotlin ne voit que des types simples ; tout le protocole et la crypto
-//! restent en Rust. L'appli fournit un [`SecretStore`] (Keystore Android) où
-//! ce pont range identité, configuration, état du groupe, messages vus et
-//! derniers éléments reçus. Un seul [`OtClient`] par processus tient la
-//! connexion au relais (note 0009) : c'est le service de premier plan.
-
 use std::future::Future;
 use std::sync::LazyLock;
 
@@ -26,21 +18,15 @@ pub use types::*;
 
 uniffi::setup_scaffolding!();
 
-/// Runtime tokio du cœur, partagé par tout le processus. Les fonctions
-/// `async` exportées y lancent leur travail : l'exécuteur de Kotlin ne fait
-/// qu'attendre le résultat.
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("ot-core")
         .enable_all()
         .build()
-        // Invariant : seul un système incapable de créer deux threads échoue
-        // ici, et rien ne peut fonctionner sans.
         .expect("runtime tokio du cœur")
 });
 
-/// Lance `fut` sur le runtime du cœur et attend son résultat.
 async fn on_runtime<T, F>(fut: F) -> Result<T, OtError>
 where
     T: Send + 'static,
@@ -52,26 +38,18 @@ where
         .map_err(|e| OtError::Internal { message: format!("tâche interrompue : {e}") })?
 }
 
-/// Stockage fourni par l'appli : octets nommés, chiffrés au repos (Keystore
-/// sur Android). Les noms sont courts, en ASCII (`device.key`,
-/// `group.json`…). Appelé depuis plusieurs threads.
 #[uniffi::export(with_foreign)]
 pub trait SecretStore: Send + Sync {
-    /// Valeur de `name`, `None` si elle n'existe pas.
     fn get(&self, name: String) -> Result<Option<Vec<u8>>, StoreError>;
-    /// Remplace la valeur de `name` (écriture atomique).
     fn put(&self, name: String, value: Vec<u8>) -> Result<(), StoreError>;
-    /// Efface `name` ; sans effet s'il n'existe pas.
     fn delete(&self, name: String) -> Result<(), StoreError>;
 }
 
-/// Version du cœur Rust, affichée dans les réglages.
 #[uniffi::export]
 pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
-/// Nature d'un QR scanné, pour choisir l'écran suivant.
 #[uniffi::export]
 pub fn classify_qr(text: String) -> QrKind {
     if let Ok(uri) = ot_core::PairUri::parse(&text) {
@@ -96,7 +74,6 @@ pub fn classify_qr(text: String) -> QrKind {
     }
 }
 
-/// Modules d'un QR code pour `text`, à dessiner par l'appli.
 #[uniffi::export]
 pub fn qr_code(text: String) -> Result<QrCode, OtError> {
     let code = qrcode::QrCode::new(text.as_bytes())

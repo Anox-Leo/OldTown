@@ -1,10 +1,4 @@
 #!/bin/sh
-# Essai du relais public (deploy/docker, note 0038) : construit l'image, lance
-# le relais et Caddy sur localhost (certificat interne de Caddy, ports hauts),
-# puis vérifie le frontal et les limites (note 0036). Demande Docker, curl et
-# l'accès aux images caddy:2 et curlimages/curl.
-#
-#   sh deploy/tests/compose-test.sh
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -26,7 +20,6 @@ fail() {
 	exit 1
 }
 
-# Code HTTP d'une requête au frontal, en ignorant le certificat interne.
 code() {
 	curl -sk -o /dev/null -w '%{http_code}' "$@"
 }
@@ -53,7 +46,6 @@ ws=$(code --http1.1 -m 5 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 [ "$ws" = 101 ] || fail "upgrade WebSocket : $ws"
 echo "ok : WebSocket relayé"
 
-# 30 requêtes non signées épuisent les échecs tolérés de cette IP.
 blob=/v1/blobs/blob_01J0000000000000000000000
 n=0
 while [ "$n" -lt 30 ]; do
@@ -65,7 +57,6 @@ done
 	fail "X-Forwarded-For forgé par le client cru"
 echo "ok : échecs freinés, en-tête du client ignoré"
 
-# Un autre client (autre IP, sur le réseau de la pile) n'est pas touché.
 other=$(docker run --rm --network oldtown-test_oldtown curlimages/curl \
 	-sk -o /dev/null -w '%{http_code}' --resolve localhost:443:172.31.78.2 \
 	"https://localhost$blob")

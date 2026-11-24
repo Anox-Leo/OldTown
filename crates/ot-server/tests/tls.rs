@@ -1,6 +1,3 @@
-//! Étape 3, T8 : relais en `wss` (note 0015). Certificats de test signés par
-//! une autorité générée pour l'occasion.
-
 mod common;
 
 use std::time::{Duration, SystemTime};
@@ -14,7 +11,6 @@ fn trusting(ca: &TestCa) -> TlsRoots {
     TlsRoots::with_extra(&[ca.der()]).unwrap()
 }
 
-/// Attend une déconnexion, en échouant si la session s'ouvre.
 async fn refused(events: &mut Events) -> String {
     within(async {
         loop {
@@ -52,7 +48,6 @@ async fn wss_exchange_with_trusted_certificate() {
     assert_eq!(next_message(&mut eb).await.content, Content::text("par TLS"));
 }
 
-/// Étape 5 : les fichiers passent par HTTPS sur la même écoute.
 #[tokio::test]
 async fn file_over_https() {
     let dir = tempfile::tempdir().unwrap();
@@ -99,7 +94,6 @@ async fn untrusted_certificate_is_refused() {
     let a = add_device(&store, "mac").await;
     let server = TestServer::start_tls(store, test_config(), Tls::load(&cert, &key).unwrap()).await;
 
-    // Autorités de Mozilla seulement : le certificat de test n'en vient pas.
     let (_client, mut events) = a.client(&server.url());
     let reason = refused(&mut events).await;
     assert!(reason.contains("certificate"), "{reason}");
@@ -122,7 +116,6 @@ async fn renewed_certificate_is_reloaded_without_restart() {
     wait_connected(&mut events).await;
     old_client.shutdown().await;
 
-    // Renouvellement : nouveaux fichiers, date de modification plus récente.
     new_ca.write_leaf(dir.path());
     let later = SystemTime::now() + Duration::from_secs(60);
     for path in [&cert, &key] {

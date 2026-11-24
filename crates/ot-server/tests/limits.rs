@@ -1,6 +1,3 @@
-//! Étape 8e : limites d'un relais exposé (connexions non authentifiées,
-//! échecs par IP, IP réelle derrière un frontal de confiance).
-
 mod common;
 
 use std::time::Duration;
@@ -20,8 +17,6 @@ async fn server_with(config: Config) -> TestServer {
     TestServer::start(Store::in_memory().await.unwrap(), config).await
 }
 
-/// Ouvre une connexion WebSocket, éventuellement avec un `X-Forwarded-For` ;
-/// renvoie le code HTTP du refus.
 async fn connect(server: &TestServer, forwarded: Option<&str>) -> Result<Raw, u16> {
     let url = format!("{}{}", server.url(), ot_proto::WS_PATH);
     let mut req = url.into_client_request().unwrap();
@@ -35,7 +30,6 @@ async fn connect(server: &TestServer, forwarded: Option<&str>) -> Result<Raw, u1
     }
 }
 
-/// Une authentification refusée (appareil inconnu).
 async fn fail_auth(server: &TestServer, forwarded: Option<&str>) {
     let mut raw = connect(server, forwarded).await.expect("connexion admise");
     raw.challenge().await;
@@ -60,14 +54,12 @@ async fn unauthenticated_connections_are_bounded_per_ip() {
     assert_eq!(connect(&server, None).await.err(), Some(503), "troisième en attente refusée");
     assert!(metric(&server, "ot_limited_total{reason=\"busy\"} 1").await);
 
-    // Une connexion authentifiée rend sa place.
     let sig = dev.identity.sign_challenge(&nonce, &dev.id);
     first.send(&Frame::Auth { device_id: dev.id.clone(), sig }).await;
     assert!(matches!(first.recv().await, Some(Frame::Welcome { .. })));
     let mut third = connect(&server, None).await.expect("place rendue après l'auth");
     third.challenge().await;
 
-    // Une connexion fermée aussi.
     second.close().await;
     third.close().await;
     within(async {
@@ -113,7 +105,6 @@ async fn repeated_failures_block_the_ip_until_it_recovers() {
     for _ in 0..3 {
         fail_auth(&server, None).await;
     }
-    // Même un appareil connu est refusé depuis cette IP, avant tout défi.
     assert_eq!(connect(&server, None).await.err(), Some(503));
     assert!(metric(&server, "ot_limited_total{reason=\"failures\"} 1").await);
 

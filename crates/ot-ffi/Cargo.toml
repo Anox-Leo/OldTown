@@ -7,9 +7,6 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-# Pas de `[lints] workspace = true` : le code généré par les macros UniFFI
-# contient de l'`unsafe` (fonctions `extern "C"`), interdit dans le reste du
-# dépôt. Le code écrit à la main ici n'en contient pas (note 0022).
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 
@@ -18,7 +15,6 @@ crate-type = ["cdylib", "lib"]
 name = "ot_ffi"
 
 [[bin]]
-# Génère les liaisons Kotlin : appelé par Gradle (apps/android).
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["bindgen"]

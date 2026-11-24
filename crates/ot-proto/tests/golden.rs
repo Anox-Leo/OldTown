@@ -1,6 +1,3 @@
-//! Tests « golden » : chaque fichier de `tests/golden` fige le format d'une
-//! trame. Un changement de format casse ces tests volontairement.
-
 use ot_proto::http::{
     BlobCreated, BlobStatus, CreateBlob, HttpError, HttpErrorCode, http_request_message,
 };
@@ -103,8 +100,6 @@ fn golden_frames() {
     );
 }
 
-/// Corps JSON de l'API HTTP des fichiers (sans `v` ni `t` : ce ne sont pas
-/// des trames).
 fn check_http<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(name: &str, value: T) {
     let text = golden(name);
     assert_eq!(serde_json::from_str::<T>(&text).unwrap(), value, "décodage de {name}");
@@ -141,7 +136,6 @@ fn golden_http() {
             message: "quota du relais atteint".into(),
         },
     );
-    // `to` absent vaut « tous les autres appareils ».
     let all: CreateBlob =
         serde_json::from_str(r#"{"size":16,"chunk_size":1048592,"chunks":1}"#).unwrap();
     assert!(all.to.is_empty());
@@ -231,8 +225,6 @@ fn device_id_format() {
     assert_eq!(id.as_str().parse::<DeviceId>().unwrap(), id);
     assert!("01J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<DeviceId>().is_err());
     assert!("dev_".parse::<DeviceId>().is_err());
-    // Forme canonique seulement (étape 10) : ni minuscules, ni ULID qui
-    // dépasse 128 bits, qui désigneraient le même ULID qu'un autre texte.
     assert!("dev_01j9z3k8v7q2w4e6r8t0y1v3h5".parse::<DeviceId>().is_err());
     assert!("dev_Z1J9Z3K8V7Q2W4E6R8T0Y1V3H5".parse::<DeviceId>().is_err());
 }

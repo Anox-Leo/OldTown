@@ -1,15 +1,4 @@
 #!/usr/bin/env node
-// Générateur des jetons de design (note 0059, D50) : lit `design/tokens.json`
-// (format DTCG) et écrit les jetons de l'extension, d'Android et le
-// nuancier. Node 24, aucune dépendance.
-//
-//   node tools/design-tokens/gen.mjs            écrit les sorties
-//   node tools/design-tokens/gen.mjs --check    échoue si une sortie est périmée
-//   --root <dossier>                            racine du dépôt (tests)
-//
-// Il refuse aussi toute paire de couleurs listée dans `tokens.json`
-// (`$extensions["dev.oldtown.contrast"]`) sous 4,5:1 pour du texte ou 3:1
-// pour un élément graphique, dans chaque thème.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,22 +14,14 @@ export const OUTPUTS = {
   specimen: 'design/specimen.html',
 };
 export const THEMES = ['dark', 'light'];
-/**
- * Rôles lus par les ressources Android (thèmes XML, icône, écran de
- * démarrage, notifications), en `@color/ot_<rôle>` ; le reste passe par
- * Compose (`Tokens.kt`).
- */
 export const ANDROID_RES_ROLES = ['screen', 'tile', 'mark', 'on-avatar'];
 export const MIN_RATIO = { text: 4.5, graphic: 3 };
 const HEADER = `Fichier généré par tools/design-tokens/gen.mjs depuis ${SOURCE} : ne pas modifier.`;
-
-// ---- Lecture des jetons ----
 
 export function load(root = DEFAULT_ROOT) {
   return JSON.parse(fs.readFileSync(path.join(root, SOURCE), 'utf8'));
 }
 
-/** Nœud au chemin `a.b.c`, ou une erreur qui le nomme. */
 function at(tokens, dotted) {
   let node = tokens;
   for (const key of dotted.split('.')) {
@@ -50,7 +31,6 @@ function at(tokens, dotted) {
   return node;
 }
 
-/** Valeur d'un jeton, références `{a.b}` suivies (au plus 10 sauts). */
 export function value(tokens, dotted) {
   let node = at(tokens, dotted);
   for (let hops = 0; hops < 10; hops++) {
@@ -63,12 +43,10 @@ export function value(tokens, dotted) {
   throw new Error(`références en boucle : ${dotted}`);
 }
 
-/** Enfants d'un groupe (clés sans `$`), dans l'ordre du fichier. */
 function children(group) {
   return Object.keys(group).filter((k) => !k.startsWith('$'));
 }
 
-/** Couleur `#RRGGBB` ou `#RRGGBBAA`, normalisée en minuscules. */
 export function hex(tokens, dotted) {
   const v = value(tokens, dotted);
   if (typeof v !== 'string' || !/^#([0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) {
@@ -83,7 +61,6 @@ function px(tokens, dotted) {
   return v.value;
 }
 
-/** Rôles d'un thème : `[nom, couleur]`, dans l'ordre du fichier. */
 export function roles(tokens, theme) {
   return children(tokens.role[theme]).map((name) => [name, hex(tokens, `role.${theme}.${name}`)]);
 }
@@ -100,8 +77,6 @@ function family(tokens, name) {
   return value(tokens, `type.family.${name}`);
 }
 
-// ---- Contrastes (WCAG 2.x) ----
-
 function rgba(color) {
   const n = (i) => parseInt(color.slice(i, i + 2), 16) / 255;
   return [n(1), n(3), n(5), color.length === 9 ? n(7) : 1];
@@ -112,7 +87,6 @@ function luminance([r, g, b]) {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
-/** Rapport de contraste ; un premier plan translucide est composé sur le fond. */
 export function contrast(fg, bg) {
   const b = rgba(bg);
   if (b[3] !== 1) throw new Error(`fond translucide : ${bg}`);
@@ -122,7 +96,6 @@ export function contrast(fg, bg) {
   return (l1 + 0.05) / (l2 + 0.05);
 }
 
-/** Couleurs désignées par un nom de paire dans un thème : un rôle, ou un chemin (`*` final). */
 function colorsOf(tokens, ref, theme) {
   if (!ref.includes('.') && theme === 'tous') throw new Error(`rôle sans thème : ${ref}`);
   if (!ref.includes('.')) return [[ref, hex(tokens, `role.${theme}.${ref}`)]];
@@ -133,14 +106,12 @@ function colorsOf(tokens, ref, theme) {
   return [[ref, hex(tokens, ref)]];
 }
 
-/** Toutes les paires listées, mesurées dans chaque thème. */
 export function contrasts(tokens) {
   const spec = tokens.$extensions?.['dev.oldtown.contrast'];
   if (!spec) throw new Error('paires de contraste absentes ($extensions["dev.oldtown.contrast"])');
   const out = [];
   for (const kind of ['text', 'graphic']) {
     for (const [fgRef, bgRef] of spec[kind] ?? []) {
-      // Une paire sans rôle ne dépend pas du thème : mesurée une fois.
       const themes = fgRef.includes('.') && bgRef.includes('.') ? ['tous'] : THEMES;
       for (const theme of themes) {
         for (const [fgName, fg] of colorsOf(tokens, fgRef, theme)) {
@@ -155,17 +126,13 @@ export function contrasts(tokens) {
   return out;
 }
 
-// ---- Sorties ----
-
 const camel = (name) => name.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
 
-/** `#rrggbb[aa]` → `0xAARRGGBB` (Compose). */
 export function argb(color) {
   const c = color.slice(1).toUpperCase();
   return `0x${c.length === 8 ? c.slice(6) : 'FF'}${c.slice(0, 6)}`;
 }
 
-/** `#rrggbb[aa]` → `#AARRGGBB` (ressources Android). */
 export function androidColor(color) {
   return `#${argb(color).slice(2)}`;
 }
@@ -180,8 +147,6 @@ function css(tokens) {
   for (const [n, v] of dims(tokens, 'type.size')) lines.push(`  --text-${n}: ${v}px;`);
   for (const n of children(tokens.type.family)) lines.push(`  --font-${n}: ${cssFamily(family(tokens, n))};`);
   lines.push('  color-scheme: dark;', '}', '');
-  // Clair : celui du système, sauf choix contraire (`data-theme` sur
-  // `<html>`), ou choisi explicitement.
   const light = roles(tokens, 'light');
   lines.push('@media (prefers-color-scheme: light) {', "  :root:not([data-theme='dark']) {");
   for (const [n, c] of light) lines.push(`    --${n}: ${c};`);
@@ -242,7 +207,6 @@ function kotlin(tokens) {
   ].join('\n');
 }
 
-/** Couleurs des ressources Android d'un thème (`values/` clair, `values-night/` sombre). */
 function androidRes(tokens, theme) {
   const all = new Map(roles(tokens, theme));
   return [
@@ -348,7 +312,6 @@ function specimen(tokens) {
 `;
 }
 
-/** Contenu attendu de chaque sortie, par chemin relatif à la racine. */
 export function render(tokens) {
   const [dark, light] = THEMES.map((t) => roles(tokens, t).map(([n]) => n).join());
   if (dark !== light) throw new Error('les deux thèmes doivent avoir les mêmes rôles, dans le même ordre');
@@ -362,7 +325,6 @@ export function render(tokens) {
   };
 }
 
-/** Sorties absentes ou différentes de ce que donnent les jetons. */
 export function stale(root, files) {
   return Object.entries(files)
     .filter(([rel, content]) => {

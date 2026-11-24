@@ -1,9 +1,3 @@
-//! Fichiers (étape 5, note 0026), partie sans réseau : offres reçues
-//! (rangées avec leur clé dans le [`crate::Keyring`]), dépôts en cours (pour
-//! reprendre après un redémarrage), signature des requêtes HTTP. Le transfert
-//! lui-même est dans `transfer.rs` (fonction `net`) ; l'extension refait la
-//! boucle en TypeScript à partir d'ici (note 0023).
-
 use ot_crypto::{
     Body, CHUNK_TAG_LEN, FILE_NONCE_LEN, FileCipher, FileKey, chunk_count, sanitize_file_name,
 };
@@ -15,40 +9,29 @@ use time::{Duration, OffsetDateTime};
 use crate::Identity;
 use crate::types::Origin;
 
-/// Durée pendant laquelle une offre reçue reste téléchargeable de notre côté
-/// (le message vit 7 jours sur le relais, le fichier 48 h).
 pub const FILE_OFFER_LIFETIME: Duration = Duration::days(7);
 
-/// Nombre maximal d'offres gardées (les plus anciennes partent d'abord).
 pub const MAX_FILE_OFFERS: usize = 500;
 
-/// Fichier annoncé par un membre, tel que l'appli le voit : jamais de clé.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileInfo {
     pub msg_id: Ulid,
     pub from: DeviceId,
     pub created_at: OffsetDateTime,
     pub blob_id: BlobId,
-    /// Nom nettoyé, sûr à écrire sur le disque.
     pub name: String,
     pub mime: String,
-    /// Taille en clair, en octets.
     pub size: u64,
-    /// Personne de l'expéditeur, copie d'un envoi (étape 10).
     pub origin: Origin,
 }
 
-/// Fichier reçu (message `file`), avec le `seq` de sa livraison.
 #[derive(Debug, Clone)]
 pub struct ReceivedFile {
     pub seq: i64,
     pub file: FileInfo,
-    /// Destinataires lus dans l'enveloppe ; vide : tous les appareils.
     pub to: Vec<DeviceId>,
 }
 
-/// Offre reçue, rangée dans le keyring avant l'acquittement : tout ce qu'il
-/// faut pour retirer, déchiffrer et vérifier le fichier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoredFile {
@@ -91,13 +74,11 @@ impl StoredFile {
         FileCipher::new(&self.key, &self.nonce)
     }
 
-    /// Taille d'un morceau chiffré, telle que le relais la connaît.
     pub fn sealed_chunk_size(&self) -> u32 {
         self.chunk_size + CHUNK_TAG_LEN
     }
 }
 
-/// Ce que l'expéditeur met dans le message `file`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileMeta {
@@ -130,17 +111,11 @@ impl FileMeta {
     }
 }
 
-/// Dépôt en cours, rangé dans le keyring (il porte la clé du fichier) :
-/// relancer l'envoi de la même source reprend là où il s'était arrêté.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingUpload {
-    /// Identifiant de la source donné par l'appli (chemin, URI).
     pub source_id: String,
-    /// Appareils destinataires, ceux à qui le blob est ouvert.
     pub to: Vec<DeviceId>,
-    /// Envoi à une autre personne (étape 10) : `to` est la résolution de
-    /// cette cible, copie à mes appareils comprise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_user: Option<UserId>,
     #[serde(with = "time::serde::rfc3339")]
@@ -148,7 +123,6 @@ pub struct PendingUpload {
     pub meta: FileMeta,
 }
 
-/// Offre à ranger, d'après le corps `file` déchiffré d'un message.
 pub(crate) fn stored_from_body(
     msg_id: Ulid,
     from: DeviceId,
@@ -179,8 +153,6 @@ pub(crate) fn stored_from_body(
     })
 }
 
-/// Type MIME de la forme `type/sous-type`, sans paramètre ; sinon
-/// `application/octet-stream` (il sert à choisir comment ouvrir le fichier).
 pub fn clean_mime(mime: &str) -> String {
     let essence = mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
     let valid = essence.len() <= 127
@@ -194,16 +166,12 @@ pub fn clean_mime(mime: &str) -> String {
     if valid { essence } else { "application/octet-stream".to_owned() }
 }
 
-/// Ajoute une offre (en remplaçant une offre du même blob) et retire les
-/// offres trop vieilles ou en trop.
 pub(crate) fn add_offer(offers: &mut Vec<StoredFile>, offer: StoredFile, now: OffsetDateTime) {
     offers.retain(|o| o.blob_id != offer.blob_id);
     offers.push(offer);
     prune_offers(offers, now);
 }
 
-/// Retire les offres de plus de [`FILE_OFFER_LIFETIME`] et garde les
-/// [`MAX_FILE_OFFERS`] plus récentes. Renvoie `true` si la liste a changé.
 pub fn prune_offers(offers: &mut Vec<StoredFile>, now: OffsetDateTime) -> bool {
     let before = offers.len();
     offers.retain(|o| o.received_at + FILE_OFFER_LIFETIME > now);
@@ -214,8 +182,6 @@ pub fn prune_offers(offers: &mut Vec<StoredFile>, now: OffsetDateTime) -> bool {
     offers.len() != before
 }
 
-/// Géométrie d'un nouveau fichier de `size` octets en morceaux de
-/// `chunk_size`, avec une clé et un préfixe de nonce neufs.
 pub fn new_file_meta(
     blob_id: BlobId,
     name: &str,
@@ -237,8 +203,6 @@ pub fn new_file_meta(
     })
 }
 
-/// En-têtes d'authentification d'une requête HTTP (note 0026) : appareil,
-/// heure, nonce neuf et signature de [`ot_proto::http::http_request_message`].
 pub fn signed_headers(
     identity: &Identity,
     device_id: &DeviceId,
@@ -248,7 +212,6 @@ pub fn signed_headers(
     now_ms: u64,
 ) -> Vec<(&'static str, String)> {
     let mut nonce = [0; HTTP_NONCE_LEN];
-    // Sans aléa, aucune requête sûre n'est possible : on s'arrête.
     getrandom::fill(&mut nonce).expect("source d'aléa du système indisponible");
     let sig = identity.sign_http(method, path, now_ms, &nonce, body);
     vec![
@@ -288,7 +251,6 @@ mod tests {
         let mut offers = vec![offer("blob_01J9Z3R7XK2M4N6P8Q0R2S4T6V", now - Duration::days(8))];
         add_offer(&mut offers, offer("blob_01J9Z3R7XK2M4N6P8Q0R2S4T6W", now), now);
         assert_eq!(offers.len(), 1);
-        // Une offre du même blob remplace l'ancienne.
         add_offer(&mut offers, offer("blob_01J9Z3R7XK2M4N6P8Q0R2S4T6W", now), now);
         assert_eq!(offers.len(), 1);
         for _ in 0..MAX_FILE_OFFERS + 3 {

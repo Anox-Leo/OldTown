@@ -1,5 +1,3 @@
-//! Fichiers locaux de la CLI : configuration, clés et état du groupe.
-
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,8 +20,6 @@ pub struct Config {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<DeviceId>,
-    /// `service` pour un appareil de service (`ot pair join --qr
-    /// --service`) : pas de groupe, une personne de service. Absent sinon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<ot_core::Role>,
 }
@@ -31,7 +27,6 @@ pub struct Config {
 pub struct Home(PathBuf);
 
 impl Home {
-    /// Dossier donné, sinon `OT_HOME`, sinon le dossier de configuration de l'OS.
     pub fn locate(explicit: Option<PathBuf>) -> Result<Self> {
         if let Some(dir) = explicit {
             return Ok(Self(dir));
@@ -83,7 +78,6 @@ impl Home {
         write_atomic(&self.0.join(KEY), text.as_bytes(), true)
     }
 
-    /// Derniers `msg_id` vus ; un fichier absent ou illisible donne une liste vide.
     pub fn load_seen(&self) -> Vec<Ulid> {
         let Ok(text) = fs::read_to_string(self.0.join(SEEN)) else {
             return Vec::new();
@@ -97,7 +91,6 @@ impl Home {
         write_atomic(&self.0.join(SEEN), serde_json::to_string(&ids)?.as_bytes(), false)
     }
 
-    /// Codes déjà relayés par `ot otp-bridge` ; absent ou illisible : aucun.
     pub fn load_otp_sent(&self) -> crate::otp::Sent {
         let text = fs::read_to_string(self.0.join(OTP_SENT)).unwrap_or_default();
         crate::otp::Sent::from_json(&text)
@@ -107,19 +100,15 @@ impl Home {
         write_atomic(&self.0.join(OTP_SENT), sent.to_json()?.as_bytes(), true)
     }
 
-    /// Clés et état du groupe, dans le même dossier.
     pub fn keyring(&self) -> StoreKeyring {
         StoreKeyring::new(Arc::new(FileStore(self.0.clone())))
     }
 
-    /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
     pub fn reset_group(&self) -> Result<()> {
         Ok(self.keyring().forget_group()?)
     }
 }
 
-/// [`SecretStore`] sur fichiers : un fichier par nom, en `0600` (rien n'y
-/// est en clair, sauf les clés, mais rien n'oblige à montrer le reste).
 pub struct FileStore(PathBuf);
 
 impl FileStore {
@@ -162,8 +151,6 @@ impl SecretStore for FileStore {
     }
 }
 
-/// Écrit dans un fichier temporaire puis renomme, pour ne jamais laisser de
-/// fichier à moitié écrit. `private` : lisible par le seul propriétaire.
 fn write_atomic(path: &Path, data: &[u8], private: bool) -> Result<()> {
     let tmp = path.with_extension("tmp");
     let mut opts = fs::OpenOptions::new();
@@ -216,7 +203,6 @@ mod tests {
         };
         home.save_config(&config).unwrap();
         assert_eq!(home.load_config().unwrap().unwrap().device_id, config.device_id);
-        // Appareil de service : le rôle est écrit, et relu.
         let service = Config { role: Some(ot_core::Role::Service), ..config };
         home.save_config(&service).unwrap();
         let text = fs::read_to_string(home.path().join(CONFIG)).unwrap();
@@ -259,7 +245,6 @@ mod tests {
             assert_eq!(mode(&home.path().join(name)), 0o600, "{name}");
         }
 
-        // `group init` refuse d'écraser un groupe existant, sauf --force.
         assert!(ot_core::init_group(&keyring, &id, "mac", &identity, false).is_err());
         assert!(ot_core::init_group(&keyring, &id, "mac", &identity, true).is_ok());
 

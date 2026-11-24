@@ -14,7 +14,6 @@ RuntimeDirectory=otp-relay
 RuntimeDirectoryMode=0700
 UMask=0077
 
-# Durcissement : lecture seule partout sauf le dossier du socket.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only

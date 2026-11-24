@@ -1,5 +1,3 @@
-//! T5 : authentification par défi signé.
-
 mod common;
 
 use std::time::Duration;
@@ -57,7 +55,6 @@ async fn signature_bound_to_device_id() {
     let other = add_device(server.relay.store(), "windows").await;
     let mut raw = Raw::connect(&server).await;
     let nonce = raw.challenge().await;
-    // Bonne clé, mais signature calculée pour un autre identifiant.
     let sig = dev.identity.sign_challenge(&nonce, &other.id);
     raw.send(&Frame::Auth { device_id: dev.id.clone(), sig }).await;
     expect_auth_failed(&mut raw).await;
@@ -70,7 +67,6 @@ async fn replayed_nonce_is_refused() {
     let nonce = first.challenge().await;
     let sig = dev.identity.sign_challenge(&nonce, &dev.id);
 
-    // Une signature valide pour un défi ne vaut rien sur une autre connexion.
     let mut second = Raw::connect(&server).await;
     let other_nonce = second.challenge().await;
     assert_ne!(nonce, other_nonce);
@@ -88,7 +84,6 @@ async fn revoked_device_is_refused() {
     raw.send(&Frame::Auth { device_id: dev.id.clone(), sig }).await;
     expect_auth_failed(&mut raw).await;
 
-    // Le client ot-core le signale sans planter.
     let (_client, mut events) = dev.client(&server.url());
     loop {
         if let ot_core::Event::AuthFailed { .. } = next_event(&mut events).await {

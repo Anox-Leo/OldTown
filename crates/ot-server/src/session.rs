@@ -1,7 +1,3 @@
-//! Une connexion WebSocket : défi, authentification, puis boucle de session.
-//! Les trames de l'étape 10 (annuaire, réseau, administration) sont dans
-//! [`people`].
-
 mod people;
 
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
@@ -20,14 +16,10 @@ use crate::registry::Session;
 use crate::store::{NewMessage, StoreError};
 use crate::{Inner, Relay, auth, now_ms};
 
-/// Nombre de messages relus en base à chaque passe de livraison.
 const DELIVERY_BATCH: u32 = 100;
 
-/// Fin de session : la connexion doit être fermée.
 struct Close(&'static str);
 
-/// `permit` tient la place de la connexion parmi les non authentifiées ;
-/// il est rendu dès la fin de l'authentification.
 pub async fn run(relay: Relay, mut socket: WebSocket, ip: IpAddr, permit: Permit) {
     let inner = &*relay.inner;
     let authenticated = authenticate(inner, &mut socket, ip).await;
@@ -105,7 +97,6 @@ async fn authenticate(
                         return auth_failed(inner, socket, ip, "appareil inconnu ou révoqué").await;
                     }
                     Err(e) => {
-                        // Panne du relais, pas un échec du client : non compté.
                         tracing::error!(error = %e, "lecture de l'appareil");
                         Metrics::inc(&inner.metrics.auth_failures);
                         let error = Frame::error(ErrorCode::AuthFailed, "erreur interne", None);
@@ -178,13 +169,9 @@ fn invalid_name() -> String {
     format!("nom invalide : 1 à {MAX_NAME_CHARS} caractères imprimables")
 }
 
-/// Fin d'un `pair_redeem` : la connexion est toujours fermée ensuite.
 enum Rejected {
-    /// Jeton ou signature invalides : compte comme un échec de l'IP.
     Invalid,
-    /// Refus qui ne trahit pas un essai (nom pris, erreur interne).
     Other,
-    /// Appairage réussi, ou écriture impossible.
     Closed(Close),
 }
 
@@ -194,8 +181,6 @@ impl From<Close> for Rejected {
     }
 }
 
-/// Enregistre un appareil avec un jeton d'appairage, répond `pair_redeemed`
-/// puis ferme : l'appareil se reconnecte ensuite avec `auth`.
 async fn redeem(
     inner: &Inner,
     socket: &mut WebSocket,
@@ -267,11 +252,8 @@ async fn pairing_rejected(
 struct Active<'a> {
     inner: &'a Inner,
     device: DeviceId,
-    /// Personne de l'appareil (étape 10) ; son rôle ne change jamais, son
-    /// état se relit en base à chaque décision.
     user: UserId,
     role: Role,
-    /// Dernier `seq` livré pendant cette session.
     cursor: i64,
     socket: WebSocket,
 }
@@ -302,7 +284,7 @@ impl Active<'_> {
                             let e = Frame::error(ErrorCode::BadFrame, "trame texte attendue", None);
                             send(&mut self.socket, &e).await?;
                         }
-                        Some(Ok(_)) => {} // ping et pong
+                        Some(Ok(_)) => {}
                     }
                 }
                 () = session.wake.notified() => self.deliver().await?,
@@ -322,7 +304,6 @@ impl Active<'_> {
         }
     }
 
-    /// Livre dans l'ordre tous les messages en attente au-delà du curseur.
     async fn deliver(&mut self) -> Result<(), Close> {
         loop {
             let now = now_ms();
@@ -368,7 +349,6 @@ impl Active<'_> {
                 None
             }
             Frame::ListDevices => {
-                // Un appareil révoqué (par la CLI) ne liste plus rien.
                 self.alive().await?;
                 Some(devices(self.inner, &self.user).await?)
             }
@@ -385,7 +365,6 @@ impl Active<'_> {
         }
     }
 
-    /// Ferme la session si son appareil a été révoqué entre-temps.
     async fn alive(&mut self) -> Result<(), Close> {
         match self.inner.store.peer(&self.device).await.map_err(db)? {
             Some(_) => Ok(()),
@@ -393,7 +372,6 @@ impl Active<'_> {
         }
     }
 
-    /// Tire un jeton d'appairage ; seul son SHA-256 est stocké.
     async fn pair_create(&mut self) -> Result<Frame, Close> {
         let token = auth::new_token();
         let now = now_ms();
@@ -416,9 +394,6 @@ impl Active<'_> {
         Ok(Frame::PairCreated { token, expires_at })
     }
 
-    /// Parrain : enregistre l'appareil dont il a scanné le QR inversé. Le nom
-    /// n'est pas retouché : la signature porte dessus. Une erreur laisse la
-    /// session ouverte.
     async fn pair_register(
         &mut self,
         device_id: DeviceId,
@@ -536,7 +511,6 @@ impl Active<'_> {
                 Metrics::inc(&self.inner.metrics.refused_quota);
                 return reject(ErrorCode::QuotaExceeded, format!("quota atteint : {what}"));
             }
-            // L'expéditeur a été révoqué (par la CLI) pendant sa session.
             Err(StoreError::UnknownDevice(_)) => return Err(Close("appareil révoqué")),
             Err(e) => {
                 tracing::error!(error = %e, "stockage du message");
@@ -562,8 +536,6 @@ impl Active<'_> {
     }
 }
 
-/// `list_devices` : les appareils actifs de ma personne seulement (étape
-/// 10) ; un ancien client ne voit jamais les autres personnes.
 async fn devices(inner: &Inner, user: &UserId) -> Result<Frame, Close> {
     let devices = inner.store.user_devices(user).await.map_err(db)?;
     let devices = devices

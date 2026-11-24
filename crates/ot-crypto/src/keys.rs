@@ -1,6 +1,3 @@
-//! Types de clés. Toutes les clés secrètes s'effacent de la mémoire à la
-//! destruction et ne s'affichent jamais en `Debug`.
-
 use std::fmt;
 
 use ot_proto::b64;
@@ -11,7 +8,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::random;
 
-/// Clé de groupe d'une époque (32 octets), partagée par tous les membres.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct GroupKey([u8; 32]);
 
@@ -30,7 +26,6 @@ impl GroupKey {
         &self.0
     }
 
-    /// Empreinte courte, pour comparer deux appareils à l'œil.
     pub fn fingerprint(&self) -> String {
         fingerprint(&self.0)
     }
@@ -54,7 +49,6 @@ impl<'de> Deserialize<'de> for GroupKey {
     }
 }
 
-/// Paire X25519 de l'appareil : reçoit une clé de groupe scellée pour lui.
 #[derive(Clone)]
 pub struct ExchangeKeyPair(StaticSecret);
 
@@ -71,7 +65,6 @@ impl ExchangeKeyPair {
         Self(StaticSecret::from(secret))
     }
 
-    /// Clé secrète, pour la stocker.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
     }
@@ -91,7 +84,6 @@ impl fmt::Debug for ExchangeKeyPair {
     }
 }
 
-/// Secret d'appairage `S` (16 octets) : ne quitte jamais le code.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct PairingSecret([u8; 16]);
 
@@ -117,8 +109,6 @@ impl fmt::Debug for PairingSecret {
     }
 }
 
-/// Empreinte courte d'une clé : 8 premiers octets de SHA-256, en hexadécimal
-/// par groupes de quatre (`a1b2 c3d4 e5f6 0718`).
 pub fn fingerprint(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let hex: Vec<String> =

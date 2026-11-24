@@ -1,31 +1,3 @@
-//! Chiffrement de bout en bout OldTown : types de clés, formats chiffrés de
-//! `payload.data`, corps des messages et code d'appairage.
-//!
-//! Aucune E/S, aucun réseau, aucun async : tout est testable seul et
-//! réutilisable par les applis (UniFFI, WebAssembly). Le relais ne dépend
-//! jamais de cette crate.
-//!
-//! Format de `payload.data` (figé par `tests/vectors/`) :
-//!
-//! | Schéma | Octets | Clé |
-//! | --- | --- | --- |
-//! | `0x01` groupe | `01 ‖ époque (u32 BE) ‖ nonce ‖ chiffré` | clé de groupe de l'époque |
-//! | `0x02` appairage | `02 ‖ id du jeton (8 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(S, "ot-pair-v1")` |
-//! | `0x03` appareil | `03 ‖ X25519 éphémère (32 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(DH, "ot-device-v1" ‖ éph ‖ dest)` |
-//! | `0x04` QR inversé | `04 ‖ X25519 éphémère (32 o) ‖ nonce ‖ chiffré` | `HKDF-SHA256(DH ‖ S, "ot-pair-qr-v1" ‖ éph ‖ dest)` |
-//! | `0x05` personnes | `05 ‖ X25519 éphémère (32 o) ‖ n (u8) ‖ n × (ULID (16 o) ‖ clé scellée (48 o)) ‖ engagement (32 o) ‖ nonce ‖ chiffré` | clé de message `K`, scellée pour chaque destinataire sous `HKDF-SHA256(DH, "ot-multi-v1" ‖ éph ‖ dest ‖ ULID ‖ msg_id)` ; engagement `SHA-256("ot-multi-commit-v1" ‖ K)` |
-//!
-//! L'invitation d'une personne (étape 10) réutilise l'en-tête `0x02`, sous
-//! `HKDF-SHA256(S, "ot-invite-v1")`. L'annuaire signé (certificats, journal
-//! du roster) est dans [`directory`].
-//!
-//! Le clair est `signature Ed25519 (64 o) ‖ corps JSON` ; la signature porte
-//! sur `"ot-sig-v1" ‖ données associées ‖ corps`.
-//!
-//! Les fichiers (étape 5) sont chiffrés à part, morceau par morceau, sous une
-//! clé propre au fichier ([`FileCipher`]) ; le message `file` n'emporte que
-//! la référence et la clé.
-
 mod body;
 mod code;
 pub mod directory;
@@ -49,20 +21,16 @@ pub use seal::{
     open, seal, seal_with,
 };
 
-/// Erreurs de la crate. Aucune ne contient de clé ni de contenu.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CryptoError {
-    /// `payload.enc` vaut `none` : le clair est toujours refusé.
     #[error("message en clair refusé")]
     Plaintext,
     #[error("format chiffré invalide : {0}")]
     Malformed(&'static str),
-    /// Clé fausse, ou chiffré, en-tête ou données associées altérés.
     #[error("déchiffrement impossible")]
     Decrypt,
     #[error("signature invalide")]
     BadSignature,
-    /// Clé publique X25519 de faible ordre : l'échange ne serait pas secret.
     #[error("clé publique X25519 refusée")]
     WeakKey,
     #[error("code d'appairage invalide : {0}")]
@@ -73,8 +41,6 @@ pub enum CryptoError {
 
 pub type Result<T, E = CryptoError> = std::result::Result<T, E>;
 
-/// Remplit `buf` d'aléa du système.
 pub(crate) fn random(buf: &mut [u8]) {
-    // Sans aléa, aucune clé ni aucun nonce sûr n'est possible : on s'arrête.
     getrandom::fill(buf).expect("source d'aléa du système indisponible");
 }

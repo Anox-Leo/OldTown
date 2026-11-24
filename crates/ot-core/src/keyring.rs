@@ -1,7 +1,3 @@
-//! Stockage des clés et de l'état du groupe. Chaque appli fournit un
-//! [`SecretStore`] (fichiers `0600` pour la CLI, Keystore pour Android) ;
-//! [`StoreKeyring`] en tire le [`Keyring`] du cœur.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -16,88 +12,53 @@ use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 use zeroize::Zeroizing;
 
-/// Durée pendant laquelle une clé de groupe remplacée reste utilisable pour
-/// lire les messages en retard (durée de vie des messages sur le relais).
 pub const RETIRED_KEY_LIFETIME: Duration = Duration::days(7);
 
-/// Nombre maximal de messages mis de côté en attendant leur clé.
 pub const MAX_QUARANTINE: usize = 100;
 
-/// Erreur d'un [`Keyring`] : message lisible, sans secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("stockage des clés : {0}")]
 pub struct KeyringError(pub String);
 
-/// Accès aux secrets et à l'état du groupe de l'appareil. Les méthodes sont
-/// synchrones et rapides (fichier local ou coffre de l'OS).
 pub trait Keyring: Send + Sync {
-    /// Paire X25519 de l'appareil, `None` si elle n'existe pas encore.
     fn load_exchange_key(&self) -> Result<Option<ExchangeKeyPair>, KeyringError>;
     fn save_exchange_key(&self, key: &ExchangeKeyPair) -> Result<(), KeyringError>;
-    /// Clés de groupe par époque ; `None` tant que l'appareil n'a pas de groupe.
     fn load_group_keys(&self) -> Result<Option<GroupKeys>, KeyringError>;
     fn save_group_keys(&self, keys: &GroupKeys) -> Result<(), KeyringError>;
     fn load_roster(&self) -> Result<Option<Roster>, KeyringError>;
     fn save_roster(&self, roster: &Roster) -> Result<(), KeyringError>;
-    /// Messages d'époque inconnue, mis de côté (au plus [`MAX_QUARANTINE`]).
     fn load_quarantine(&self) -> Result<Vec<Quarantined>, KeyringError>;
     fn save_quarantine(&self, messages: &[Quarantined]) -> Result<(), KeyringError>;
-    /// Fichiers annoncés, avec leur clé (étape 5).
     fn load_files(&self) -> Result<Vec<StoredFile>, KeyringError>;
     fn save_files(&self, files: &[StoredFile]) -> Result<(), KeyringError>;
-    /// Dépôts de fichiers en cours, avec leur clé (étape 5).
     fn load_uploads(&self) -> Result<Vec<PendingUpload>, KeyringError>;
     fn save_uploads(&self, uploads: &[PendingUpload]) -> Result<(), KeyringError>;
-    /// Annuaire vérifié (étape 10) : ancre, certificats et dernière entrée
-    /// vérifiée par personne. Vide sans ancre (installation à une personne).
     fn load_directory(&self) -> Result<DirectoryState, KeyringError>;
     fn save_directory(&self, state: &DirectoryState) -> Result<(), KeyringError>;
-    /// Invitations créées par cet appareil de l'admin, avec leur secret `S`
-    /// (étape 10).
     fn load_invites(&self) -> Result<Vec<InviteRecord>, KeyringError>;
     fn save_invites(&self, invites: &[InviteRecord]) -> Result<(), KeyringError>;
-    /// Invitation rachetée par cet appareil, jusqu'à son entrée dans
-    /// l'annuaire (étape 10) ; `None` l'efface.
     fn load_pending_invite(&self) -> Result<Option<PendingInvite>, KeyringError>;
     fn save_pending_invite(&self, pending: Option<&PendingInvite>) -> Result<(), KeyringError>;
 }
 
-/// Octets nommés, rangés à l'abri par l'appli. Les noms sont courts, en ASCII
-/// (`group.json`, `exchange.key`…). Les méthodes sont synchrones et rapides.
 pub trait SecretStore: Send + Sync {
-    /// Valeur enregistrée sous `name`, `None` si elle n'existe pas.
     fn get(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, KeyringError>;
-    /// Remplace la valeur de `name` (écriture atomique).
     fn put(&self, name: &str, value: &[u8]) -> Result<(), KeyringError>;
-    /// Efface `name` ; sans effet s'il n'existe pas.
     fn delete(&self, name: &str) -> Result<(), KeyringError>;
 }
 
-/// Noms utilisés par [`StoreKeyring`].
 pub mod names {
-    /// Clé X25519 secrète, en base64 suivi d'un saut de ligne.
     pub const EXCHANGE_KEY: &str = "exchange.key";
-    /// [`super::GroupKeys`] en JSON.
     pub const GROUP: &str = "group.json";
-    /// Roster en JSON.
     pub const ROSTER: &str = "roster.json";
-    /// Messages mis de côté, en JSON.
     pub const QUARANTINE: &str = "quarantine.json";
-    /// Fichiers annoncés, avec leur clé, en JSON (étape 5).
     pub const FILES: &str = "files.json";
-    /// Dépôts de fichiers en cours, avec leur clé, en JSON (étape 5).
     pub const UPLOADS: &str = "uploads.json";
-    /// Annuaire vérifié, en JSON (étape 10).
     pub const DIRECTORY: &str = "directory.json";
-    /// Invitations créées (admin), avec leur secret, en JSON (étape 10).
     pub const INVITES: &str = "invites.json";
-    /// Invitation rachetée (invité), avec son secret, en JSON (étape 10).
     pub const PENDING_INVITE: &str = "pending_invite.json";
 }
 
-/// [`Keyring`] rangé dans un [`SecretStore`]. Le format des valeurs est celui
-/// des fichiers de la CLI depuis l'étape 2 : une installation existante se
-/// relit sans conversion.
 #[derive(Clone)]
 pub struct StoreKeyring {
     store: Arc<dyn SecretStore>,
@@ -108,7 +69,6 @@ impl StoreKeyring {
         Self { store }
     }
 
-    /// Oublie le groupe et la clé d'échange (nouvelle identité d'appareil).
     pub fn forget_group(&self) -> Result<(), KeyringError> {
         for name in [
             names::EXCHANGE_KEY,
@@ -232,7 +192,6 @@ impl Keyring for StoreKeyring {
     }
 }
 
-/// [`SecretStore`] en mémoire, pour les tests.
 #[derive(Default)]
 pub struct MemoryStore {
     values: Mutex<HashMap<String, Zeroizing<Vec<u8>>>>,
@@ -247,7 +206,6 @@ impl MemoryStore {
         self.values.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Noms présents, triés.
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.lock().keys().cloned().collect();
         names.sort();
@@ -269,11 +227,9 @@ impl SecretStore for MemoryStore {
     }
 }
 
-/// Clés de groupe connues, de la plus ancienne à la plus récente.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupKeys {
-    /// Époque utilisée pour chiffrer.
     pub current: u32,
     pub epochs: Vec<EpochEntry>,
 }
@@ -283,17 +239,13 @@ pub struct GroupKeys {
 pub struct EpochEntry {
     pub epoch: u32,
     pub key: GroupKey,
-    /// Appareil qui a tiré la clé par rotation ; `None` pour une clé créée
-    /// par `group init` ou reçue à l'appairage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<DeviceId>,
-    /// Date de remplacement par une époque plus récente.
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub retired_at: Option<OffsetDateTime>,
 }
 
 impl GroupKeys {
-    /// Premier groupe : une seule époque.
     pub fn new(epoch: u32, key: GroupKey) -> Self {
         Self {
             current: epoch,
@@ -305,12 +257,10 @@ impl GroupKeys {
         self.epochs.iter().find(|e| e.epoch == epoch)
     }
 
-    /// Clé de l'époque courante.
     pub fn current_key(&self) -> Option<&GroupKey> {
         self.get(self.current).map(|e| &e.key)
     }
 
-    /// Passe à une nouvelle époque courante ; l'ancienne est retirée à `now`.
     pub fn advance(
         &mut self,
         epoch: u32,
@@ -329,7 +279,6 @@ impl GroupKeys {
         self.current = epoch;
     }
 
-    /// Garde une clé d'époque ancienne, reçue en retard, déjà retirée.
     pub fn insert_retired(
         &mut self,
         epoch: u32,
@@ -343,8 +292,6 @@ impl GroupKeys {
         }
     }
 
-    /// Oublie les clés retirées depuis plus de [`RETIRED_KEY_LIFETIME`].
-    /// Renvoie `true` si quelque chose a changé.
     pub fn prune(&mut self, now: OffsetDateTime) -> bool {
         let before = self.epochs.len();
         self.epochs.retain(|e| e.retired_at.is_none_or(|t| now - t < RETIRED_KEY_LIFETIME));
@@ -352,18 +299,15 @@ impl GroupKeys {
     }
 }
 
-/// Message mis de côté : son époque n'est pas encore connue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Quarantined {
-    /// `seq` du relais à la livraison (déjà acquitté).
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub received_at: OffsetDateTime,
     pub env: Envelope,
 }
 
-/// [`Keyring`] en mémoire, pour les tests.
 #[derive(Default)]
 pub struct MemoryKeyring {
     inner: Mutex<MemoryState>,
@@ -488,7 +432,6 @@ mod tests {
         let pair = ExchangeKeyPair::generate();
         keyring.save_exchange_key(&pair).unwrap();
         assert_eq!(keyring.load_exchange_key().unwrap().unwrap().public_key(), pair.public_key());
-        // Même format que les fichiers de la CLI à l'étape 2.
         let text = store.get(names::EXCHANGE_KEY).unwrap().unwrap();
         assert_eq!(&text[..], format!("{}\n", b64::encode(&pair.to_bytes())).as_bytes());
 

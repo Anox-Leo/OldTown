@@ -1,11 +1,3 @@
-"""Détection d'un code à usage unique dans un e-mail brut (RFC 5322).
-
-Heuristique à points : chaque suite de 4 à 8 caractères qui ressemble à un code
-reçoit un score selon son format, sa proximité avec un mot-clé (« code »,
-« verification », « OTP »…), sa mise en valeur dans le HTML, sa présence dans
-le sujet, et des pénalités (année, montant, n° de commande, téléphone…).
-"""
-
 from __future__ import annotations
 
 import email
@@ -30,13 +22,11 @@ KEYWORDS = re.compile(
     r"best[äa]tigungscode|sicherheitscode|anmeldecode|c[óo]digo|codice)\b",
     re.I,
 )
-# « code » dans ces expressions ne désigne pas un OTP : neutralisé avant la recherche de mots-clés.
 NOT_OTP = re.compile(
     r"\b(?:(?:promo|discount|coupon|referral|gift|zip|postal|area|source|qr|bar)\s*codes?|"
     r"codes?\s+(?:promo|postal|de\s+(?:r[ée]duction|parrainage|remise)|cadeau|source|qr|barre))\b",
     re.I,
 )
-# Contexte immédiatement avant un nombre qui n'est pas un OTP.
 NEGATIVE_BEFORE = re.compile(
     r"(?:promo|coupon|discount|r[ée]duction|remise|parrainage|referral|postal|zip|"
     r"commande|order|facture|invoice|n°|no\.|num[ée]ro|r[ée]f(?:[ée]rence)?|ref\.?|"
@@ -86,13 +76,11 @@ class ParsedMail:
 
 @dataclass
 class Detection:
-    code: str  # forme à saisir (sans espace, tiret ni préfixe G-)
-    display: str  # forme telle qu'écrite dans le mail
+    code: str
+    display: str
     score: int
     confidence: float
 
-
-# --------------------------------------------------------------------------- HTML
 
 
 class _HtmlText(HTMLParser):
@@ -127,7 +115,7 @@ class _HtmlText(HTMLParser):
         return bool(re.search(r"font-family\s*:[^;]*(?:mono|courier|consolas)", style))
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "body":  # protège contre un <head> jamais fermé
+        if tag == "body":
             self._skip = 0
             self._stack.clear()
         if tag in self.BLOCK or tag == "br":
@@ -176,12 +164,10 @@ def _html_to_text(html: str) -> tuple[str, list[str]]:
     try:
         parser.feed(html)
         parser.close()
-    except Exception:  # HTML très cassé : on garde ce qui a été lu
+    except Exception:
         pass
     return _normalize("".join(parser.parts)), [_normalize(e) for e in parser.emphasized]
 
-
-# --------------------------------------------------------------------------- parsing
 
 
 def _content(part: EmailMessage) -> str:
@@ -193,11 +179,6 @@ def _content(part: EmailMessage) -> str:
 
 
 def _authentication_results(msg: EmailMessage) -> dict[str, str]:
-    """Verdicts SPF/DKIM/DMARC posés par Gmail.
-
-    Seul l'en-tête dont l'authserv-id est mx.google.com fait foi : un expéditeur
-    peut ajouter ses propres en-têtes Authentication-Results plus bas.
-    """
     for header in msg.get_all("Authentication-Results", []):
         value = str(header)
         if value.strip().lower().startswith("mx.google.com"):
@@ -241,8 +222,6 @@ def parse(raw: bytes) -> ParsedMail:
     )
 
 
-# --------------------------------------------------------------------------- scoring
-
 
 def _canonical(m: re.Match[str]) -> str:
     body = m["grouped"] or m["digits"] or m["alnum"]
@@ -269,7 +248,7 @@ def _score(m: re.Match[str], text: str, *, in_subject: bool, emphasized: bool) -
     else:
         score += 1
     if m["prefix"] and not m["alnum"]:
-        score += 2  # ex. « G-123456 » chez Google
+        score += 2
 
     if KEYWORDS.search(near_before):
         score += 5
@@ -295,7 +274,6 @@ def _score(m: re.Match[str], text: str, *, in_subject: bool, emphasized: bool) -
 
 
 def _mask(pattern: re.Pattern[str], text: str) -> str:
-    """Remplace les correspondances par des espaces en conservant les positions."""
     return pattern.sub(lambda m: " " * len(m[0]), text)
 
 
@@ -326,5 +304,5 @@ def detect(mail: ParsedMail) -> Detection | None:
     if score < MIN_SCORE:
         return None
     if len(ranked) > 1 and ranked[1][1][0] >= score - 1:
-        score -= 2  # deux candidats presque à égalité : on baisse la confiance
+        score -= 2
     return Detection(code=code, display=display, score=score, confidence=round(min(1.0, max(0.0, score / MAX_SCORE)), 2))

@@ -78,3 +78,6 @@ journal de roster de chaque personne (étape 10, notes 0052 et 0053). Binaire
   (`deploy/Caddyfile`, `deploy/docker/`, note 0038), vérifié par
   `deploy/tests/compose-test.sh`. Toute nouvelle option se documente dans le
   README (anglais) et dans le sujet du relais de `docs/systeme/` (local).
+- Aide de `ot-server` en attributs clap, jamais en `///` (note 0077). Les
+  migrations (`migrations/`) ne changent plus une fois publiées, pas même
+  un commentaire : `sqlx::migrate!` vérifie leur somme de contrôle.
