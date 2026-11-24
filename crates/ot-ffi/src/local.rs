@@ -82,6 +82,19 @@ impl Local {
             .map_err(|e| OtError::Internal { message: format!("{name} est corrompu : {e}") })
     }
 
+    fn read_history(&self) -> Result<Vec<Received>, OtError> {
+        let Some(mut items) = self.read_json::<Vec<serde_json::Value>>(HISTORY)? else {
+            return Ok(Vec::new());
+        };
+        for item in &mut items {
+            if let Some(fields) = item.as_object_mut() {
+                fields.remove("sensitive");
+            }
+        }
+        serde_json::from_value(serde_json::Value::Array(items))
+            .map_err(|e| OtError::Internal { message: format!("{HISTORY} est corrompu : {e}") })
+    }
+
     fn write_json<T: Serialize + ?Sized>(&self, name: &str, value: &T) -> Result<(), OtError> {
         let bytes = Zeroizing::new(
             serde_json::to_vec(value)
@@ -140,12 +153,12 @@ impl Local {
 
     pub fn history(&self) -> Result<Vec<Received>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(self.read_json(HISTORY)?.unwrap_or_default())
+        self.read_history()
     }
 
     pub fn push_history(&self, item: Received) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        let mut items = self.read_history()?;
         items.retain(|i| i.msg_id != item.msg_id);
         items.insert(0, item);
         items.truncate(HISTORY_LEN);
@@ -154,7 +167,7 @@ impl Local {
 
     pub fn mark_sent(&self, msg_id: &str) -> Result<Option<Received>, OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        let mut items = self.read_history()?;
         let Some(item) = items.iter_mut().find(|i| i.msg_id == msg_id) else { return Ok(None) };
         item.pending = false;
         let updated = item.clone();
@@ -164,14 +177,14 @@ impl Local {
 
     pub fn remove_history(&self, msg_id: &str) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        let mut items = self.read_history()?;
         items.retain(|i| i.msg_id != msg_id);
         self.write_json(HISTORY, &items)
     }
 
     pub fn set_file_uri(&self, msg_id: &str, uri: &str) -> Result<(), OtError> {
         let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items: Vec<Received> = self.read_json(HISTORY)?.unwrap_or_default();
+        let mut items = self.read_history()?;
         for item in items.iter_mut().filter(|i| i.msg_id == msg_id) {
             if let Some(file) = item.file.as_mut() {
                 file.saved_uri = Some(uri.to_owned());

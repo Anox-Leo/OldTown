@@ -32,7 +32,6 @@ class ConversationsUiTest {
         createdAtMs = System.currentTimeMillis() - minutesAgo * 60_000L,
         kind = ContentKind.TEXT,
         body = "message $id",
-        sensitive = false,
         file = null,
         to = to,
         outgoing = outgoing,
