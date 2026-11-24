@@ -21,7 +21,7 @@ class ActionReceiver : BroadcastReceiver() {
                 val item = RelayHub.state.value.history.firstOrNull { it.msgId == msgId }
                     ?: history(RelayHub.store(context)).firstOrNull { it.msgId == msgId }
                 if (item != null) {
-                    Clipboard.copy(context, item.body, item.sensitive)
+                    Clipboard.copy(context, item.body, sensitive = false)
                     Notifications.cancel(context, notificationId)
                 } else {
                     Log.w("OldTown", "élément à copier introuvable (historique effacé ?)")

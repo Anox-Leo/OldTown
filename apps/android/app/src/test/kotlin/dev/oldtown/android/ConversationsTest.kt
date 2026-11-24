@@ -54,7 +54,6 @@ class ConversationsTest {
         createdAtMs = at(minute),
         kind = ContentKind.TEXT,
         body = body,
-        sensitive = false,
         file = null,
         to = to,
         outgoing = outgoing,

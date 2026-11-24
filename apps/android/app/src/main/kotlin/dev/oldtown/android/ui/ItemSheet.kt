@@ -84,7 +84,7 @@ internal fun ItemSheet(item: Received, onDismiss: () -> Unit) {
                 for (action in actionsFor(item.kind, item.body)) {
                     when (action) {
                         MessageAction.COPY -> OtButton("Copier", {
-                            Clipboard.copy(context, item.body, item.sensitive)
+                            Clipboard.copy(context, item.body, sensitive = false)
                             onDismiss()
                         }, Modifier.weight(1f), icon = OtIcons.Copy)
                         MessageAction.OPEN -> OtButton("Ouvrir", {

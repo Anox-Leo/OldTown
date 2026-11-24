@@ -163,13 +163,13 @@ object Notifications {
             return
         }
         val id = idOf(item.msgId)
-        val text = if (item.sensitive) context.getString(R.string.sensitive_hidden) else preview(item.body)
+        val text = preview(item.body)
         val builder = NotificationCompat.Builder(context, channelFor(item))
             .setSmallIcon(R.drawable.ic_stat_oldtown)
             .setColor(context.getColor(R.color.ot_mark))
             .setContentTitle(titleOf(item))
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(if (item.sensitive) text else item.body))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(item.body))
             .setWhen(item.createdAtMs)
             .setShowWhen(true)
             .setContentIntent(openConversation(context, item, id))
@@ -177,9 +177,7 @@ object Notifications {
             .setGroup(GROUP)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAllowSystemGeneratedContextualActions(false)
-            .setVisibility(
-                if (item.sensitive) NotificationCompat.VISIBILITY_SECRET else NotificationCompat.VISIBILITY_PRIVATE,
-            )
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         for (action in actionsFor(item.kind, item.body)) {
             builder.addAction(0, context.getString(label(action)), pending(context, action, item, id))
         }

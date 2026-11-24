@@ -357,9 +357,14 @@ async fn files_both_ways() {
 #[test]
 fn old_history_without_files_still_reads() {
     let old = r#"[{"msg_id":"m","from_id":"d","from_name":"mac","created_at_ms":1,"kind":"text","body":"x","sensitive":false}]"#;
-    let items: Vec<Received> = serde_json::from_str(old).unwrap();
+    let store = Arc::new(TestStore::default());
+    store.0.lock().unwrap().insert("history.json".into(), old.as_bytes().to_vec());
+    let items = history(store.clone()).unwrap();
     assert_eq!(items[0].file, None);
     assert!(items[0].to.is_empty() && !items[0].outgoing && !items[0].pending);
+    Local::new(store.clone()).remove_history("absent").unwrap();
+    let raw = String::from_utf8(store.0.lock().unwrap()["history.json"].clone()).unwrap();
+    assert!(raw.contains("\"msg_id\":\"m\"") && !raw.contains("sensitive"), "{raw}");
 }
 
 #[tokio::test]
@@ -440,7 +445,6 @@ fn history_keeps_the_last_hundred() {
             created_at_ms: i,
             kind: ContentKind::Text,
             body: format!("{i}"),
-            sensitive: false,
             file: None,
             to: vec![],
             outgoing: i % 2 == 0,

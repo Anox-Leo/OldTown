@@ -98,8 +98,6 @@ pub struct Received {
     pub kind: ContentKind,
     pub body: String,
     #[serde(default)]
-    pub sensitive: bool,
-    #[serde(default)]
     pub file: Option<crate::FileItem>,
     #[serde(default)]
     pub to: Vec<String>,

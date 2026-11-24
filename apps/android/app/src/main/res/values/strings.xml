@@ -16,7 +16,6 @@
     <string name="action_copy">Copier</string>
     <string name="action_open">Ouvrir</string>
     <string name="action_share">Partager</string>
-    <string name="sensitive_hidden">Contenu masqué</string>
     <string name="channel_transfers">Transferts</string>
     <string name="channel_transfers_desc">Progression des fichiers envoyés et reçus.</string>
     <string name="action_download">Télécharger</string>
