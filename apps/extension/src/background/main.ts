@@ -477,16 +477,18 @@ async function deliverItem(e: Engine, item: Item): Promise<void> {
   const recent = Date.now() - Date.parse(item.createdAt) < AUTO_OPEN_MAX_AGE;
   const win = recent ? await focusedWindow() : undefined;
   if (win && e.state().relayAccess) {
-    if (file.size > AUTO_CACHE_MAX) {
-      rememberChat(e, item);
-      if (await openPopup(win.id)) return;
-    } else if (isViewable(file.mime)) {
+    const small = file.size <= AUTO_CACHE_MAX;
+    if (small && isViewable(file.mime) && e.state().admin) {
       await chrome.tabs.create({
         url: fileUrl(file.blobId, file.name),
         active: true,
         windowId: win.id,
       });
       return;
+    }
+    if (!small || isViewable(file.mime)) {
+      rememberChat(e, item);
+      if (await openPopup(win.id)) return;
     }
   }
   await notify(e, item);

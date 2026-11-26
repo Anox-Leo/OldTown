@@ -89,7 +89,9 @@ l'interface.
   « OK ».
 - **Élément reçu** (note 0024, `deliver`) : popup ouverte → liste seulement ;
   navigateur au premier plan et élément récent → lien ouvert dans un onglet,
-  texte → popup (`action.openPopup`) ; sinon notification. Raccourcis
+  texte → popup (`action.openPopup`) ; sinon notification. Un fichier reçu
+  que le navigateur affiche s'ouvre dans un onglet pour l'admin seulement ;
+  pour un non-admin, la popup s'ouvre sur sa conversation. Raccourcis
   `send-page` (`Alt+Shift+S`), `send-clipboard` (`Alt+Shift+V`, lecture
   par le document offscreen), vers la dernière conversation ouverte, sinon
   mon appareil principal, ou mon autre appareil le plus récemment actif si
