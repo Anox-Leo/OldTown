@@ -23,6 +23,7 @@ import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.relay.RelayService
 import dev.oldtown.android.relay.Transfer
 import dev.oldtown.android.ui.MainActivity
+import dev.oldtown.android.ui.NO_CHANNEL
 import dev.oldtown.android.ui.channelOf
 import dev.oldtown.core.Received
 
@@ -81,6 +82,7 @@ object Notifications {
 
     private fun openConversation(context: Context, item: Received, id: Int): PendingIntent {
         val channel = channelOf(item, RelayHub.state.value.device?.deviceId)
+        if (channel == NO_CHANNEL) return openApp(context)
         return PendingIntent.getActivity(
             context,
             id,

@@ -240,20 +240,17 @@ fun DeviceKind.icon(): ImageVector = when (this) {
     DeviceKind.BROWSER -> OtIcons.Globe
     DeviceKind.CLI -> OtIcons.Cli
     DeviceKind.UNKNOWN -> OtIcons.Unknown
-    DeviceKind.GROUP, DeviceKind.PERSON -> OtIcons.Users
+    DeviceKind.PERSON -> OtIcons.Users
 }
 
 @Composable
 fun Avatar(kind: DeviceKind, color: Long, size: Dp = 48.dp, online: Boolean = false, initials: String = "") {
-    val group = kind == DeviceKind.GROUP
     Box(Modifier.size(size)) {
         Box(
-            Modifier.fillMaxSize().clip(CircleShape).background(if (group) Ot.colors.tile else Color(color)),
+            Modifier.fillMaxSize().clip(CircleShape).background(Color(color)),
             contentAlignment = Alignment.Center,
         ) {
-            if (group) {
-                Mark(size * 0.55f)
-            } else if (kind == DeviceKind.PERSON) {
+            if (kind == DeviceKind.PERSON) {
                 Text(
                     initials,
                     style = MaterialTheme.typography.labelLarge.copy(

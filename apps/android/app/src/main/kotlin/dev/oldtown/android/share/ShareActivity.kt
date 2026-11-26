@@ -47,10 +47,7 @@ import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.Banner
 import dev.oldtown.android.ui.components.BannerKind
 import dev.oldtown.android.ui.components.Divider
-import dev.oldtown.android.ui.ALL_CHANNEL
-import dev.oldtown.android.ui.ALL_NAME
 import dev.oldtown.android.ui.DeviceKind
-import dev.oldtown.android.ui.avatarColor
 import dev.oldtown.android.ui.initials
 import dev.oldtown.android.ui.shareTargets
 import dev.oldtown.android.ui.components.Avatar
@@ -274,17 +271,12 @@ private fun Recipients(
     }
     val targets = remember(group, history, me, people) { shareTargets(group.members, history, me, people) }
     val (others, persons) = targets.partition { it.kind != DeviceKind.PERSON }
-    OtCard(padding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-        RecipientRow(
-            ALL_NAME,
-            "${others.size} appareil" + if (others.size > 1) "s" else "",
-            DeviceKind.GROUP,
-            avatarColor(ALL_CHANNEL),
-            Modifier.testTag("recipient-all"),
-        ) { onPick(ALL_CHANNEL, "tous") }
-        for (t in others) {
-            Divider()
-            RecipientRow(t.name, null, t.kind, t.color, Modifier.testTag("recipient")) { onPick(t.channel, t.name) }
+    if (others.isNotEmpty()) {
+        OtCard(padding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+            others.forEachIndexed { i, t ->
+                if (i > 0) Divider()
+                RecipientRow(t.name, null, t.kind, t.color, Modifier.testTag("recipient")) { onPick(t.channel, t.name) }
+            }
         }
     }
     if (persons.isNotEmpty()) {

@@ -11,11 +11,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-enum class DeviceKind { PHONE, LAPTOP, DESKTOP, BROWSER, CLI, UNKNOWN, GROUP, PERSON }
+enum class DeviceKind { PHONE, LAPTOP, DESKTOP, BROWSER, CLI, UNKNOWN, PERSON }
 
-const val ALL_NAME = "Tous mes appareils"
-
-const val ALL_CHANNEL = ""
+const val NO_CHANNEL = ""
 
 const val USER_CHANNEL = "user:"
 
@@ -33,8 +31,8 @@ fun channelOf(item: Received, me: String?): String {
     if (toUser != null) return userChannel(toUser, item.toDevice)
     item.fromUser?.let { return userChannel(it) }
     val to = item.to
-    if (item.outgoing) return to.singleOrNull() ?: ALL_CHANNEL
-    return if (to.size == 1 && to[0] == me) item.fromId else ALL_CHANNEL
+    if (item.outgoing) return to.singleOrNull() ?: NO_CHANNEL
+    return if (to.size == 1 && to[0] == me) item.fromId else NO_CHANNEL
 }
 
 sealed interface ChannelTarget {
@@ -65,7 +63,10 @@ fun inChannel(item: Received, channel: String, me: String?): Boolean {
     }
 }
 
-fun recipientsOf(channel: String): List<String> = if (channel == ALL_CHANNEL) emptyList() else listOf(channel)
+fun recipientsOf(channel: String): List<String> {
+    require(channel != NO_CHANNEL) { "aucun destinataire : l'envoi à tous mes appareils n'existe plus" }
+    return listOf(channel)
+}
 
 private val COLORS = OtTokens.avatarColors
 
@@ -124,13 +125,11 @@ fun conversations(
 ): List<Conversation> {
     val profile = profiles.associateBy { it.deviceId }
     val last = lastByChannel(items, me)
-    val devices = members
+    return members
         .filter { it.deviceId != me }
         .map { Conversation(it.deviceId, it.name, deviceKind(profile[it.deviceId]?.kind), avatarColor(it.deviceId), last[it.deviceId]) }
         .filter { it.kind != DeviceKind.CLI }
         .sortedWith(compareByDescending<Conversation> { it.last?.createdAtMs ?: 0L }.thenBy(byName) { it.name })
-    val all = Conversation(ALL_CHANNEL, ALL_NAME, DeviceKind.GROUP, avatarColor(ALL_CHANNEL), last[ALL_CHANNEL])
-    return listOf(all) + devices
 }
 
 fun personConversations(person: PersonItem, items: List<Received>, me: String?): List<Conversation> {
@@ -229,10 +228,9 @@ fun shareTargets(
 
 private val SPACES = Regex("""\s+""")
 
-fun preview(item: Received, channel: String): String {
+fun preview(item: Received): String {
     val body = item.body.replace(SPACES, " ").trim().take(200)
-    if (item.outgoing) return "Vous : $body"
-    return if (channel == ALL_CHANNEL) "${item.fromName} : $body" else body
+    return if (item.outgoing) "Vous : $body" else body
 }
 
 private val HOUR = DateTimeFormatter.ofPattern("HH:mm", Locale.FRENCH)
