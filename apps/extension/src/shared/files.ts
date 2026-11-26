@@ -17,9 +17,25 @@ export function fileUrl(blobId: string, name: string, download = false): string 
   return chrome.runtime.getURL(filePath(blobId, name, download).slice(1));
 }
 
-export function parseFilePath(url: URL): { blobId: string; download: boolean } | undefined {
+export function parseFilePath(
+  url: URL,
+): { blobId: string; name: string; download: boolean } | undefined {
   if (!url.pathname.startsWith(FILE_PATH)) return undefined;
-  const blobId = url.pathname.slice(FILE_PATH.length).split('/')[0] ?? '';
+  const [blobId = '', name = ''] = url.pathname.slice(FILE_PATH.length).split('/');
   if (!/^blob_[0-9A-Z]{26}$/.test(blobId)) return undefined;
-  return { blobId, download: url.searchParams.get('dl') === '1' };
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(name);
+  } catch {
+    decoded = '';
+  }
+  return {
+    blobId,
+    name: saveName(decoded || blobId),
+    download: url.searchParams.get('dl') === '1',
+  };
+}
+
+export function saveName(name: string): string {
+  return name.replace(/[\\/:*?"<>|\p{Cc}]/gu, '_').replace(/^[.\s]+/, '') || 'fichier';
 }

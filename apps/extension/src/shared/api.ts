@@ -263,4 +263,7 @@ export type Push =
 export const POPUP_PORT = 'popup';
 
 export type OffscreenMessage =
-  { target: 'offscreen'; type: 'copy'; text: string } | { target: 'offscreen'; type: 'read' };
+  | { target: 'offscreen'; type: 'copy'; text: string }
+  | { target: 'offscreen'; type: 'read' }
+  | { target: 'offscreen'; type: 'blob'; url: string }
+  | { target: 'offscreen'; type: 'revoke'; url: string };

@@ -11,7 +11,7 @@ l'interface.
   protocole, `people.ts` les personnes (annuaire, journal, invitation,
   administration ; étape 10), `secrets.ts` le stockage chiffré, `frames.ts` les trames,
   `transfer.ts` les fichiers, sans API Chrome), `src/offscreen/` (copie
-  dans le presse-papiers), `src/pages/` (`send.html` : permissions sur un
+  dans le presse-papiers, `blob:` d'un fichier reçu à enregistrer), `src/pages/` (`send.html` : permissions sur un
   clic, et choix de fichiers en repli ; TypeScript simple, esbuild),
   `src/app/` (popup, réglages et administration, Angular), `src/shared/` (`api.ts` messages
   interface ↔ service worker, `files.ts` adresses des fichiers reçus,
@@ -117,7 +117,13 @@ l'interface.
   avec `?dl=1` ; `Range` ; `Content-Security-Policy: sandbox` (sauf PDF) et
   `nosniff`. Petits fichiers copiés d'office, SHA-256 vérifié, puis `done`.
   La clé du fichier reste dans le coffre tant que la copie existe
-  (`pruneCache`). Rien n'arrive sur le disque sans geste. Les requêtes HTTP
+  (`pruneCache`). Rien n'arrive sur le disque sans geste. « Enregistrer
+  sous » (Ctrl+S, clic droit) sur l'onglet d'un fichier reçu : le
+  gestionnaire de téléchargements redemande l'adresse sans passer par le
+  service worker et échoue ; `downloads.onCreated` annule et efface ce
+  téléchargement, le document offscreen relit le fichier par le service
+  worker et en fait un `blob:`, relancé avec `saveAs` puis révoqué à la
+  fin (note 0087). Les requêtes HTTP
   vers le relais demandent la permission de son origine
   (`optional_host_permissions`) ; une image qu'un site ne laisse pas lire,
   celle de son seul domaine. Une demande de permission se fait toujours
@@ -131,7 +137,8 @@ l'interface.
   (`test/vectors.test.ts`).
 - **Permissions** (`manifest.json`) : `activeTab`, `alarms`,
   `clipboardRead` (raccourci « presse-papiers » seulement),
-  `contextMenus`, `notifications`, `offscreen`, `scripting` (remplissage
+  `contextMenus`, `downloads` (« Enregistrer sous » d'un fichier reçu,
+  note 0087), `notifications`, `offscreen`, `scripting` (remplissage
   des codes, note 0045), `storage` ;
   `optional_host_permissions` `<all_urls>`, demandée origine par origine,
   ou `https://*/*` pour les codes (note 0045).
