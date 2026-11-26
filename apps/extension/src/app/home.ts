@@ -113,7 +113,7 @@ const PRESENCE_EVERY_MS = 15_000;
                       @if (last.file) {
                         <app-icon name="paperclip" [size]="13" />
                       }
-                      <span class="text">{{ previewOf(last, c.id) }}</span>
+                      <span class="text">{{ previewOf(last) }}</span>
                     } @else {
                       <span class="text">Aucun message</span>
                     }
@@ -281,8 +281,7 @@ export class HomeComponent {
       if (channel === undefined) return;
       untracked(() => {
         this.personId.set(parseChannel(channel).user);
-        const list = this.list();
-        const c = list.find((x) => x.id === channel) ?? list[0];
+        const c = this.list().find((x) => x.id === channel);
         if (c) this.select(c);
         this.bg.openChat.set(undefined);
       });
@@ -337,8 +336,8 @@ export class HomeComponent {
     return shortTime(item.createdAt);
   }
 
-  protected previewOf(item: Item, channel: string): string {
-    return preview(item, channel);
+  protected previewOf(item: Item): string {
+    return preview(item);
   }
 
   protected openSettings(): Promise<void> {

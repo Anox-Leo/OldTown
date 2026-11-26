@@ -90,6 +90,7 @@ export interface EngineDeps {
 }
 
 export const NO_RELAY_ACCESS = 'accès au relais pas encore autorisé : « Autoriser » dans la popup';
+export const NO_RECIPIENT = 'choisissez à qui envoyer';
 
 interface Outgoing {
   path: string;
@@ -797,6 +798,7 @@ export class Engine {
     if (!core || !client || !this.group()) {
       throw new Error("cette extension n'est pas encore dans un groupe");
     }
+    if (!to) throw new Error(NO_RECIPIENT);
     const target = parseChannel(to);
     let env: string;
     if (target.user !== undefined) {
@@ -857,6 +859,7 @@ export class Engine {
 
   async sendFile(file: Outgoing): Promise<string> {
     this.ready();
+    if (!file.to) throw new Error(NO_RECIPIENT);
     if (!(await this.refreshRelayAccess())) throw new Error(NO_RELAY_ACCESS);
     await this.editOutgoing((list) =>
       list.some((o) => o.path === file.path) ? list : [...list, file],

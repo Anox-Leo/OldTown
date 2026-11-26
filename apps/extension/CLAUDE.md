@@ -53,8 +53,9 @@ l'interface.
   Dans le `localStorage` des pages : seulement `theme` (choix d'affichage,
   `src/shared/theme.ts`, lu avant le premier rendu).
 - **Popup = conversations** (notes 0030 et 0031) : accueil (`home.ts`) en
-  liste, « Tous mes appareils » puis un appareil par ligne (plus récent
-  d'abord), avatar (type déclaré au relais, note 0068 : l'extension
+  liste, un appareil par ligne (plus récent d'abord ; plus de « Tous mes
+  appareils », note 0078 : un ancien envoi à tous n'entre dans aucune
+  conversation, et `send` refuse un destinataire vide), avatar (type déclaré au relais, note 0068 : l'extension
   déclare `browser` ; sans type, pictogramme neutre ; couleur tirée de l'id :
   `devices.ts`) et dernier message ; un clic ouvre la conversation
   (`chat.ts`, canal ouvert = `recipient`) : flèche de retour, présence
@@ -88,7 +89,9 @@ l'interface.
   navigateur au premier plan et élément récent → lien ouvert dans un onglet,
   texte → popup (`action.openPopup`) ; sinon notification. Raccourcis
   `send-page` (`Alt+Shift+S`), `send-clipboard` (`Alt+Shift+V`, lecture
-  par le document offscreen) et `fill-otp` (`Alt+Shift+O`). Navigateur cible : Brave (Chromium).
+  par le document offscreen), vers la dernière conversation ouverte, sinon
+  mon appareil principal, ou mon autre appareil le plus récemment actif si
+  c'est celui-ci (`shortcutChannel`) et `fill-otp` (`Alt+Shift+O`). Navigateur cible : Brave (Chromium).
 - **Codes à usage unique** (note 0045, `src/shared/otp.ts`) : élément
   `kind: 'otp'` (`body` = le code, `otp` = affichage, expéditeur, DMARC,
   expiration). Code valable reçu (`deliverOtp`), d'un de mes appareils ou

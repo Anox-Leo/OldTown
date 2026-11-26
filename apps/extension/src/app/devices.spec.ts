@@ -1,6 +1,6 @@
 import type { Item, MemberView } from '../shared/api';
 import { AVATAR_COLORS } from '../shared/tokens';
-import { ALL_NAME, avatarColor, conversations, deviceKind, preview } from './devices';
+import { avatarColor, conversations, deviceKind, preview } from './devices';
 
 const member = (id: string, name: string): MemberView => ({
   device_id: id,
@@ -35,7 +35,7 @@ describe('devices', () => {
     expect(rank('01J9ZK3Q4W5E6R7T8Y9U0I1O2P')).toBe(0);
   });
 
-  it('« Tous » en premier, puis du plus récemment actif au moins récent', () => {
+  it('du plus récemment actif au moins récent, sans « Tous mes appareils »', () => {
     const sent = (id: string, to: string[], n: number): Item => ({
       msgId: id,
       from: 'dev_me',
@@ -56,12 +56,11 @@ describe('devices', () => {
       [sent('1', ['dev_c'], 1), sent('2', ['dev_b'], 2), sent('3', [], 3)],
       'dev_me',
     );
-    expect(list.map((c) => c.name)).toEqual([ALL_NAME, 'Bravo', 'Charlie', 'Alpha']);
-    expect(list.map((c) => c.last?.msgId)).toEqual(['3', '2', '1', undefined]);
-    expect(list[0]?.kind).toBe('group');
+    expect(list.map((c) => c.name)).toEqual(['Bravo', 'Charlie', 'Alpha']);
+    expect(list.map((c) => c.last?.msgId)).toEqual(['2', '1', undefined]);
   });
 
-  it('aperçu sur une ligne, avec l’auteur', () => {
+  it('aperçu sur une ligne', () => {
     const item: Item = {
       msgId: 'a',
       from: 'dev_tel',
@@ -70,8 +69,7 @@ describe('devices', () => {
       kind: 'text',
       body: 'ligne 1\nligne 2',
     };
-    expect(preview(item, 'dev_tel')).toBe('ligne 1 ligne 2');
-    expect(preview(item, '')).toBe('Téléphone : ligne 1 ligne 2');
-    expect(preview({ ...item, outgoing: true }, '')).toBe('Vous : ligne 1 ligne 2');
+    expect(preview(item)).toBe('ligne 1 ligne 2');
+    expect(preview({ ...item, outgoing: true })).toBe('Vous : ligne 1 ligne 2');
   });
 });

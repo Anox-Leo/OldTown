@@ -6,6 +6,7 @@ import {
   channelOf,
   inChannel,
   parseChannel,
+  shortcutChannel,
   userChannel,
 } from '../shared/api';
 import type { AdminUser } from '../background/frames';
@@ -136,7 +137,14 @@ describe('listes de l’accueil', () => {
       ME,
       [device('dev_cli', 'serveur', { kind: 'cli' })],
     );
-    expect(list.map((c) => c.id)).toEqual(['', 'dev_tel']);
+    expect(list.map((c) => c.id)).toEqual(['dev_tel']);
+  });
+
+  it('plus de « Tous mes appareils » : un ancien envoi à tous n’entre dans aucune conversation (note 0078)', () => {
+    const toAll = item({ msgId: 'tous', from: 'dev_tel', to: [], createdAt: at(9) });
+    const list = conversations([member(ME, 'moi'), member('dev_tel', 'tel')], [toAll], ME);
+    expect(list.map((c) => c.id)).toEqual(['dev_tel']);
+    expect(list[0]?.last).toBeUndefined();
   });
 
   it('une personne : elle d’abord, puis ses appareils joignables par nom', () => {
@@ -226,5 +234,72 @@ describe('grille du réseau (D41)', () => {
       ['a', 'c'],
       ['b', 'c'],
     ]);
+  });
+});
+
+describe('raccourcis Alt+Shift+S et V (note 0078)', () => {
+  const member = (id: string, name: string): MemberView => ({
+    device_id: id,
+    name,
+    sign_fingerprint: '',
+    exchange_fingerprint: '',
+    added_epoch: 1,
+  });
+  const ALICE = 'usr_alice';
+  const members = [
+    member(ME, 'moi'),
+    member('dev_tel', 'tel'),
+    member('dev_pc', 'pc'),
+    member('dev_cli', 'serveur'),
+  ];
+  const state = (recipient: string, principal?: string, extra: PersonView[] = []) => ({
+    device: { id: ME, name: 'moi', serverUrl: 'wss://relais' },
+    group: { epoch: 1, key_fingerprint: '', roster_version: 1, members },
+    me: ALICE,
+    recipient,
+    people: [
+      person(ALICE, 'Alice', [
+        device(ME, 'moi', { default: principal === ME }),
+        device('dev_tel', 'tel', { default: principal === 'dev_tel', kind: 'phone' }),
+        device('dev_pc', 'pc', { default: principal === 'dev_pc', kind: 'laptop' }),
+        device('dev_cli', 'serveur', { kind: 'cli', reachable: false }),
+      ]),
+      person(BOB, 'Bob', [device('dev_bob', 'bob-phone')]),
+      ...extra,
+    ],
+  });
+  const sent = (to: string, n: number) =>
+    item({ msgId: `${to}-${n}`, outgoing: true, from: ME, to: [to], createdAt: at(n) });
+
+  it('conversation ouverte : elle', () => {
+    expect(shortcutChannel(state('dev_pc', 'dev_tel'), [])).toBe('dev_pc');
+    expect(shortcutChannel(state(userChannel(BOB), 'dev_tel'), [])).toBe(userChannel(BOB));
+  });
+
+  it('sans conversation ouverte : mon appareil principal', () => {
+    expect(shortcutChannel(state('', 'dev_tel'), [sent('dev_pc', 5)])).toBe('dev_tel');
+  });
+
+  it('principal = cet appareil : mon autre appareil le plus récemment actif', () => {
+    expect(shortcutChannel(state('', ME), [sent('dev_tel', 1), sent('dev_pc', 2)])).toBe('dev_pc');
+    expect(shortcutChannel(state('', ME), [sent('dev_pc', 1), sent('dev_tel', 2)])).toBe('dev_tel');
+  });
+
+  it('sans activité, ni principal : par nom ; jamais un appareil en ligne de commande', () => {
+    expect(shortcutChannel(state('', undefined), [sent('dev_cli', 9)])).toBe('dev_pc');
+  });
+
+  it('une conversation qui n’existe plus compte comme aucune', () => {
+    expect(shortcutChannel(state('dev_parti', 'dev_tel'), [])).toBe('dev_tel');
+    expect(shortcutChannel(state('dev_cli', 'dev_tel'), [])).toBe('dev_tel');
+    expect(shortcutChannel(state(userChannel('usr_parti'), 'dev_tel'), [])).toBe('dev_tel');
+    expect(shortcutChannel(state(userChannel(ALICE), 'dev_tel'), [])).toBe('dev_tel');
+    const svc = person('usr_svc', 'Notifier', [device('dev_n', 'n')], { role: 'service' });
+    expect(shortcutChannel(state(userChannel('usr_svc'), 'dev_tel', [svc]), [])).toBe('dev_tel');
+  });
+
+  it('aucun autre appareil : aucune cible', () => {
+    const alone = { ...state('', ME), group: { ...state('').group, members: [member(ME, 'moi')] } };
+    expect(shortcutChannel(alone, [])).toBeUndefined();
   });
 });

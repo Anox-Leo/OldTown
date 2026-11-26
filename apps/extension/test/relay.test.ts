@@ -5,7 +5,7 @@ import path from 'node:path';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { Engine } from '../src/background/engine';
+import { Engine, NO_RECIPIENT } from '../src/background/engine';
 import { IndexedDbKeySource } from '../src/background/secrets';
 import { type Item, channelOf } from '../src/shared/api';
 import { Cli, MemoryKV, Relay, binary, eventually, loadWasm } from './support';
@@ -30,6 +30,8 @@ describe('extension contre ot-server', () => {
   let phone: Cli;
   const chrome = profile();
   let engine: Engine;
+  const idOf = (name: string) =>
+    engine.state().group?.members.find((m) => m.name === name)?.device_id ?? '';
 
   beforeAll(async () => {
     loadWasm();
@@ -66,7 +68,8 @@ describe('extension contre ot-server', () => {
     try {
       await eventually('connexion', () => engine.state().connection === 'online' || undefined);
       await listen.ready;
-      await engine.send('https://exemple.org/page', '');
+      await expect(engine.send('à tous', '')).rejects.toThrow(NO_RECIPIENT);
+      await engine.send('https://exemple.org/page', idOf('telephone'));
       const got = await eventually('reçu par le téléphone', () => listen.messages[0]);
       expect(got).toMatchObject({
         kind: 'link',
@@ -76,15 +79,19 @@ describe('extension contre ot-server', () => {
       const sent = await eventually('envoi accepté', async () =>
         (await engine.history()).find((i) => i.outgoing && i.pending === false),
       );
-      expect(sent).toMatchObject({ kind: 'link', body: 'https://exemple.org/page', to: [] });
-      expect(channelOf(sent, engine.state().device?.id)).toBe('');
+      expect(sent).toMatchObject({
+        kind: 'link',
+        body: 'https://exemple.org/page',
+        to: [idOf('telephone')],
+      });
+      expect(channelOf(sent, engine.state().device?.id)).toBe(idOf('telephone'));
     } finally {
       listen.stop();
     }
 
     const items: Item[] = [];
     engine.onChange((p) => p.type === 'item' && items.push(p.item));
-    await phone.run('send', 'bonjour depuis le téléphone');
+    await phone.run('send', '--to', 'chrome', 'bonjour depuis le téléphone');
     const item = await eventually('reçu par l’extension', () => items[0]);
     expect(item).toMatchObject({
       kind: 'text',
@@ -92,8 +99,8 @@ describe('extension contre ot-server', () => {
       fromName: 'telephone',
     });
     expect((await engine.history())[0]?.body).toBe('bonjour depuis le téléphone');
-    expect(item.to).toEqual([]);
-    expect(channelOf(item, engine.state().device?.id)).toBe('');
+    expect(item.to).toEqual([idOf('chrome')]);
+    expect(channelOf(item, engine.state().device?.id)).toBe(idOf('telephone'));
   });
 
   it('réessaie un élément que le stockage refuse, puis signale sa perte', async () => {
@@ -104,7 +111,7 @@ describe('extension contre ot-server', () => {
       return set(items);
     });
     try {
-      await phone.run('send', 'rangé au troisième essai');
+      await phone.run('send', '--to', 'chrome', 'rangé au troisième essai');
       await eventually(
         'rangé malgré deux refus',
         async () =>
@@ -113,7 +120,7 @@ describe('extension contre ot-server', () => {
       expect(engine.state().lostItems).toBe(0);
 
       refusals = Infinity;
-      await phone.run('send', 'jamais rangé');
+      await phone.run('send', '--to', 'chrome', 'jamais rangé');
       await eventually('perte signalée', () => engine.state().lostItems === 1 || undefined);
       expect((await engine.history()).some((i) => i.body === 'jamais rangé')).toBe(false);
       await eventually('perte rangée', () => chrome.kv.items.has('secret:lost.json') || undefined);
@@ -122,7 +129,7 @@ describe('extension contre ot-server', () => {
       expect(engine.state().lostItems).toBe(1);
 
       refusals = 0;
-      await phone.run('send', 'la session continue');
+      await phone.run('send', '--to', 'chrome', 'la session continue');
       await eventually(
         'reçu après la perte',
         async () =>
@@ -191,7 +198,7 @@ describe('extension contre ot-server', () => {
 
   it('reprend après un redémarrage du service worker, sans doublon', async () => {
     engine.close();
-    await phone.run('send', 'pendant l’arrêt');
+    await phone.run('send', '--to', 'chrome', 'pendant l’arrêt');
     engine = await open(chrome);
     expect(engine.state().phase).toBe('ready');
     await eventually(
@@ -205,7 +212,7 @@ describe('extension contre ot-server', () => {
   it('garde les envois hors ligne et les envoie au retour du relais', async () => {
     await relay.stop();
     await eventually('déconnexion', () => engine.state().connection !== 'online' || undefined);
-    await engine.send('écrit hors ligne', '');
+    await engine.send('écrit hors ligne', idOf('telephone'));
     expect(engine.state().pendingSends).toBe(1);
     await relay.restart();
     await eventually('envoi accepté', () => engine.state().pendingSends === 0 || undefined);
