@@ -62,7 +62,9 @@ l'interface.
   d'après `devices` (toutes les 15 s), bulles envoyées à droite et reçues à
   gauche, zone d'envoi en bas. Rangement des éléments : `channelOf`.
   Popup ouverte pour un élément reçu (d'office ou par sa notification) :
-  sa conversation directement (push `open`, note 0032).
+  sa conversation directement (push `open`, note 0032). Ouvrir une
+  conversation (`mark-read`) efface les notifications de ses éléments
+  (`notificationsToClear`), sur cet appareil seulement.
   L'historique (100 éléments) garde aussi les envois, « en cours » jusqu'à
   `accepted` ; les destinataires d'un reçu viennent de l'enveloppe.
 - **Personnes** (étape 10, `people.ts`, déroulés de `client.rs` refaits

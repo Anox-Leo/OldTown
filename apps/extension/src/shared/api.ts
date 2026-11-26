@@ -191,6 +191,18 @@ export function shortcutChannel(state: ShortcutState, items: readonly Item[]): s
   return (others.find((m) => profiles.get(m.device_id)?.default) ?? others[0])?.device_id;
 }
 
+export function notificationsToClear(
+  shown: readonly string[],
+  items: readonly Item[],
+  channel: string,
+  me: string | undefined,
+): string[] {
+  const ids = new Set(shown);
+  return items
+    .filter((i) => ids.has(i.msgId) && !i.outgoing && inChannel(i, channel, me))
+    .map((i) => i.msgId);
+}
+
 export interface RelayDevice {
   id: string;
   name: string;
