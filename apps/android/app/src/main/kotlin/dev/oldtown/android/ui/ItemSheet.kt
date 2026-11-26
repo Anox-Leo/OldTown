@@ -30,6 +30,7 @@ import dev.oldtown.android.notify.actionsFor
 import dev.oldtown.android.relay.RelayHub
 import dev.oldtown.android.ui.components.ButtonKind
 import dev.oldtown.android.ui.components.OtButton
+import dev.oldtown.android.ui.components.OtIconButton
 import dev.oldtown.android.ui.components.OtIcons
 import dev.oldtown.android.ui.theme.Ot
 import dev.oldtown.android.ui.theme.OtShapes
@@ -91,10 +92,10 @@ internal fun ItemSheet(item: Received, onDismiss: () -> Unit) {
                             openLink(context, item.body)
                             onDismiss()
                         }, Modifier.weight(1f), kind = ButtonKind.Secondary, icon = OtIcons.External)
-                        MessageAction.SHARE -> OtButton("Partager", {
+                        MessageAction.SHARE -> OtIconButton(OtIcons.Share2, "Partager", {
                             context.startActivity(Notifications.shareIntent(item.body))
                             onDismiss()
-                        }, Modifier.weight(1f), kind = ButtonKind.Secondary, icon = OtIcons.Share)
+                        })
                     }
                 }
             }
@@ -125,10 +126,10 @@ private fun FileSheetBody(item: Received, file: dev.oldtown.core.FileItem, onDis
                     if (saved != null) openFile(context, saved, file.mime)
                     onDismiss()
                 }, Modifier.weight(1f), icon = OtIcons.External)
-                FileAction.SHARE -> OtButton("Partager", {
+                FileAction.SHARE -> OtIconButton(OtIcons.Share2, "Partager", {
                     if (saved != null) context.startActivity(FileTransfers.shareIntent(saved, file.mime))
                     onDismiss()
-                }, Modifier.weight(1f), kind = ButtonKind.Secondary, icon = OtIcons.Share)
+                })
             }
         }
     }
