@@ -12,6 +12,10 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   SDK API 37, NDK r29 (`ndkVersion`), cibles Rust Android, `cargo-ndk`.
   `local.properties` (non versionné) : `sdk.dir`, `cargo.dir`,
   `oldtown.abis`, `oldtown.signing.*`.
+- **Variante de debug** : `dev.oldtown.android.dev`, « OldTown dev »
+  (`src/debug/res`), installable à côté de la release sans la remplacer.
+  Ne jamais désinstaller `dev.oldtown.android` d'un téléphone : ses clés
+  sont dans le Keystore et partiraient avec elle.
 - **Une seule connexion** (note 0009) : `relay/RelayService` est le seul à
   créer un `OtClient`. Les écrans, la feuille de partage et les
   notifications passent par `relay/RelayHub` (état observable, `client()`,
