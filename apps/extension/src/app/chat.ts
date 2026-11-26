@@ -489,7 +489,7 @@ export class ChatComponent {
     effect(() => {
       const channel = this.channel();
       const n = this.visible().length;
-      if (!this.target().user || n < 0) return;
+      if (n < 0) return;
       untracked(() => void this.bg.request({ type: 'mark-read', channel }).catch(() => undefined));
     });
     afterRenderEffect(() => {

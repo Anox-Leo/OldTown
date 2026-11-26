@@ -5,6 +5,7 @@ import {
   type PersonView,
   channelOf,
   inChannel,
+  notificationsToClear,
   parseChannel,
   shortcutChannel,
   userChannel,
@@ -301,5 +302,35 @@ describe('raccourcis Alt+Shift+S et V (note 0078)', () => {
   it('aucun autre appareil : aucune cible', () => {
     const alone = { ...state('', ME), group: { ...state('').group, members: [member(ME, 'moi')] } };
     expect(shortcutChannel(alone, [])).toBeUndefined();
+  });
+});
+
+describe('notifications effacées à la lecture (A3)', () => {
+  const fromTel = (msgId: string, n: number) =>
+    item({ msgId, from: 'dev_tel', to: [ME], createdAt: at(n) });
+  const fromBob = (msgId: string, from: string, n: number) =>
+    item({ msgId, from, fromUser: BOB, to: [ME], createdAt: at(n) });
+  const items = [
+    fromTel('t1', 1),
+    fromTel('t2', 2),
+    item({ msgId: 't3', outgoing: true, from: ME, to: ['dev_tel'], createdAt: at(3) }),
+    fromBob('b1', 'dev_bob_tel', 4),
+    fromBob('b2', 'dev_bob_pc', 5),
+    item({ msgId: 'c1', from: 'dev_carol', fromUser: CAROL, to: [ME], createdAt: at(6) }),
+  ];
+  const shown = ['t1', 't2', 't3', 'b1', 'b2', 'c1', 'joined:usr_dan'];
+
+  it('ouvrir une conversation efface ses notifications, et seulement les siennes', () => {
+    expect(notificationsToClear(shown, items, 'dev_tel', ME)).toEqual(['t1', 't2']);
+    expect(notificationsToClear(shown, items, userChannel(CAROL), ME)).toEqual(['c1']);
+  });
+
+  it('celle d’une personne efface celles de tous ses appareils', () => {
+    expect(notificationsToClear(shown, items, userChannel(BOB), ME)).toEqual(['b1', 'b2']);
+  });
+
+  it('une notification déjà fermée, ou sans élément, n’est pas touchée', () => {
+    expect(notificationsToClear(['t2', 'joined:usr_dan'], items, 'dev_tel', ME)).toEqual(['t2']);
+    expect(notificationsToClear([], items, 'dev_tel', ME)).toEqual([]);
   });
 });

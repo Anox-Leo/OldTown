@@ -1,6 +1,12 @@
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
-import { POPUP_PORT, channelOf, shortcutChannel, userChannel } from '../shared/api';
+import {
+  POPUP_PORT,
+  channelOf,
+  notificationsToClear,
+  shortcutChannel,
+  userChannel,
+} from '../shared/api';
 import { humanSize } from '../shared/format';
 import * as opfs from '../shared/opfs';
 import { OTP_ORIGINS, relayOrigin } from '../shared/origins';
@@ -223,7 +229,8 @@ async function handle(req: Request): Promise<unknown> {
     case 'setup-invite':
       return e.setupInvite(req.text, req.name);
     case 'mark-read':
-      return e.markRead(req.channel);
+      await e.markRead(req.channel);
+      return clearRead(e, req.channel);
     case 'dismiss-lost':
       return e.dismissLostItems();
     case 'refresh-directory':
@@ -249,6 +256,13 @@ async function handle(req: Request): Promise<unknown> {
     case 'mute-service':
       return e.muteService(req.service, req.muted);
   }
+}
+
+async function clearRead(e: Engine, channel: string): Promise<void> {
+  const shown = Object.keys(await chrome.notifications.getAll());
+  if (shown.length === 0) return;
+  const ids = notificationsToClear(shown, await e.history(), channel, e.state().device?.id);
+  await Promise.all(ids.map((id) => chrome.notifications.clear(id)));
 }
 
 let menuKey = '';
