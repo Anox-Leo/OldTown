@@ -92,6 +92,14 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   les vraies données de l'appli : un test qui oublie ou remplace l'appareil
   commence par `assumeNoRealDevice` (sauté sur un téléphone appairé), et son
   `@After` n'efface rien si le test a été sauté.
+- **Captures** (Roborazzi sur Robolectric, sous JVM) : `screens/ScreensCaptureTest`
+  rend les écrans avec les données fictives de `screens/Sample` (Alice, Bob),
+  en nuit et en parchemin. `./gradlew recordRoborazziDebug --tests
+  '*ScreensCaptureTest*'` écrit les PNG dans `app/build/outputs/roborazzi`
+  (non versionnés) ; `test` ne fait que les rendre. Un écran ne lance pas
+  d'appel réseau dans sa composition : la présence passe par
+  `LocalPresence`, la lecture par `onOpened`. Le cœur Rust de l'hôte
+  (`target/debug`) est chargé par JNA pour les appels purs (`coreVersion`).
 - Nouvelle dépendance : licence compatible, version dans
   `gradle/libs.versions.toml`, justifiée dans le compte rendu. Polices et
   icônes tierces : licence dans `third_party/`.

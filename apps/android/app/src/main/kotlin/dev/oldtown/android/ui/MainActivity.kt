@@ -162,7 +162,7 @@ private fun App() {
                 Screen.Settings -> SettingsScreen(hub, onBack = pop, onForgotten = { stack.clear() }, open = { stack.add(it) })
                 Screen.Sponsor -> SponsorScreen(onBack = pop)
                 Screen.ShowCode -> ShowCodeScreen(onBack = pop)
-                is Screen.Conversation -> ConversationScreen(hub, screen.channel, onBack = pop)
+                is Screen.Conversation -> ConversationScreen(hub, screen.channel, onBack = pop, onOpened = { RelayHub.markOpened(context, it) })
                 Screen.MyDevices -> MyDevicesScreen(hub, onBack = pop)
                 Screen.Admin -> AdminScreen(hub, onBack = pop, open = { stack.add(it) })
                 Screen.Invite -> InviteScreen(hub, onBack = pop)

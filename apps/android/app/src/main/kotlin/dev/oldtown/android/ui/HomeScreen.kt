@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -54,6 +55,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val PRESENCE_EVERY_MS = 15_000L
+
+val LocalPresence = staticCompositionLocalOf<suspend (Context) -> Map<String, Boolean>?> { ::loadPresence }
 
 @Composable
 fun connectionLabel(hub: HubState): Pair<String, Color> {
@@ -143,6 +146,7 @@ fun HomeScreen(hub: HubState, person: String?, onPerson: (String?) -> Unit, open
 @Composable
 internal fun rememberPresence(connection: Connection): Map<String, Boolean>? {
     val context = LocalContext.current
+    val load = LocalPresence.current
     val scope = rememberCoroutineScope()
     var presence by remember { mutableStateOf<Map<String, Boolean>?>(null) }
     val connected = connection is Connection.Connected
@@ -150,7 +154,7 @@ internal fun rememberPresence(connection: Connection): Map<String, Boolean>? {
         val job = if (connected) {
             scope.launch {
                 while (true) {
-                    presence = loadPresence(context)
+                    presence = load(context)
                     delay(PRESENCE_EVERY_MS)
                 }
             }

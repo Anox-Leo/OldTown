@@ -69,7 +69,7 @@ class ConversationsUiTest {
 
     @Test
     fun sentToADeviceIsOnTheRight() {
-        compose.setContent { OldTownTheme { ConversationScreen(hub, channel = "dev_b", onBack = {}) } }
+        compose.setContent { OldTownTheme { ConversationScreen(hub, channel = "dev_b", onBack = {}, onOpened = {}) } }
         val bubble = compose.onNodeWithText("message 2").fetchSemanticsNode().boundsInRoot
         val width = compose.onNode(hasTestTag("messages")).fetchSemanticsNode().boundsInRoot.width
         assertTrue("bulle à droite : $bubble sur $width", bubble.left > width / 2)
