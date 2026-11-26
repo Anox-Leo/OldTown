@@ -119,7 +119,7 @@ private fun senderName(hub: HubState, item: Received): String {
 private val SWIPE_BACK = 96.dp
 
 @Composable
-fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
+fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpened: suspend (user: String) -> Unit) {
     val context = LocalContext.current
     val presence = rememberPresence(hub.connection)
     val me = hub.device?.deviceId
@@ -138,7 +138,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit) {
     LaunchedEffect(channel, visible.firstOrNull()?.msgId) {
         if (target is ChannelTarget.Person) {
             try {
-                RelayHub.markOpened(context, target.user)
+                onOpened(target.user)
             } catch (e: OtException) {
                 Log.w("OldTown", "non-lus non rangés : ${e.message}")
             }

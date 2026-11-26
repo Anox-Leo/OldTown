@@ -18,6 +18,7 @@ import org.gradle.process.ExecOperations
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 val repoRoot: File = rootProject.projectDir.parentFile.parentFile
@@ -74,6 +75,7 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
     }
 
     lint {
@@ -189,6 +191,11 @@ val uniffiBindings = tasks.register<UniffiTask>("uniffiBindings") {
     outputDir.set(layout.buildDirectory.dir("generated/uniffi/kotlin"))
 }
 
+tasks.withType<Test>().configureEach {
+    dependsOn(uniffiBindings)
+    systemProperty("jna.library.path", File(repoRoot, "target/debug").path)
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.kotlin?.addGeneratedSourceDirectory(uniffiBindings, UniffiTask::outputDir)
@@ -218,6 +225,12 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testRuntimeOnly(libs.jna) { artifact { type = "jar" } }
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
