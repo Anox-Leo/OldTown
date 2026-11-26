@@ -60,8 +60,8 @@ fun Rail(hub: HubState, selected: String?, onChoose: (String?) -> Unit, onInvite
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         RailPerson(
-            name = me?.name ?: ALL_NAME,
-            color = avatarColor(me?.userId ?: ALL_CHANNEL),
+            name = me?.name.orEmpty(),
+            color = avatarColor(me?.userId.orEmpty()),
             selected = selected == null,
             unread = 0,
             online = false,

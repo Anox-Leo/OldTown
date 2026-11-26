@@ -1,6 +1,5 @@
 package dev.oldtown.android
 
-import dev.oldtown.android.ui.ALL_NAME
 import dev.oldtown.android.ui.ChannelTarget
 import dev.oldtown.android.ui.DeviceKind
 import dev.oldtown.android.ui.avatarColor
@@ -28,6 +27,7 @@ import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ConversationsTest {
@@ -94,7 +94,7 @@ class ConversationsTest {
         assertEquals("dev_a", channelOf(item("4", "dev_a", listOf(ME), 1), ME))
         assertEquals("", channelOf(item("5", "dev_a", emptyList(), 1), ME))
         assertEquals("", channelOf(item("6", "dev_a", listOf(ME, "dev_b"), 1), ME))
-        assertEquals(emptyList<String>(), recipientsOf(""))
+        assertThrows(IllegalArgumentException::class.java) { recipientsOf("") }
         assertEquals(listOf("dev_a"), recipientsOf("dev_a"))
     }
 
@@ -171,8 +171,16 @@ class ConversationsTest {
             ME,
             listOf(device("dev_cli", "serveur", kind = "cli")),
         )
-        assertEquals(listOf("", "dev_tel"), list.map { it.id })
-        assertEquals(DeviceKind.UNKNOWN, list[1].kind)
+        assertEquals(listOf("dev_tel"), list.map { it.id })
+        assertEquals(DeviceKind.UNKNOWN, list[0].kind)
+    }
+
+    @Test
+    fun anOldItemSentToAllEntersNoConversation() {
+        val toAll = item("tous", "dev_tel", emptyList(), 9)
+        val list = conversations(listOf(member(ME, "moi"), member("dev_tel", "tel")), listOf(toAll), ME)
+        assertEquals(listOf("dev_tel"), list.map { it.id })
+        assertNull(list[0].last)
     }
 
     @Test
@@ -254,20 +262,18 @@ class ConversationsTest {
     }
 
     @Test
-    fun allFirstThenMostRecentlyActive() {
+    fun mostRecentlyActiveFirstWithoutAllMyDevices() {
         val list = conversations(MEMBERS, listOf(sent("1", listOf("dev_c"), 1), sent("2", listOf("dev_b"), 2), sent("3", emptyList(), 3)), ME)
-        assertEquals(listOf(ALL_NAME, "Bravo", "Charlie", "Alpha"), list.map { it.name })
-        assertEquals(listOf("3", "2", "1", null), list.map { it.last?.msgId })
-        assertEquals(DeviceKind.GROUP, list[0].kind)
-        assertEquals(avatarColor("dev_b"), list[1].color)
+        assertEquals(listOf("Bravo", "Charlie", "Alpha"), list.map { it.name })
+        assertEquals(listOf("2", "1", null), list.map { it.last?.msgId })
+        assertEquals(avatarColor("dev_b"), list[0].color)
     }
 
     @Test
-    fun previewOnOneLineWithItsAuthor() {
+    fun previewOnOneLine() {
         val received = item("a", "dev_tel", listOf(ME), 1, body = "ligne 1\nligne 2", fromName = "Téléphone")
-        assertEquals("ligne 1 ligne 2", preview(received, "dev_tel"))
-        assertEquals("Téléphone : ligne 1 ligne 2", preview(received, ""))
-        assertEquals("Vous : ligne 1 ligne 2", preview(received.copy(outgoing = true), ""))
+        assertEquals("ligne 1 ligne 2", preview(received))
+        assertEquals("Vous : ligne 1 ligne 2", preview(received.copy(outgoing = true)))
     }
 
     @Test

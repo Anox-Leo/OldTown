@@ -80,7 +80,7 @@ private fun headerOf(hub: HubState, channel: String): Header = when (val t = par
     is ChannelTarget.Mine -> {
         val member = hub.group?.members?.firstOrNull { !it.isSelf && it.deviceId == channel }
         if (member == null) {
-            Header(ALL_NAME, DeviceKind.GROUP, avatarColor(ALL_CHANNEL))
+            Header("Appareil retiré", DeviceKind.UNKNOWN, avatarColor(channel), readOnly = true)
         } else {
             val profile = hub.me?.devices?.firstOrNull { it.deviceId == member.deviceId }
             Header(member.name, deviceKind(profile?.kind), avatarColor(member.deviceId))
@@ -126,7 +126,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpe
     val others = hub.group?.members?.filterNot { it.isSelf }.orEmpty()
     val header = headerOf(hub, channel)
     val target = parseChannel(channel)
-    val device = (target as? ChannelTarget.Mine)?.device?.takeIf { it != ALL_CHANNEL }
+    val device = (target as? ChannelTarget.Mine)?.device
     val person = (target as? ChannelTarget.Person)?.takeIf { it.device == null }
     val visible = remember(hub.history, me, channel) {
         hub.history.filter { inChannel(it, channel, me) }.sortedByDescending { it.createdAtMs }
@@ -195,7 +195,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpe
             items(visible, key = { it.msgId }) { item ->
                 MessageBubble(
                     item,
-                    sender = if (channel == ALL_CHANNEL || person != null) senderName(hub, item) else null,
+                    sender = if (person != null) senderName(hub, item) else null,
                     progress = hub.transfers.firstOrNull { !it.upload && it.id == item.msgId && it.error == null },
                     onOpen = { selected = item },
                 )
@@ -203,7 +203,7 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpe
             if (visible.isEmpty() && uploads.isEmpty()) {
                 item {
                     Text(
-                        if (channel == ALL_CHANNEL) "Aucun message pour tous vos appareils." else "Aucun message avec ${header.name}.",
+                        "Aucun message avec ${header.name}.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Ot.colors.muted,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
@@ -411,7 +411,7 @@ private fun Composer(hub: HubState, channel: String, name: String) {
                     text = it
                     error = null
                 },
-                placeholder = if (channel == ALL_CHANNEL) "Message à tous vos appareils" else "Message à $name",
+                placeholder = "Message à $name",
                 singleLine = false,
                 maxLines = 5,
                 modifier = Modifier.weight(1f).testTag("message-field"),

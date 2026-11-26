@@ -109,7 +109,7 @@ fun MyDevicesScreen(hub: HubState, onBack: () -> Unit) {
                 )
                 if (showCli) {
                     Text(
-                        "Membres du groupe (« Tous mes appareils » les inclut), jamais joignables ni par défaut.",
+                        "Membres du groupe, jamais joignables ni par défaut.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Ot.colors.muted,
                     )

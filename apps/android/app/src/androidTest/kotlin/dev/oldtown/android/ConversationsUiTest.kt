@@ -6,7 +6,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.oldtown.android.relay.HubState
-import dev.oldtown.android.ui.ALL_NAME
 import dev.oldtown.android.ui.ConversationScreen
 import dev.oldtown.android.ui.HomeScreen
 import dev.oldtown.android.ui.theme.OldTownTheme
@@ -60,11 +59,12 @@ class ConversationsUiTest {
             .fetchSemanticsNode().boundsInRoot.top
 
     @Test
-    fun allFirstThenByRecency() {
+    fun byRecencyWithoutAllMyDevices() {
         compose.setContent { OldTownTheme { HomeScreen(hub, person = null, onPerson = {}, open = {}) } }
-        val tops = listOf(ALL_NAME, "Bravo", "Charlie", "Alpha").map(::top)
+        val tops = listOf("Bravo", "Charlie", "Alpha").map(::top)
         assertEquals(tops.sorted(), tops)
-        compose.onNodeWithText("Vous : message 3").assertExists()
+        compose.onNodeWithText("Vous : message 2").assertExists()
+        compose.onNodeWithText("Vous : message 3").assertDoesNotExist()
     }
 
     @Test

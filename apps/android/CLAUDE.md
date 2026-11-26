@@ -35,13 +35,14 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
 - **Partage** : `share/ShareActivity` (feuille du bas : texte, ou fichiers
   `SEND`/`SEND_MULTIPLE`, URI `content://` seulement) et un raccourci Direct
   Share par destinataire (`share/Shortcuts`, identifiant `to:<canal>`).
-  Destinataires : « Tous » en tête, puis mes appareils (sans ceux en ligne
+  Destinataires : mes appareils (sans ceux en ligne
   de commande), puis les autres personnes (sans les services), chacun du
   plus utilisé au moins utilisé (`shareTargets`, note 0033), raccourcis
   rangés de même.
 - **Conversations** (note 0033, comme l'extension) : l'accueil
-  (`ui/HomeScreen`) liste « Tous mes appareils » puis un appareil par
-  ligne, du plus récemment actif au moins récent, avec présence (relue
+  (`ui/HomeScreen`) liste un appareil par
+  ligne (plus de « Tous mes appareils », note 0078 : un ancien envoi à
+  tous n'entre dans aucune conversation), du plus récemment actif au moins récent, avec présence (relue
   toutes les 15 s au premier plan) ; `ui/ConversationScreen` montre les
   bulles du canal (envois à droite) et envoie dans ce canal ; une
   notification ouvre la conversation de son canal (`EXTRA_CHANNEL`). Règles

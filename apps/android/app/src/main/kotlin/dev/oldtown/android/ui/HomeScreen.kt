@@ -215,7 +215,7 @@ private fun ConversationRow(c: Conversation, online: Boolean, divider: Boolean, 
                         Spacer(Modifier.width(4.dp))
                     }
                     Text(
-                        if (last != null) preview(last, c.id) else "Aucun message",
+                        if (last != null) preview(last) else "Aucun message",
                         style = MaterialTheme.typography.bodySmall,
                         color = Ot.colors.muted,
                         maxLines = 1,
