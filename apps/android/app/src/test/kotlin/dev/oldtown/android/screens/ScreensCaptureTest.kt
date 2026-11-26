@@ -9,8 +9,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
 import dev.oldtown.android.ui.ConversationScreen
 import dev.oldtown.android.ui.HomeScreen
+import dev.oldtown.android.ui.ItemSheet
 import dev.oldtown.android.ui.LocalPresence
 import dev.oldtown.android.ui.MyDevicesScreen
 import dev.oldtown.android.ui.SettingsScreen
@@ -25,10 +27,22 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(ParameterizedRobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [36], qualifiers = "w411dp-h891dp-xxhdpi")
+@Config(sdk = [36], qualifiers = "fr-rFR-w411dp-h891dp-xxhdpi")
 class ScreensCaptureTest(private val theme: String) {
     @get:Rule
     val compose = createComposeRule()
+
+    private fun captureScreen(screen: String, content: @Composable () -> Unit) {
+        compose.setContent {
+            OldTownTheme(dark = theme == NIGHT) {
+                CompositionLocalProvider(LocalPresence provides { null }) {
+                    Box(Modifier.fillMaxSize().background(Ot.colors.screen)) { content() }
+                }
+            }
+        }
+        compose.waitForIdle()
+        captureScreenRoboImage("build/outputs/roborazzi/$screen-$theme.png")
+    }
 
     private fun capture(screen: String, content: @Composable () -> Unit) {
         compose.setContent {
@@ -59,6 +73,11 @@ class ScreensCaptureTest(private val theme: String) {
     @Test
     fun conversationBetweenMyDevices() = capture("conversation-portable") {
         ConversationScreen(Sample.hub, Sample.LAPTOP, onBack = {}, onOpened = {})
+    }
+
+    @Test
+    fun linkSheet() = captureScreen("feuille-lien") {
+        ItemSheet(Sample.history.first { it.msgId == "b3" }, onDismiss = {})
     }
 
     @Test

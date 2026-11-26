@@ -1,6 +1,5 @@
 package dev.oldtown.android.ui
 
-import android.content.ClipboardManager
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -416,11 +415,7 @@ private fun Composer(hub: HubState, channel: String, name: String) {
                 maxLines = 5,
                 modifier = Modifier.weight(1f).testTag("message-field"),
             )
-            GhostIcon(OtIcons.Copy, "Coller", {
-                val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
-                clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.let { text += it.toString() }
-            }, tint = Ot.colors.muted)
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(8.dp))
             val canSend = text.isNotBlank() && ready
             Box(
                 Modifier

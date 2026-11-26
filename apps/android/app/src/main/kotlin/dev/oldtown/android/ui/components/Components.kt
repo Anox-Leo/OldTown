@@ -170,6 +170,22 @@ fun OtButton(
 }
 
 @Composable
+fun OtIconButton(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = Ot.colors
+    Box(
+        modifier
+            .size(44.dp)
+            .clip(OtShapes.control)
+            .background(c.card, OtShapes.control)
+            .border(1.dp, c.inputBorder, OtShapes.control)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = description, tint = c.foreground, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
 fun ListRow(
     title: String,
     modifier: Modifier = Modifier,
