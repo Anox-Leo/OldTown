@@ -63,6 +63,11 @@ fun inChannel(item: Received, channel: String, me: String?): Boolean {
     }
 }
 
+fun notificationsToClear(shown: Collection<String>, items: List<Received>, channel: String, me: String?): List<String> {
+    val ids = shown.toSet()
+    return items.filter { it.msgId in ids && !it.outgoing && inChannel(it, channel, me) }.map { it.msgId }
+}
+
 fun recipientsOf(channel: String): List<String> {
     require(channel != NO_CHANNEL) { "aucun destinataire : l'envoi à tous mes appareils n'existe plus" }
     return listOf(channel)
