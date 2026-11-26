@@ -1,4 +1,11 @@
-import type { Reply, Request, StateView } from '../shared/api';
+import {
+  type Item,
+  type Reply,
+  type Request,
+  type StateView,
+  shortcutChannel,
+  userChannel,
+} from '../shared/api';
 import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
 import { OTP_ORIGINS, originPattern, relayOrigin } from '../shared/origins';
@@ -51,7 +58,12 @@ async function main(): Promise<void> {
     if (m.device_id === device.id) continue;
     select.add(new Option(m.name, m.device_id));
   }
-  select.value = params.get('to') ?? state.recipient;
+  for (const p of state.people) {
+    if (p.user === state.me || p.role === 'service') continue;
+    select.add(new Option(p.name, userChannel(p.user)));
+  }
+  const history = await request<Item[]>({ type: 'history' });
+  select.value = params.get('to') ?? shortcutChannel(state, history) ?? '';
   const go = $<HTMLButtonElement>('go');
   const files = $<HTMLInputElement>('files');
 

@@ -1,24 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
-import { MarkComponent } from './brand';
 import type { DeviceKind } from './devices';
 import { IconComponent } from './icon';
 
 @Component({
   selector: 'app-avatar',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [IconComponent, MarkComponent],
+  imports: [IconComponent],
   template: `
-    @if (kind() === 'group') {
-      <app-mark [size]="markSize()" />
-    } @else if (kind() === 'person') {
+    @if (kind() === 'person') {
       <span class="initials" [style.font-size.px]="textSize()">{{ initials() }}</span>
     } @else {
       <app-icon [name]="iconName()" [size]="iconSize()" />
     }
   `,
   host: {
-    '[style.background]': "kind() === 'group' ? 'var(--tile)' : color()",
+    '[style.background]': 'color()',
     '[style.width.px]': 'size()',
     '[style.height.px]': 'size()',
     'aria-hidden': 'true',
@@ -47,8 +44,7 @@ export class AvatarComponent {
   protected readonly textSize = computed(() => Math.round(this.size() * 0.38));
   protected readonly iconName = computed(() => {
     const k = this.kind();
-    return k === 'group' || k === 'person' ? 'laptop' : k;
+    return k === 'person' ? 'laptop' : k;
   });
   protected readonly iconSize = computed(() => Math.round(this.size() * 0.5));
-  protected readonly markSize = computed(() => Math.round(this.size() * 0.55));
 }

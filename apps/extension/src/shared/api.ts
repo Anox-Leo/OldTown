@@ -158,6 +158,39 @@ export function inChannel(item: Item, channel: string, me: string | undefined): 
   return c === channel || (!item.outgoing && item.fromUser === t.user && item.from === t.device);
 }
 
+export type ShortcutState = Pick<StateView, 'device' | 'group' | 'people' | 'me' | 'recipient'>;
+
+function canWriteTo(state: ShortcutState, channel: string, devices: readonly string[]): boolean {
+  const t = parseChannel(channel);
+  if (t.user === undefined) return devices.includes(t.device);
+  const person = state.people.find((p) => p.user === t.user);
+  if (!person || person.user === state.me || person.role === 'service') return false;
+  return t.device === undefined || person.devices.some((d) => d.device_id === t.device);
+}
+
+export function shortcutChannel(state: ShortcutState, items: readonly Item[]): string | undefined {
+  const me = state.device?.id;
+  const profiles = new Map(
+    (state.people.find((p) => p.user === state.me)?.devices ?? []).map((d) => [d.device_id, d]),
+  );
+  const last = new Map<string, number>();
+  for (const item of items) {
+    const c = channelOf(item, me);
+    const t = Date.parse(item.createdAt) || 0;
+    if (t > (last.get(c) ?? 0)) last.set(c, t);
+  }
+  const others = (state.group?.members ?? [])
+    .filter((m) => m.device_id !== me && profiles.get(m.device_id)?.kind !== 'cli')
+    .sort(
+      (a, b) =>
+        (last.get(b.device_id) ?? 0) - (last.get(a.device_id) ?? 0) ||
+        a.name.localeCompare(b.name, 'fr'),
+    );
+  const ids = others.map((m) => m.device_id);
+  if (canWriteTo(state, state.recipient, ids)) return state.recipient;
+  return (others.find((m) => profiles.get(m.device_id)?.default) ?? others[0])?.device_id;
+}
+
 export interface RelayDevice {
   id: string;
   name: string;

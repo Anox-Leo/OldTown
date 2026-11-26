@@ -71,10 +71,7 @@ const KINDS: readonly { value: Kind; label: string }[] = [
         @if (cli().length) {
           <details>
             <summary class="small">Ligne de commande ({{ cli().length }})</summary>
-            <p class="small muted">
-              Membres du groupe (« Tous mes appareils » les inclut), jamais joignables ni par
-              défaut.
-            </p>
+            <p class="small muted">Membres du groupe, jamais joignables ni par défaut.</p>
             @for (d of cli(); track d.device_id) {
               <ng-container *ngTemplateOutlet="device; context: { $implicit: d }" />
             }

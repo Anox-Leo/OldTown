@@ -27,7 +27,7 @@ import { humanSize } from '../shared/format';
 import { writeBlob } from '../shared/opfs';
 import { AvatarComponent } from './avatar';
 import { BackgroundService } from './background.service';
-import { ALL_NAME, avatarColor, deviceKind, initials } from './devices';
+import { avatarColor, deviceKind, initials } from './devices';
 import { IconComponent } from './icon';
 import { connectionStatus, shortTime } from './status';
 
@@ -67,9 +67,6 @@ import { connectionStatus, shortTime } from './status';
     <ol class="messages" #list aria-live="polite">
       @for (item of visible(); track item.msgId) {
         <li class="msg" [class.out]="item.outgoing" [class.in]="!item.outgoing">
-          @if (!item.outgoing && channel() === '') {
-            <span class="from small">{{ item.fromName }}</span>
-          }
           <div class="line">
             <div
               class="bubble"
@@ -140,13 +137,7 @@ import { connectionStatus, shortTime } from './status';
           </span>
         </li>
       } @empty {
-        <li class="empty muted">
-          {{
-            channel() === ''
-              ? 'Aucun message pour tous vos appareils.'
-              : 'Aucun message avec ' + channelName() + '.'
-          }}
-        </li>
+        <li class="empty muted">Aucun message avec {{ channelName() }}.</li>
       }
       @for (t of uploads(); track t.id) {
         <li class="msg out">
@@ -289,10 +280,6 @@ import { connectionStatus, shortTime } from './status';
     .msg.out {
       align-self: flex-end;
       align-items: flex-end;
-    }
-    .from {
-      color: var(--muted);
-      margin: 0 4px 2px;
     }
     .line {
       display: flex;
@@ -460,7 +447,7 @@ export class ChatComponent {
       const d = this.personDevice();
       return d ? `${p.name} · ${d.name}` : p.name;
     }
-    return this.member()?.name ?? ALL_NAME;
+    return this.member()?.name ?? '';
   });
   protected readonly kind = computed(() => {
     const d = this.personDevice();
@@ -470,7 +457,7 @@ export class ChatComponent {
     const profile = this.state()
       .people.find((p) => p.user === this.state().me)
       ?.devices.find((x) => x.device_id === m?.device_id);
-    return m ? deviceKind(profile?.kind) : 'group';
+    return deviceKind(profile?.kind);
   });
   protected readonly color = computed(() => {
     const t = this.target();
@@ -485,14 +472,10 @@ export class ChatComponent {
       return { online, text: online ? 'en ligne' : 'hors ligne' };
     }
     const presence = this.presence();
-    if (!presence) return undefined;
     const m = this.member();
-    if (m) {
-      const online = presence.get(m.device_id) ?? false;
-      return { online, text: online ? 'en ligne' : 'hors ligne' };
-    }
-    const n = this.others().filter((o) => presence.get(o.device_id)).length;
-    return { online: n > 0, text: n ? `${n} en ligne` : 'aucun appareil en ligne' };
+    if (!presence || !m) return undefined;
+    const online = presence.get(m.device_id) ?? false;
+    return { online, text: online ? 'en ligne' : 'hors ligne' };
   });
   protected readonly visible = computed(() => {
     const me = this.state().device?.id;
@@ -504,9 +487,7 @@ export class ChatComponent {
   protected readonly uploads = computed(() =>
     this.state().transfers.filter((t) => t.direction === 'up'),
   );
-  protected readonly placeholder = computed(() =>
-    this.channel() === '' ? 'Message à tous vos appareils' : `Message à ${this.channelName()}`,
-  );
+  protected readonly placeholder = computed(() => `Message à ${this.channelName()}`);
   protected readonly busy = signal(false);
   protected readonly notice = signal<string | undefined>(undefined);
   protected readonly copied = signal<string | undefined>(undefined);

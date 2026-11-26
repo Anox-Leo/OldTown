@@ -5,7 +5,7 @@ import path from 'node:path';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { Engine, type FileStorage, NO_RELAY_ACCESS } from '../src/background/engine';
+import { Engine, type FileStorage, NO_RECIPIENT, NO_RELAY_ACCESS } from '../src/background/engine';
 import { IndexedDbKeySource } from '../src/background/secrets';
 import type { ByteSource } from '../src/background/transfer';
 import { Cli, MemoryKV, Relay, eventually, loadWasm } from './support';
@@ -72,6 +72,8 @@ describe('fichiers entre l’extension et la CLI', () => {
   let relay: Relay;
   let phone: Cli;
   let engine: Engine;
+  const phoneId = () =>
+    engine.state().group?.members.find((m) => m.name === 'telephone')?.device_id ?? '';
   const files = new MemFiles();
   const kv = new MemoryKV();
   const idb = new IDBFactory();
@@ -106,6 +108,8 @@ describe('fichiers entre l’extension et la CLI', () => {
   it('envoie un fichier au téléphone', async () => {
     const data = sample(700_000);
     files.files.set('outgoing/a', data);
+    const toAll = { path: 'outgoing/a', name: 'a', mime: '', size: data.length, to: '' };
+    await expect(engine.sendFile(toAll)).rejects.toThrow(NO_RECIPIENT);
     const listen = phone.listen();
     try {
       const msgId = await engine.sendFile({
@@ -113,7 +117,7 @@ describe('fichiers entre l’extension et la CLI', () => {
         name: 'rapport.pdf',
         mime: 'application/pdf',
         size: data.length,
-        to: '',
+        to: phoneId(),
       });
       expect(msgId).toMatch(/^[0-9A-Z]{26}$/);
       expect(files.files.has('outgoing/a')).toBe(false);
@@ -139,7 +143,7 @@ describe('fichiers entre l’extension et la CLI', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ot-ext-up-'));
     const src = path.join(dir, 'photo été.jpg');
     writeFileSync(src, data);
-    await phone.run('send', '--file', src);
+    await phone.run('send', '--to', 'chrome', '--file', src);
     const item = await eventually('copie complète et vérifiée', async () =>
       (await engine.history()).find((i) => i.body === 'photo été.jpg' && i.file?.cached),
     );
@@ -179,7 +183,13 @@ describe('fichiers entre l’extension et la CLI', () => {
     files.files.set('outgoing/b', data);
     files.reads = 0;
     files.failAfter = chunks + Math.floor(chunks / 2);
-    const file = { path: 'outgoing/b', name: 'b.bin', mime: '', size: data.length, to: '' };
+    const file = {
+      path: 'outgoing/b',
+      name: 'b.bin',
+      mime: '',
+      size: data.length,
+      to: phoneId(),
+    };
     await expect(engine.sendFile(file)).rejects.toThrow('service worker arrêté');
     expect(engine.state().transfers[0]?.error).toContain('arrêté');
 
@@ -208,13 +218,13 @@ describe('fichiers entre l’extension et la CLI', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ot-ext-perm-'));
     const src = path.join(dir, 'attente.png');
     writeFileSync(src, data);
-    await phone.run('send', '--file', src);
+    await phone.run('send', '--to', 'chrome', '--file', src);
     const waiting = await eventually('fichier en attente d’accès', async () =>
       (await engine.history()).find((i) => i.body === 'attente.png' && i.file?.error),
     );
     expect(waiting.file?.error).toBe(NO_RELAY_ACCESS);
     files.files.set('outgoing/c', sample(10));
-    const blocked = { path: 'outgoing/c', name: 'c', mime: '', size: 10, to: '' };
+    const blocked = { path: 'outgoing/c', name: 'c', mime: '', size: 10, to: phoneId() };
     await expect(engine.sendFile(blocked)).rejects.toThrow(NO_RELAY_ACCESS);
     files.files.delete('outgoing/c');
 

@@ -113,12 +113,11 @@ describe('App (popup)', () => {
     expect(el.querySelector('h1 app-logo [aria-label="OldTown"]')).toBeTruthy();
     expect(el.querySelector('[aria-label="Réglages"]')).toBeTruthy();
     expect(el.textContent).not.toContain('Connecté');
-    expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
-    expect(el.querySelector('.chats app-avatar')).toBeTruthy();
+    expect(rows(el)).toEqual(['Téléphone']);
     const avatars = el.querySelectorAll('.chats app-avatar');
-    expect(avatars[0]?.querySelector('app-mark')).toBeTruthy();
-    expect(avatars[1]?.querySelector('app-mark')).toBeNull();
-    expect(avatars[1]?.querySelector('app-icon')).toBeTruthy();
+    expect(avatars.length).toBe(1);
+    expect(avatars[0]?.querySelector('app-mark')).toBeNull();
+    expect(avatars[0]?.querySelector('app-icon')).toBeTruthy();
     expect(el.textContent).toContain('Aucun message');
     expect(el.querySelector('textarea')).toBeNull();
   });
@@ -139,7 +138,7 @@ describe('App (popup)', () => {
     expect(el.querySelector('[role="alert"] button')?.textContent?.trim()).toBe('OK');
   });
 
-  it('conversation : envoyés à droite, reçus à gauche, un canal par appareil', () => {
+  it('conversation : envoyés à droite, reçus à gauche, sans les anciens envois à tous', () => {
     const bg = new FakeBackground();
     const members = ['dev_me', 'dev_tel'].map((id) => ({
       device_id: id,
@@ -182,8 +181,8 @@ describe('App (popup)', () => {
         fromName: 'Chrome Mac',
         createdAt: at(2),
         kind: 'text',
-        body: 'salut à tous',
-        to: [],
+        body: 'salut',
+        to: ['dev_tel'],
         outgoing: true,
         pending: true,
       },
@@ -193,7 +192,7 @@ describe('App (popup)', () => {
         fromName: 'Téléphone',
         createdAt: at(1),
         kind: 'text',
-        body: 'bonjour',
+        body: 'ancien message à tous',
         to: [],
       },
     ]);
@@ -201,34 +200,30 @@ describe('App (popup)', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
+    expect(rows(el)).toEqual(['Téléphone']);
     expect(el.querySelector('.chats li:nth-child(1) .last')?.textContent).toContain(
-      'Vous : salut à tous',
-    );
-    expect(el.querySelector('.chats li:nth-child(2) .last')?.textContent).toContain(
       'rien que pour toi',
     );
-    openChat(fixture, 'Tous mes appareils');
+    openChat(fixture, 'Téléphone');
     const bubbles = () =>
       [...el.querySelectorAll('.messages li.msg')].map((li) => [
         li.classList.contains('out') ? 'moi' : 'reçu',
         li.querySelector('.text')?.textContent?.trim(),
       ]);
+    expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Téléphone');
     expect(bubbles()).toEqual([
-      ['reçu', 'bonjour'],
-      ['moi', 'salut à tous'],
+      ['moi', 'salut'],
+      ['reçu', 'rien que pour toi'],
     ]);
     expect(el.textContent).toContain('envoi…');
+    expect(el.textContent).not.toContain('ancien message à tous');
+    expect(el.querySelector('textarea')?.getAttribute('placeholder')).toBe('Message à Téléphone');
     el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
     fixture.detectChanges();
     expect(el.querySelector('.messages')).toBeNull();
-    openChat(fixture, 'Téléphone');
-    expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Téléphone');
-    expect(el.querySelector('.channels')).toBeNull();
-    expect(bubbles()).toEqual([['reçu', 'rien que pour toi']]);
-    expect(el.querySelector('textarea')?.getAttribute('placeholder')).toBe('Message à Téléphone');
   });
 
-  it('conversations de la plus récente à la plus ancienne, « Tous » en premier', () => {
+  it('conversations de la plus récente à la plus ancienne, sans « Tous mes appareils »', () => {
     const bg = new FakeBackground();
     const member = (id: string, name: string) => ({
       device_id: id,
@@ -294,7 +289,7 @@ describe('App (popup)', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    expect(rows(el)).toEqual(['Tous mes appareils', 'Bravo', 'Charlie', 'Alpha']);
+    expect(rows(el)).toEqual(['Bravo', 'Charlie', 'Alpha']);
   });
 
   it('fichiers reçus et transferts en cours', () => {
@@ -306,7 +301,18 @@ describe('App (popup)', () => {
       recipient: '',
       pendingSends: 0,
       device: { id: 'dev_me', name: 'Chrome Mac', serverUrl: 'wss://relais' },
-      group: { epoch: 1, key_fingerprint: '', roster_version: 1, members: [] },
+      group: {
+        epoch: 1,
+        key_fingerprint: '',
+        roster_version: 1,
+        members: ['dev_me', 'dev_tel'].map((id) => ({
+          device_id: id,
+          name: id === 'dev_me' ? 'Chrome Mac' : 'Téléphone',
+          sign_fingerprint: '',
+          exchange_fingerprint: '',
+          added_epoch: 1,
+        })),
+      },
       transfers: [{ id: 'outgoing/x', direction: 'up', name: 'video.mp4', done: 50, total: 200 }],
       relayAccess: false,
       people: [],
@@ -323,14 +329,14 @@ describe('App (popup)', () => {
       kind: 'file' as const,
       body: name,
       file: { blobId: `blob_${name}`, name, mime: 'image/jpeg', size: 1_572_864, cached },
-      to: [],
+      to: ['dev_me'],
     });
     bg.items.set([file('photo.jpg', true), file('gros.mov')]);
     TestBed.configureTestingModule({ providers: [{ provide: BackgroundService, useValue: bg }] });
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    openChat(fixture, 'Tous mes appareils');
+    openChat(fixture, 'Téléphone');
     expect(el.querySelector('.messages li.msg.out')?.textContent).toContain('video.mp4');
     expect(el.textContent).toContain('25 %');
     expect(el.textContent).toContain('1,5 Mo');
@@ -396,10 +402,6 @@ describe('App (popup)', () => {
     fixture.detectChanges();
     openChat(fixture, 'PC');
     expect(el.querySelector('header .presence')?.textContent?.trim()).toBe('hors ligne');
-    el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
-    fixture.detectChanges();
-    openChat(fixture, 'Tous mes appareils');
-    expect(el.querySelector('header .presence')?.textContent?.trim()).toBe('1 en ligne');
   });
 
   it('ouverte pour un élément reçu : directement sa conversation', () => {
@@ -444,7 +446,11 @@ describe('App (popup)', () => {
     expect(el.querySelector('.chats')).toBeTruthy();
     bg.openChat.set('dev_parti');
     fixture.detectChanges();
-    expect(el.querySelector('header .name')?.textContent?.trim()).toBe('Tous mes appareils');
+    expect(el.querySelector('.chats')).toBeTruthy();
+    expect(bg.openChat()).toBeUndefined();
+    bg.openChat.set('');
+    fixture.detectChanges();
+    expect(el.querySelector('.chats')).toBeTruthy();
   });
 
   it('barre latérale : mes appareils à l’ouverture (I1), puis une personne et ses appareils (I2)', () => {
@@ -513,7 +519,7 @@ describe('App (popup)', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    expect(rows(el)).toEqual(['Tous mes appareils', 'Téléphone']);
+    expect(rows(el)).toEqual(['Téléphone']);
     const rail = [...el.querySelectorAll<HTMLButtonElement>('app-rail button')];
     expect(rail.map((b) => b.getAttribute('aria-label'))).toEqual([
       'Mes appareils',

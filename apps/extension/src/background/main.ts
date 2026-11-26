@@ -1,6 +1,6 @@
 import init from '../wasm/ot_wasm.js';
 import type { Item, OffscreenMessage, Push, Reply, Request, StateView } from '../shared/api';
-import { POPUP_PORT, channelOf, userChannel } from '../shared/api';
+import { POPUP_PORT, channelOf, shortcutChannel, userChannel } from '../shared/api';
 import { humanSize } from '../shared/format';
 import * as opfs from '../shared/opfs';
 import { OTP_ORIGINS, relayOrigin } from '../shared/origins';
@@ -12,7 +12,6 @@ import { BADGE } from '../shared/tokens';
 
 const KEEPALIVE_ALARM = 'keepalive';
 const MENU_ROOT = 'send';
-const MENU_ALL = 'to:';
 const COMMAND_SEND_PAGE = 'send-page';
 const COMMAND_SEND_CLIPBOARD = 'send-clipboard';
 const COMMAND_FILL_OTP = 'fill-otp';
@@ -276,14 +275,6 @@ async function updateMenus(state: StateView): Promise<void> {
   for (const [id, name] of others) {
     chrome.contextMenus.create({ id: `to:${id}`, parentId: MENU_ROOT, title: name, contexts });
   }
-  if (others.length > 1) {
-    chrome.contextMenus.create({
-      id: MENU_ALL,
-      parentId: MENU_ROOT,
-      title: 'Tous les appareils',
-      contexts,
-    });
-  }
   if (people.length > 0) {
     chrome.contextMenus.create({
       id: 'people',
@@ -360,7 +351,7 @@ function imageName(src: string, mime: string): string {
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === COMMAND_SEND_PAGE) {
     const url = tab?.url;
-    if (url) void engine().then((e) => sendFromBrowser(url, e.state().recipient, true));
+    if (url) void sendShortcut(url);
   } else if (command === COMMAND_SEND_CLIPBOARD) {
     void sendClipboard();
   } else if (command === COMMAND_FILL_OTP && tab?.id !== undefined) {
@@ -376,12 +367,21 @@ async function sendClipboard(): Promise<void> {
     log('lecture du presse-papiers', err);
     text = '';
   }
-  const e = await engine();
   if (!text.trim()) {
     await problem('Le presse-papiers ne contient pas de texte.');
     return;
   }
-  await sendFromBrowser(text, e.state().recipient, true);
+  await sendShortcut(text);
+}
+
+async function sendShortcut(text: string): Promise<void> {
+  const e = await engine();
+  const to = shortcutChannel(e.state(), await e.history());
+  if (to === undefined) {
+    await problem('Aucun autre appareil à qui envoyer.');
+    return;
+  }
+  await sendFromBrowser(text, to, true);
 }
 
 async function problem(message: string, title = 'OldTown : envoi impossible'): Promise<void> {

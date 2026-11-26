@@ -9,14 +9,9 @@ import {
 } from '../shared/api';
 import { AVATAR_COLORS } from '../shared/tokens';
 
-export type DeviceKind =
-  'phone' | 'laptop' | 'desktop' | 'browser' | 'cli' | 'unknown' | 'group' | 'person';
+export type DeviceKind = 'phone' | 'laptop' | 'desktop' | 'browser' | 'cli' | 'unknown' | 'person';
 
-export const ALL_NAME = 'Tous mes appareils';
-
-export function deviceKind(
-  kind?: PersonDeviceView['kind'],
-): Exclude<DeviceKind, 'group' | 'person'> {
+export function deviceKind(kind?: PersonDeviceView['kind']): Exclude<DeviceKind, 'person'> {
   return kind ?? 'unknown';
 }
 
@@ -73,7 +68,7 @@ export function conversations(
     if (!prev || Date.parse(item.createdAt) > Date.parse(prev.createdAt)) last.set(c, item);
   }
   const at = (c: Conversation) => (c.last ? Date.parse(c.last.createdAt) || 0 : 0);
-  const devices = members
+  return members
     .filter((m) => m.device_id !== me)
     .map((m): Conversation => ({
       id: m.device_id,
@@ -84,20 +79,11 @@ export function conversations(
     }))
     .filter((c) => c.kind !== 'cli')
     .sort((a, b) => at(b) - at(a) || a.name.localeCompare(b.name, 'fr'));
-  const all: Conversation = {
-    id: '',
-    name: ALL_NAME,
-    kind: 'group',
-    color: avatarColor(''),
-    last: last.get(''),
-  };
-  return [all, ...devices];
 }
 
-export function preview(item: Item, channel: string): string {
+export function preview(item: Item): string {
   const body = item.body.replace(/\s+/g, ' ').trim().slice(0, 200);
-  if (item.outgoing) return `Vous : ${body}`;
-  return channel === '' ? `${item.fromName} : ${body}` : body;
+  return item.outgoing ? `Vous : ${body}` : body;
 }
 
 export function personConversations(
