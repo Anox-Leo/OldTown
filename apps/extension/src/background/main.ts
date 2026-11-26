@@ -695,13 +695,51 @@ async function offscreen<T>(message: OffscreenMessage): Promise<T> {
     creatingOffscreen ??= chrome.offscreen
       .createDocument({
         url: 'offscreen.html',
-        reasons: [chrome.offscreen.Reason.CLIPBOARD],
-        justification: 'Copier un élément reçu, ou lire le presse-papiers pour un raccourci',
+        reasons: [chrome.offscreen.Reason.CLIPBOARD, chrome.offscreen.Reason.BLOBS],
+        justification:
+          'Copier un élément reçu, lire le presse-papiers pour un raccourci, ou enregistrer un fichier reçu',
       })
       .finally(() => (creatingOffscreen = undefined));
     await creatingOffscreen;
   }
   return (await chrome.runtime.sendMessage(message)) as T;
+}
+
+const rescued = new Map<number, string>();
+
+chrome.downloads.onCreated.addListener((item) => {
+  if (!item.url.startsWith(chrome.runtime.getURL(''))) return;
+  const file = parseFilePath(new URL(item.url));
+  if (!file) return;
+  void rescueDownload(item.id, item.url, file.name).catch((e: unknown) =>
+    log('enregistrement d’un fichier reçu', e),
+  );
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  const url = rescued.get(delta.id);
+  const state = delta.state?.current;
+  if (!url || !state || state === 'in_progress') return;
+  rescued.delete(delta.id);
+  void offscreen({ target: 'offscreen', type: 'revoke', url }).catch(() => undefined);
+});
+
+async function rescueDownload(id: number, url: string, name: string): Promise<void> {
+  await chrome.downloads.cancel(id).catch(() => undefined);
+  await chrome.downloads.erase({ id });
+  const source = new URL(url);
+  source.search = '';
+  const blobUrl = await offscreen<string | null>({
+    target: 'offscreen',
+    type: 'blob',
+    url: source.href,
+  });
+  if (!blobUrl) {
+    await problem('Ce fichier n’est plus disponible.', 'OldTown : enregistrement impossible');
+    return;
+  }
+  const next = await chrome.downloads.download({ url: blobUrl, filename: name, saveAs: true });
+  rescued.set(next, blobUrl);
 }
 
 async function copy(text: string): Promise<void> {
