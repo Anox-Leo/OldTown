@@ -204,7 +204,6 @@ export type Request =
   | { type: 'setup-code'; text: string; serverUrl: string; name: string }
   | { type: 'cancel-pairing' }
   | { type: 'send'; text: string; to: string }
-  | { type: 'send-clipboard'; text: string; to: string }
   | { type: 'setup-invite'; text: string; name: string }
   | { type: 'set-recipient'; to: string }
   | { type: 'history' }
