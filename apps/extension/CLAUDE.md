@@ -126,7 +126,7 @@ l'interface.
   (`test/frames.test.ts`) ; les vecteurs de `ot-crypto` sont rejoués
   (`test/vectors.test.ts`).
 - **Permissions** (`manifest.json`) : `activeTab`, `alarms`,
-  `clipboardRead` (bouton et raccourci « presse-papiers » seulement),
+  `clipboardRead` (raccourci « presse-papiers » seulement),
   `contextMenus`, `notifications`, `offscreen`, `scripting` (remplissage
   des codes, note 0045), `storage` ;
   `optional_host_permissions` `<all_urls>`, demandée origine par origine,

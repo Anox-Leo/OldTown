@@ -197,7 +197,6 @@ async function handle(req: Request): Promise<unknown> {
     case 'forget':
       return e.forget();
     case 'send':
-    case 'send-clipboard':
       await e.setRecipient(req.to);
       return e.send(req.text, req.to);
     case 'set-recipient':

@@ -218,6 +218,11 @@ describe('App (popup)', () => {
     expect(el.textContent).toContain('envoi…');
     expect(el.textContent).not.toContain('ancien message à tous');
     expect(el.querySelector('textarea')?.getAttribute('placeholder')).toBe('Message à Téléphone');
+    const composer = [...el.querySelectorAll('.composer button')];
+    expect(composer.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Envoyer un fichier',
+      'Envoyer',
+    ]);
     el.querySelector<HTMLButtonElement>('[aria-label="Retour"]')?.click();
     fixture.detectChanges();
     expect(el.querySelector('.messages')).toBeNull();

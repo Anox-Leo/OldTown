@@ -194,15 +194,6 @@ import { connectionStatus, shortTime } from './status';
             (keydown)="onKey($event)"
           ></textarea>
           <button
-            class="icon"
-            (click)="sendClipboard()"
-            [disabled]="busy()"
-            title="Coller et envoyer le presse-papiers"
-            aria-label="Coller et envoyer le presse-papiers"
-          >
-            <app-icon name="clipboard" />
-          </button>
-          <button
             class="primary icon"
             (click)="send()"
             [disabled]="busy() || !text.trim()"
@@ -385,8 +376,6 @@ import { connectionStatus, shortTime } from './status';
       align-items: flex-end;
       gap: 4px;
     }
-    /* Trombone, presse-papiers et envoi : même forme, seule la couleur
-       distingue l'envoi. */
     .composer .icon {
       flex: none;
       width: 38px;
@@ -641,25 +630,6 @@ export class ChatComponent {
       this.text = '';
       this.notice.set(this.offlineNotice());
     }
-  }
-
-  protected async sendClipboard(): Promise<void> {
-    this.bg.error.set(undefined);
-    let text: string;
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      this.bg.error.set('Presse-papiers illisible.');
-      return;
-    }
-    if (!text.trim()) {
-      this.bg.error.set('Le presse-papiers ne contient pas de texte.');
-      return;
-    }
-    this.busy.set(true);
-    const sent = await this.bg.run<string>({ type: 'send-clipboard', text, to: this.channel() });
-    this.busy.set(false);
-    if (sent) this.notice.set(this.offlineNotice());
   }
 
   private offlineNotice(): string | undefined {
