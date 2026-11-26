@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -25,6 +26,7 @@ import dev.oldtown.android.relay.Transfer
 import dev.oldtown.android.ui.MainActivity
 import dev.oldtown.android.ui.NO_CHANNEL
 import dev.oldtown.android.ui.channelOf
+import dev.oldtown.android.ui.notificationsToClear
 import dev.oldtown.core.Received
 
 object Notifications {
@@ -37,6 +39,7 @@ object Notifications {
     private const val CHANNEL_PEOPLE = "people"
     private const val PERSON_JOINED_ID = 3
     private const val GROUP = "dev.oldtown.android.MESSAGES"
+    private const val EXTRA_MSG_ID = "dev.oldtown.android.extra.MSG_ID"
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -175,6 +178,7 @@ object Notifications {
             .setWhen(item.createdAtMs)
             .setShowWhen(true)
             .setContentIntent(openConversation(context, item, id))
+            .addExtras(Bundle().apply { putString(EXTRA_MSG_ID, item.msgId) })
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -219,6 +223,7 @@ object Notifications {
             .setContentText(text)
             .setWhen(item.createdAtMs)
             .setShowWhen(true)
+            .addExtras(Bundle().apply { putString(EXTRA_MSG_ID, item.msgId) })
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -305,20 +310,28 @@ object Notifications {
 
     private fun transferId(id: String): Int = 500_000_000 + (id.hashCode() and 0x0fffffff)
 
-    private fun shownMessages(context: Context): List<Pair<Int, Long>> =
+    private fun activeMessages(context: Context) =
         context.getSystemService(NotificationManager::class.java).activeNotifications
             .filter { it.notification.channelId in setOf(CHANNEL_MESSAGES, CHANNEL_PEOPLE) && it.id != SUMMARY_ID }
-            .map { it.id to it.postTime }
+
+    private fun shownMessages(context: Context): List<Pair<Int, Long>> =
+        activeMessages(context).map { it.id to it.postTime }
+
+    fun clearRead(context: Context, channel: String) {
+        val active = activeMessages(context)
+        val shown = active.mapNotNull { it.notification.extras.getString(EXTRA_MSG_ID) }
+        if (shown.isEmpty()) return
+        val state = RelayHub.state.value
+        val read = notificationsToClear(shown, state.history, channel, state.device?.deviceId)
+        if (read.isEmpty()) return
+        val manager = NotificationManagerCompat.from(context)
+        for (msgId in read) manager.cancel(idOf(msgId))
+        if (active.size <= read.size) manager.cancel(SUMMARY_ID)
+    }
 
     private fun trimMessages(context: Context) {
         val manager = NotificationManagerCompat.from(context)
         for (id in oldestBeyond(shownMessages(context), MAX_SHOWN_MESSAGES)) manager.cancel(id)
-    }
-
-    fun clearMessages(context: Context) {
-        val manager = NotificationManagerCompat.from(context)
-        for ((id, _) in shownMessages(context)) manager.cancel(id)
-        manager.cancel(SUMMARY_ID)
     }
 
     fun cancel(context: Context, notificationId: Int) {

@@ -32,6 +32,9 @@ et `compileSdk` 37. Tout le protocole et la crypto restent en Rust
   « Messages » ; actions choisies par `notify/actionsFor` (testée sans
   Android). « Copier » relit l'élément par son `msg_id` : le texte ne passe
   pas par l'`Intent`. « Ouvrir » seulement pour `http(s)://`.
+  Ouvrir une conversation efface les notifications de ses éléments
+  (`notificationsToClear`, `msg_id` rangé dans les extras), sur cet
+  appareil seulement ; ouvrir l'appli n'efface plus tout.
 - **Partage** : `share/ShareActivity` (feuille du bas : texte, ou fichiers
   `SEND`/`SEND_MULTIPLE`, URI `content://` seulement) et un raccourci Direct
   Share par destinataire (`share/Shortcuts`, identifiant `to:<canal>`).

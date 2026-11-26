@@ -8,6 +8,7 @@ import dev.oldtown.android.ui.conversations
 import dev.oldtown.android.ui.deviceKind
 import dev.oldtown.android.ui.inChannel
 import dev.oldtown.android.ui.initials
+import dev.oldtown.android.ui.notificationsToClear
 import dev.oldtown.android.ui.parseChannel
 import dev.oldtown.android.ui.personConversations
 import dev.oldtown.android.ui.preview
@@ -319,6 +320,33 @@ class ConversationsTest {
         val earlier = ZonedDateTime.of(2026, 10, 3, 9, 0, 0, 0, utc).toInstant().toEpochMilli()
         assertEquals("3 oct.", shortTime(earlier, now = at(30), zone = utc))
         assertNull(conversations(MEMBERS, emptyList(), ME)[1].last)
+    }
+
+    private val readItems = listOf(
+        item("t1", "dev_tel", listOf(ME), 1),
+        item("t2", "dev_tel", listOf(ME), 2),
+        item("t3", ME, listOf("dev_tel"), 3, outgoing = true),
+        item("b1", "dev_bob_tel", listOf(ME), 4, fromUser = BOB),
+        item("b2", "dev_bob_pc", listOf(ME), 5, fromUser = BOB),
+        item("c1", "dev_carol", listOf(ME), 6, fromUser = CAROL),
+    )
+    private val shown = listOf("t1", "t2", "t3", "b1", "b2", "c1", "joined:usr_dan")
+
+    @Test
+    fun openingAConversationClearsItsNotificationsOnly() {
+        assertEquals(listOf("t1", "t2"), notificationsToClear(shown, readItems, "dev_tel", ME))
+        assertEquals(listOf("c1"), notificationsToClear(shown, readItems, userChannel(CAROL), ME))
+    }
+
+    @Test
+    fun aPersonClearsThoseOfAllHerDevices() {
+        assertEquals(listOf("b1", "b2"), notificationsToClear(shown, readItems, userChannel(BOB), ME))
+    }
+
+    @Test
+    fun aClosedNotificationOrOneWithoutItemIsLeftAlone() {
+        assertEquals(listOf("t2"), notificationsToClear(listOf("t2", "joined:usr_dan"), readItems, "dev_tel", ME))
+        assertEquals(emptyList<String>(), notificationsToClear(emptyList(), readItems, "dev_tel", ME))
     }
 
     private companion object {

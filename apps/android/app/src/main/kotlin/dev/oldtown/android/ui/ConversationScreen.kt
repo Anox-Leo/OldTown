@@ -118,7 +118,7 @@ private fun senderName(hub: HubState, item: Received): String {
 private val SWIPE_BACK = 96.dp
 
 @Composable
-fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpened: suspend (user: String) -> Unit) {
+fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpened: suspend (channel: String) -> Unit) {
     val context = LocalContext.current
     val presence = rememberPresence(hub.connection)
     val me = hub.device?.deviceId
@@ -135,12 +135,10 @@ fun ConversationScreen(hub: HubState, channel: String, onBack: () -> Unit, onOpe
     val list = rememberLazyListState()
     LaunchedEffect(visible.firstOrNull()?.msgId, uploads.size) { list.scrollToItem(0) }
     LaunchedEffect(channel, visible.firstOrNull()?.msgId) {
-        if (target is ChannelTarget.Person) {
-            try {
-                onOpened(target.user)
-            } catch (e: OtException) {
-                Log.w("OldTown", "non-lus non rangés : ${e.message}")
-            }
+        try {
+            onOpened(channel)
+        } catch (e: OtException) {
+            Log.w("OldTown", "non-lus non rangés : ${e.message}")
         }
     }
     val swipe = with(LocalDensity.current) { SWIPE_BACK.toPx() }
