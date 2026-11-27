@@ -613,20 +613,23 @@ impl Store {
         let forced = kind == Some(DeviceKind::Cli) || owner.role == Role::Service;
         if forced {
             reachable = false;
+        } else if changes.default == Some(true) && !reachable {
+            return Err(StoreError::Invalid("un appareil principal doit être joignable"));
+        } else if changes.default == Some(false) && device.is_default && reachable {
+            return Err(StoreError::Invalid("choisir un autre appareil principal"));
+        }
+        if !reachable {
             is_default = false;
         }
-        if device.is_default && !is_default && !forced {
-            let others: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM devices
+        if is_default && !device.is_default {
+            sqlx::query(
+                "UPDATE devices SET is_default = 0
                  WHERE user_id = ? AND revoked_at IS NULL AND is_default = 1 AND id != ?",
             )
             .bind(device.user_id.as_str())
             .bind(target.as_str())
-            .fetch_one(&mut *tx)
+            .execute(&mut *tx)
             .await?;
-            if others == 0 {
-                return Err(StoreError::Invalid("il faut garder au moins un appareil par défaut"));
-            }
         }
         let features = match &changes.features {
             Some(f) => {

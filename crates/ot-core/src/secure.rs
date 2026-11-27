@@ -360,11 +360,7 @@ impl Secure {
         self.people.iter().filter(move |p| Some(&p.id) != me.as_ref())
     }
 
-    pub fn recipients(
-        &self,
-        user: &UserId,
-        device: Option<&DeviceId>,
-    ) -> Result<Vec<DeviceId>, ClientError> {
+    pub fn recipients(&self, user: &UserId) -> Result<Vec<DeviceId>, ClientError> {
         if self.me_user.as_ref() == Some(user) {
             return Err(ClientError::Invalid("c'est ma personne : envoyer à mes appareils".into()));
         }
@@ -376,33 +372,10 @@ impl Secure {
             return Err(ClientError::Invalid("un service ne reçoit pas de message".into()));
         }
         let usable = |d: &&crate::DeviceProfile| d.reachable && d.up_to_date;
-        let mut to: Vec<DeviceId> = match device {
-            Some(id) => {
-                let d = person.devices.iter().find(|d| &d.id == id).ok_or_else(|| {
-                    ClientError::NoRecipient(format!(
-                        "{id} n'est pas un appareil de {}",
-                        person.name
-                    ))
-                })?;
-                if !usable(&d) {
-                    return Err(ClientError::NoRecipient(format!(
-                        "{} n'est pas joignable ou pas à jour",
-                        d.name
-                    )));
-                }
-                vec![d.id.clone()]
-            }
-            None => {
-                let defaults: Vec<_> =
-                    person.devices.iter().filter(usable).filter(|d| d.default).collect();
-                let chosen = if defaults.is_empty() {
-                    person.devices.iter().filter(usable).collect()
-                } else {
-                    defaults
-                };
-                chosen.into_iter().map(|d| d.id.clone()).collect()
-            }
-        };
+        let (principal, others): (Vec<_>, Vec<_>) =
+            person.devices.iter().filter(usable).partition(|d| d.default);
+        let mut to: Vec<DeviceId> =
+            principal.into_iter().chain(others).map(|d| d.id.clone()).collect();
         if to.is_empty() {
             return Err(ClientError::NoRecipient(format!(
                 "aucun appareil de {} n'est joignable et à jour",
@@ -474,16 +447,15 @@ impl Secure {
         &self,
         content: &Content,
         user: &UserId,
-        device: Option<&DeviceId>,
     ) -> Result<Envelope, ClientError> {
-        let to = self.recipients(user, device)?;
+        let to = self.recipients(user)?;
         self.seal_multi(to, &body_of(content))
     }
 
     pub fn seal_otp_to(&self, otp: &Otp, users: &[UserId]) -> Result<Envelope, ClientError> {
         let mut to: Vec<DeviceId> = Vec::new();
         for user in users {
-            for id in self.recipients(user, None)? {
+            for id in self.recipients(user)? {
                 if !to.contains(&id) {
                     to.push(id);
                 }
@@ -492,16 +464,6 @@ impl Secure {
         if to.len() > MAX_RECIPIENTS {
             return Err(ClientError::Invalid("plus de 32 appareils destinataires".into()));
         }
-        self.seal_multi(to, &Body::Otp(otp.clone()))
-    }
-
-    pub fn seal_otp_to_device(
-        &self,
-        otp: &Otp,
-        user: &UserId,
-        device: &DeviceId,
-    ) -> Result<Envelope, ClientError> {
-        let to = self.recipients(user, Some(device))?;
         self.seal_multi(to, &Body::Otp(otp.clone()))
     }
 
@@ -2362,7 +2324,7 @@ mod tests {
     fn text_between_two_people_both_ways_with_a_copy() {
         let mut p = People::new(2, 2);
         let (alice, bob) = (p.alice.clone(), p.bob.clone());
-        let env = p.a[0].secure.seal_content_to(&Content::text("salut Bob"), &bob, None).unwrap();
+        let env = p.a[0].secure.seal_content_to(&Content::text("salut Bob"), &bob).unwrap();
         assert!(matches!(Header::parse(&env.payload), Ok(Header::Multi { .. })));
         let expected: Vec<_> = vec![p.b[0].id.clone(), p.b[1].id.clone(), p.a[1].id.clone()];
         assert_eq!(env.to, expected, "appareils de Bob, puis la copie");
@@ -2378,7 +2340,7 @@ mod tests {
         let copy = messages(&p.a[1].receive(env));
         assert_eq!(copy[0].origin, Origin { to_user: Some(bob.clone()), ..Origin::default() });
 
-        let reply = p.b[1].secure.seal_content_to(&Content::link("https://x.test"), &alice, None);
+        let reply = p.b[1].secure.seal_content_to(&Content::link("https://x.test"), &alice);
         let reply = reply.unwrap();
         assert_eq!(reply.to, [p.a[0].id.clone(), p.a[1].id.clone(), p.b[0].id.clone()]);
         let got = messages(&p.a[0].receive(reply));
@@ -2411,7 +2373,7 @@ mod tests {
     }
 
     #[test]
-    fn a_code_for_one_device_goes_to_that_device_only() {
+    fn a_code_reaches_every_device_of_the_person() {
         let p = People::new(1, 3);
         let otp = Otp {
             code: "482913".into(),
@@ -2421,35 +2383,38 @@ mod tests {
             sender_verified: true,
             expires_at: 1_793_628_791,
         };
-        let env = p.a[0].secure.seal_otp_to_device(&otp, &p.bob, &p.b[1].id).unwrap();
-        assert_eq!(env.to, [p.b[1].id.clone()]);
-        let err = p.a[0].secure.seal_otp_to_device(&otp, &p.bob, &p.a[0].id).unwrap_err();
-        assert!(matches!(err, ClientError::Invalid(_) | ClientError::NoRecipient(_)), "{err}");
+        let env = p.a[0].secure.seal_otp_to(&otp, std::slice::from_ref(&p.bob)).unwrap();
+        let mut to = env.to.clone();
+        to.sort();
+        let mut bob: Vec<_> = p.b.iter().map(|d| d.id.clone()).collect();
+        bob.sort();
+        assert_eq!(to, bob);
     }
 
     #[test]
-    fn recipients_follow_defaults_and_skip_devices_not_up_to_date() {
+    fn recipients_are_every_reachable_device_principal_first() {
         let mut p = People::new(3, 3);
         let bob = p.bob.clone();
-        let d1 = device_profile(&p.b[1], true, true, None);
-        p.set_profile(1, 1, d1);
-        let to = p.a[0].secure.recipients(&bob, None).unwrap();
-        assert_eq!(to[0], p.b[1].id);
-        assert!(!to.contains(&p.b[0].id) && !to.contains(&p.b[2].id));
+        for i in 0..3 {
+            let d = device_profile(&p.b[i], true, i == 1, None);
+            p.users[1].devices[i] = d;
+        }
+        p.read_all();
+        let to = p.a[0].secure.recipients(&bob).unwrap();
+        assert_eq!(to[0], p.b[1].id, "le principal en tête");
+        assert!(to.contains(&p.b[0].id) && to.contains(&p.b[2].id), "et tous les autres");
 
         let d1 = device_profile(&p.b[1], false, true, None);
         p.set_profile(1, 1, d1);
-        let to = p.a[0].secure.recipients(&bob, None).unwrap();
+        let to = p.a[0].secure.recipients(&bob).unwrap();
         assert_eq!(&to[..2], [p.b[0].id.clone(), p.b[2].id.clone()]);
-        let err = p.a[0].secure.recipients(&bob, Some(&p.b[1].id)).unwrap_err();
-        assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
-        assert_eq!(p.a[0].secure.recipients(&bob, Some(&p.b[2].id)).unwrap()[0], p.b[2].id);
+        assert!(!to.contains(&p.b[1].id), "pas à jour");
 
         let cli = device_profile(&p.a[1], true, false, Some(DeviceKind::Cli));
         p.set_profile(0, 1, cli);
         let old = device_profile(&p.a[2], false, false, None);
         p.set_profile(0, 2, old);
-        let to = p.a[0].secure.recipients(&bob, None).unwrap();
+        let to = p.a[0].secure.recipients(&bob).unwrap();
         assert!(to.iter().all(|id| p.b.iter().any(|d| &d.id == id)), "aucune copie");
 
         for i in 0..3 {
@@ -2457,22 +2422,19 @@ mod tests {
             p.users[1].devices[i] = d;
         }
         p.read_all();
-        let err = p.a[0].secure.recipients(&bob, None).unwrap_err();
+        let err = p.a[0].secure.recipients(&bob).unwrap_err();
         assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
         let alice = p.alice.clone();
-        assert!(matches!(p.a[0].secure.recipients(&alice, None), Err(ClientError::Invalid(_))));
+        assert!(matches!(p.a[0].secure.recipients(&alice), Err(ClientError::Invalid(_))));
         let nobody = UserId::generate();
-        assert!(matches!(
-            p.a[0].secure.recipients(&nobody, None),
-            Err(ClientError::NoRecipient(_))
-        ));
+        assert!(matches!(p.a[0].secure.recipients(&nobody), Err(ClientError::NoRecipient(_))));
     }
 
     #[test]
     fn unknown_sender_waits_for_the_directory() {
         let mut p = People::new(1, 1);
         let alice = p.alice.clone();
-        let env = p.b[0].secure.seal_content_to(&Content::text("tôt"), &alice, None).unwrap();
+        let env = p.b[0].secure.seal_content_to(&Content::text("tôt"), &alice).unwrap();
         p.a[0].reload();
         let fx = p.a[0].receive(env);
         assert!(messages(&fx).is_empty() && rejected(&fx).is_empty());
@@ -2486,7 +2448,7 @@ mod tests {
     fn tampered_multi_messages_are_rejected() {
         let mut p = People::new(1, 2);
         let bob = p.bob.clone();
-        let env = p.a[0].secure.seal_content_to(&Content::text("x"), &bob, None).unwrap();
+        let env = p.a[0].secure.seal_content_to(&Content::text("x"), &bob).unwrap();
         let mut swapped = env.clone();
         swapped.to.reverse();
         assert!(messages(&p.b[0].receive(swapped)).is_empty());
@@ -2494,8 +2456,7 @@ mod tests {
         cut.to.truncate(1);
         assert!(messages(&p.b[0].receive(cut)).is_empty());
         let forger = Identity::generate();
-        let mut forged =
-            p.b[0].secure.seal_content_to(&Content::text("y"), &p.alice, None).unwrap();
+        let mut forged = p.b[0].secure.seal_content_to(&Content::text("y"), &p.alice).unwrap();
         let recipients: Vec<_> = forged
             .to
             .iter()
@@ -2526,7 +2487,7 @@ mod tests {
             nonce: [2; ot_crypto::FILE_NONCE_LEN],
             sha256: [3; 32],
         };
-        let to = p.a[0].secure.recipients(&bob, None).unwrap();
+        let to = p.a[0].secure.recipients(&bob).unwrap();
         let env = p.a[0].secure.seal_file_to(&meta, to).unwrap();
         let fx = p.b[0].receive(env);
         assert!(rejected(&fx).is_empty(), "{:?}", rejected(&fx));

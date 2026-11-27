@@ -803,7 +803,7 @@ export class Engine {
     let env: string;
     if (target.user !== undefined) {
       await this.people.fresh().catch((e: unknown) => this.log('relecture de l’annuaire', e));
-      env = core.sealTextTo(text, target.user, target.device);
+      env = core.sealTextTo(text, target.user);
     } else {
       env = core.sealText(text, target.device ? [target.device] : []);
     }
@@ -913,7 +913,7 @@ export class Engine {
       let to: string[] = target.device ? [target.device] : [];
       if (target.user !== undefined) {
         await this.people.fresh().catch((e: unknown) => this.log('relecture de l’annuaire', e));
-        to = JSON.parse((this.core as Core).recipients(target.user, target.device)) as string[];
+        to = JSON.parse((this.core as Core).recipients(target.user)) as string[];
       }
       const { env, blobId } = await transfers.upload(
         { sourceId: file.path, name: file.name, mime: file.mime, to, toUser: target.user },

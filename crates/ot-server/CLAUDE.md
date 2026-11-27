@@ -49,7 +49,10 @@ journal de roster de chaque personne (étape 10, notes 0052 et 0053). Binaire
   joignables, admin non lié) ne cachent rien de confidentiel : le journal
   signé de chaque personne servie liste tous ses appareils.
 - Toute personne (hors service) qui a un appareil joignable en garde un par
-  défaut (`store::ensure_default`).
+  défaut (`store::ensure_default`), et un seul : le principal (note 0079).
+  `device_update {default: true}` retire les autres dans la même
+  transaction, et l'index `devices_one_default` (migration `0005`) le
+  garantit.
 - SQLite : migrations versionnées dans `migrations/`, jamais modifiées une fois
   livrées (on en ajoute une) ; écritures en `BEGIN IMMEDIATE` (note 0007) ;
   requêtes `sqlx::query` non vérifiées à la compilation (note 0003).

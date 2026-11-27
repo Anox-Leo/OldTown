@@ -115,9 +115,8 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
 
     let err = ot_fails(&notifier, &["otp-bridge", "--to", "x", "--to-user", "Bob"]).await;
     assert!(err.contains("ne se combinent pas"), "{err}");
-    let err =
-        ot_fails(&notifier, &["otp-bridge", "--to-user", "Alice,Bob", "--device", "bob-cli"]).await;
-    assert!(err.contains("une seule personne"), "{err}");
+    let err = ot_fails(&notifier, &["otp-bridge", "--to-user", "Bob", "--device", "bob-cli"]).await;
+    assert!(err.contains("--device"), "plus de choix d'appareil : {err}");
 
     let socket = root.path().join("otp-relay.sock");
     fake_relay(&socket, vec![("c1", "482913")]);
@@ -162,20 +161,13 @@ async fn bridge_relays_codes_to_people_and_skips_who_muted_it() {
 }
 
 #[tokio::test]
-async fn bridge_sends_to_one_device_of_a_person() {
+async fn bridge_sends_to_the_devices_of_a_person() {
     let root = TempDir::new().unwrap();
     let (store, url) = relay(root.path()).await;
     let alice = admin(&store, root.path(), &url).await;
     let bob = invite(&alice, root.path(), "Bob", &["Alice"], "bob-cli").await;
     let notifier = service(&alice, root.path(), &url, "Notifier", "notifier-1").await;
     ot(&alice, &["admin", "link", "add", "Notifier", "Bob"]).await;
-
-    let err = ot_fails(
-        &notifier,
-        &["otp-bridge", "--to-user", "Bob", "--device", "nope", "--socket", "/nonexistent"],
-    )
-    .await;
-    assert!(err.contains("nope"), "{err}");
 
     let socket = root.path().join("otp-relay.sock");
     fake_relay(&socket, vec![("d1", "135790")]);
@@ -184,7 +176,6 @@ async fn bridge_sends_to_one_device_of_a_person() {
         .arg(&notifier)
         .args(["otp-bridge", "--socket", socket.to_str().unwrap()])
         .env("OT_OTP_TO_USER", "Bob")
-        .env("OT_OTP_DEVICE", "bob-cli")
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()

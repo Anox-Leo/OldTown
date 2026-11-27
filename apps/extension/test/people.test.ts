@@ -110,7 +110,7 @@ describe('extension, appareil de l’admin', () => {
     expect(sent.toUser).toBe(bobUser);
     expect(channelOf(sent, engine.state().device?.id)).toBe(userChannel(bobUser));
 
-    await bob.run('send', '--to-user', 'Alice', '--device', 'alice-chrome', 'merci');
+    await bob.run('send', '--to-user', 'Alice', 'merci');
     const reply = await eventually('réponse de Bob', async () =>
       (await engine.history()).find((i) => i.body === 'merci'),
     );

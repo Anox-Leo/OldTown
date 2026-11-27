@@ -445,18 +445,13 @@ impl Core {
         Ok(self.state.declaration_frame(kind).map_err(js)?.map(|f| f.to_json()))
     }
 
-    pub fn recipients(&self, user: &str, device: Option<String>) -> Result<String, JsError> {
-        to_json(&self.state.recipients(user, device.as_deref()).map_err(js)?)
+    pub fn recipients(&self, user: &str) -> Result<String, JsError> {
+        to_json(&self.state.recipients(user).map_err(js)?)
     }
 
     #[wasm_bindgen(js_name = sealTextTo)]
-    pub fn seal_text_to(
-        &self,
-        text: &str,
-        user: &str,
-        device: Option<String>,
-    ) -> Result<String, JsError> {
-        to_json(&self.state.seal_text_to(text, user, device.as_deref()).map_err(js)?)
+    pub fn seal_text_to(&self, text: &str, user: &str) -> Result<String, JsError> {
+        to_json(&self.state.seal_text_to(text, user).map_err(js)?)
     }
 
     #[wasm_bindgen(js_name = nextEntry)]

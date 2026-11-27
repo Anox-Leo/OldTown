@@ -110,15 +110,6 @@ pub fn otp_recipients(people: &[Person], names: &[String]) -> Vec<UserId> {
     users
 }
 
-pub fn otp_device(people: &[Person], user: &str, device: &str) -> Result<(UserId, DeviceId)> {
-    let person = find_person(people, user)?;
-    if person.muted {
-        bail!("{} a coupé ce service", person.id);
-    }
-    let d = pick(&person.devices, device, "appareil", |d| d.id.to_string(), |d| d.name.clone())?;
-    Ok((person.id.clone(), d.id.clone()))
-}
-
 fn me<'a>(people: &'a [Person], device: &DeviceId) -> Option<&'a Person> {
     people.iter().find(|p| p.roster.contains(device))
 }
@@ -134,30 +125,12 @@ async fn directory(client: &Client) -> Result<Vec<Person>> {
     Ok(people)
 }
 
-async fn target(
-    client: &Client,
-    user: &str,
-    device: Option<&str>,
-) -> Result<(UserId, Option<DeviceId>)> {
+async fn target(client: &Client, user: &str) -> Result<UserId> {
     let people = directory(client).await?;
-    let person = find_person(&people, user)?;
-    let device = match device {
-        Some(name) => Some(
-            pick(&person.devices, name, "appareil", |d| d.id.to_string(), |d| d.name.clone())?
-                .id
-                .clone(),
-        ),
-        None => None,
-    };
-    Ok((person.id.clone(), device))
+    Ok(find_person(&people, user)?.id.clone())
 }
 
-pub async fn send_to_user(
-    home: &Home,
-    text: Vec<String>,
-    user: &str,
-    device: Option<&str>,
-) -> Result<()> {
+pub async fn send_to_user(home: &Home, text: Vec<String>, user: &str) -> Result<()> {
     let body = if text.is_empty() {
         if std::io::stdin().is_terminal() {
             bail!("rien à envoyer : donner un texte ou passer par l'entrée standard");
@@ -175,8 +148,8 @@ pub async fn send_to_user(
     let (client, mut events) = start(home)?;
     let res = async {
         connected(&mut events).await?;
-        let (user, device) = target(&client, user, device).await?;
-        within(client.send_to(Target::Person { user, device }, &content)).await
+        let user = target(&client, user).await?;
+        within(client.send_to(Target::Person { user }, &content)).await
     }
     .await;
     client.shutdown().await;
@@ -184,12 +157,7 @@ pub async fn send_to_user(
     Ok(())
 }
 
-pub async fn send_file_to_user(
-    home: &Home,
-    path: &Path,
-    user: &str,
-    device: Option<&str>,
-) -> Result<()> {
+pub async fn send_file_to_user(home: &Home, path: &Path, user: &str) -> Result<()> {
     let source = Arc::new(FileSource::open(path)?);
     let name =
         path.file_name().and_then(|n| n.to_str()).context("nom de fichier illisible")?.to_owned();
@@ -197,12 +165,12 @@ pub async fn send_file_to_user(
     let (client, mut events) = start(home)?;
     let res = async {
         connected(&mut events).await?;
-        let (user, device) = target(&client, user, device).await?;
+        let user = target(&client, user).await?;
         let file = OutgoingFile {
             source_id: source_id(path)?,
             name: name.clone(),
             mime: guess_mime(path).to_owned(),
-            to: device.into_iter().collect(),
+            to: Vec::new(),
             to_user: Some(user),
         };
         eprintln!("envoi de {name} ({})…", human_size(size));
@@ -307,18 +275,13 @@ pub async fn device_kind(home: &Home, device: &str, kind: &str) -> Result<()> {
     update(home, device, DeviceSettings { kind: Some(kind), ..DeviceSettings::default() }).await
 }
 
-pub enum Flag {
-    Default,
-    Reachable,
+pub async fn device_principal(home: &Home, device: &str) -> Result<()> {
+    update(home, device, DeviceSettings { default: Some(true), ..DeviceSettings::default() }).await
 }
 
-pub async fn device_flag(home: &Home, device: &str, flag: Flag, state: OnOff) -> Result<()> {
+pub async fn device_reachable(home: &Home, device: &str, state: OnOff) -> Result<()> {
     let on = matches!(state, OnOff::On);
-    let settings = match flag {
-        Flag::Default => DeviceSettings { default: Some(on), ..DeviceSettings::default() },
-        Flag::Reachable => DeviceSettings { reachable: Some(on), ..DeviceSettings::default() },
-    };
-    update(home, device, settings).await
+    update(home, device, DeviceSettings { reachable: Some(on), ..DeviceSettings::default() }).await
 }
 
 pub async fn device_revoke(home: &Home, device: &str) -> Result<()> {

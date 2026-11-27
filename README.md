@@ -232,15 +232,13 @@ ot pair join --qr --service --server wss://relay.example.org --name notifier-1
 #   then, on an admin device:
 ot admin service add Notifier --qr '<text of the QR>'
 ot admin link add Notifier Bob
-ot otp-bridge --to-user Bob          # on the service device (OT_OTP_TO_USER)
-ot otp-bridge --to-user Bob --device bob-laptop   # one of his devices only (OT_OTP_DEVICE)
+ot otp-bridge --to-user Bob          # on the service device (OT_OTP_TO_USER), to all his devices
 ```
 
 The first device creates the service; more devices can join it the same
 way. From the Android app: settings → *Administration* → *Service*, then
 scan the QR code of `ot pair join --qr --service`. `deploy/ot-diag.sh` needs a
-target: `OT_DIAG_TO` (my devices) or `OT_DIAG_TO_USER` (people), and
-`OT_DIAG_DEVICE` for one device of a single person.
+target: `OT_DIAG_TO` (my devices) or `OT_DIAG_TO_USER` (people).
 
 ### Join someone's OldTown
 
@@ -266,8 +264,8 @@ The admin sees who writes to you and when, never what.
 
 - **Android**: *Share* from any app to OldTown (texts, links, photos,
   files), to one of my devices or to another person; or the conversation
-  screen. Other people sit in a side bar, with their unread count; a person
-  opens on their default devices, then each reachable device. Received
+  screen. Other people sit in a side bar, with their unread count; writing
+  to a person reaches all their reachable devices. Received
   items come as notifications with *Copy* and *Open*.
 - **Extension**: right-click a page, link, selection or image → *Envoyer à
   OldTown*; `Alt+Shift+S` sends the current tab, `Alt+Shift+V` the
@@ -292,10 +290,10 @@ The admin sees who writes to you and when, never what.
   ot listen --download-dir ~/Downloads   # receive, files included
   ot otp-bridge --to brave               # relay one-time codes (OT_OTP_TO)
   ot users                               # people I can reach, their devices
-  ot send --to-user Bob "hello"          # to Bob's default devices (copy to mine)
-  ot send --to-user Bob --device bob-phone --file photo.jpg
+  ot send --to-user Bob "hello"          # to all of Bob's devices (copy to mine)
+  ot send --to-user Bob --file photo.jpg
   ot devices                             # my person's devices on the relay
-  ot device default laptop off           # profile: default, reachable, kind
+  ot device default phone                # my main device: the only one that notifies
   ot device revoke old-phone             # new group key without it, then revoked
   ot group show                          # members and key fingerprints
   ot group rotate --exclude phone        # lost device: new group key without it

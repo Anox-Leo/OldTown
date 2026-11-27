@@ -157,16 +157,8 @@ fi
 
 reset
 OT_DIAG_TO="" OT_DIAG_TO_USER=Alice OT_DIAG_DEVICE="alice phone" sh "$SCRIPT" report 2>/dev/null
-expect_line "appareil" "$(cat "$T/ot.args")" "send --to-user Alice --device alice phone"
-[ "$(sent_count)" = 1 ] || fail "appareil : un envoi attendu"
-reset
-if OT_DIAG_TO="" OT_DIAG_TO_USER="Alice Bob" OT_DIAG_DEVICE=x sh "$SCRIPT" report 2>/dev/null; then
-    fail "OT_DIAG_DEVICE avec deux personnes doit être refusé"
-fi
-if OT_DIAG_TO="" OT_DIAG_DEVICE=x sh "$SCRIPT" report 2>/dev/null; then
-    fail "OT_DIAG_DEVICE sans OT_DIAG_TO_USER doit être refusé"
-fi
-[ "$(sent_count)" = 0 ] || fail "OT_DIAG_DEVICE refusé : aucun envoi attendu"
+expect_line "plus de choix d'appareil" "$(cat "$T/ot.args")" "send --to-user Alice"
+[ "$(sent_count)" = 1 ] || fail "plus de choix d'appareil : un envoi attendu"
 
 reset
 sh "$SCRIPT" report 2>/dev/null

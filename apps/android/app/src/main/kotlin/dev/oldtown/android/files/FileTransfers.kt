@@ -69,7 +69,7 @@ object FileTransfers {
                 val progress = Progress(context, start)
                 when (val t = parseChannel(channel)) {
                     is ChannelTarget.Mine -> client.sendFile(source, id, file.name, file.mime, recipientsOf(t.device), progress)
-                    is ChannelTarget.Person -> client.sendFileToUser(source, id, file.name, file.mime, t.user, t.device, progress)
+                    is ChannelTarget.Person -> client.sendFileToUser(source, id, file.name, file.mime, t.user, progress)
                 }
             }
             RelayHub.removeTransfer(id)

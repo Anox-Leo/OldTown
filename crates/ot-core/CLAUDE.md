@@ -61,9 +61,9 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   rendus à la plus ancienne demande en attente (`Pending`) : le relais
   répond dans l'ordre.
 - Envois entre personnes (étape 10, `0x05`) : `Secure::recipients` résout
-  une personne d'après l'annuaire vérifié seulement (appareils par défaut
-  joignables et à jour, sinon tous les joignables et à jour, plus la copie
-  à mes appareils hors CLI) ; les clés viennent des rosters vérifiés, jamais
+  une personne d'après l'annuaire vérifié seulement (tous ses appareils
+  joignables et à jour, le principal en tête, note 0079, plus la copie à mes
+  appareils hors CLI) ; les clés viennent des rosters vérifiés, jamais
   des profils. `Client::send_to`/`seal_to` relisent l'annuaire s'il date de
   plus de 60 s (`Command::Fresh`). Un `0x05` d'un expéditeur inconnu va en
   quarantaine, réessayée après chaque lecture. `Origin` dit qui écrit et à

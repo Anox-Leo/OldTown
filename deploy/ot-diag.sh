@@ -5,7 +5,6 @@ STATE=${OT_DIAG_STATE:-${STATE_DIRECTORY:-/var/lib/ot-diag}}
 SYSFS=${OT_DIAG_SYSFS:-/sys/class/power_supply}
 TO=${OT_DIAG_TO:-}
 TO_USER=${OT_DIAG_TO_USER:-}
-DEVICE=${OT_DIAG_DEVICE:-}
 HOURS=${OT_DIAG_WINDOW_HOURS:-12}
 DEBOUNCE=${OT_DIAG_DEBOUNCE:-30}
 MIN_INTERVAL=${OT_DIAG_MIN_INTERVAL:-600}
@@ -102,24 +101,10 @@ send() {
         echo "aucune cible : OT_DIAG_TO (appareils de mon groupe) ou OT_DIAG_TO_USER (personnes) est obligatoire" >&2
         return 2
     fi
-    if [ -n "$DEVICE" ] && [ -z "$TO_USER" ]; then
-        echo "OT_DIAG_DEVICE demande OT_DIAG_TO_USER" >&2
-        return 2
-    fi
     if [ -n "$TO_USER" ]; then
         if [ -n "$TO" ]; then
             echo "OT_DIAG_TO (appareils de mon groupe) et OT_DIAG_TO_USER (personnes) ne se combinent pas" >&2
             return 2
-        fi
-        if [ -n "$DEVICE" ]; then
-            # shellcheck disable=SC2086
-            set -- $TO_USER
-            if [ "$#" -ne 1 ]; then
-                echo "OT_DIAG_DEVICE demande une seule personne dans OT_DIAG_TO_USER" >&2
-                return 2
-            fi
-            printf '%s\n' "$message" | ot send --to-user "$1" --device "$DEVICE"
-            return
         fi
         status=0
         for person in $TO_USER; do
