@@ -20,6 +20,10 @@ personne (`send_text_to_user`, `send_file_to_user`, l'élément porte
 `to_user` et `to_device`), `admin_root(create)` (D51 : adopte une racine
 publiée, ne la crée que si `create`), administration, invitation
 (`join_invite`, `invite_pending`), non-lus (`opened`, `mark_opened`).
+Lu partout (note 0079) : `OtClient::start` reçoit les capacités que
+l'appli sait afficher (`read-v1`…) ; `mark_read` range l'ouverture et, si
+elle avance, prévient mes autres appareils ; un « lu » reçu met à jour
+`opened.json` puis donne `Event::Read`.
 
 - Types exposés simples (`types.rs`) : chaînes, entiers, enregistrements.
   Jamais de clé (pas même celle d'un fichier) ; seuls `Invitation` et

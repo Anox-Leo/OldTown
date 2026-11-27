@@ -207,6 +207,7 @@ impl KeyKind {
         match body {
             Body::InviteRequest { .. } | Body::InviteWelcome { .. } => self == Self::Invite,
             Body::ServiceWelcome { .. } => self == Self::PairQr,
+            Body::Read { .. } => self == Self::Group,
             Body::Text { .. } | Body::Link { .. } | Body::File { .. } | Body::Otp(_) => {
                 self != Self::Invite
             }

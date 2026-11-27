@@ -10,9 +10,9 @@ pub use envelope::{Content, ContentKind, DeviceId, Encoding, Envelope, InvalidDe
 pub use frame::{DecodeError, DeviceInfo, ErrorCode, Frame};
 pub use ulid::Ulid;
 pub use user::{
-    AdminDevice, AdminUser, DeviceKind, DirectoryDevice, DirectoryUser, FEATURE_USERS_V1, Feature,
-    InvalidFeature, InvalidUserId, Known, LogEntry, MAX_FEATURES, MAX_SIGNED_BYTES, Role,
-    SignedBlob, UserId, UserState, valid_user_name,
+    AdminDevice, AdminUser, DeviceKind, DirectoryDevice, DirectoryUser, FEATURE_READ_V1,
+    FEATURE_USERS_V1, Feature, InvalidFeature, InvalidUserId, Known, LogEntry, MAX_FEATURES,
+    MAX_SIGNED_BYTES, Role, SignedBlob, UserId, UserState, valid_user_name,
 };
 
 pub const PROTOCOL_VERSION: u8 = 1;

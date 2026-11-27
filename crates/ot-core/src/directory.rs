@@ -230,9 +230,16 @@ pub struct DeviceProfile {
     pub reachable: bool,
     pub default: bool,
     pub up_to_date: bool,
+    pub features: Vec<ot_proto::Feature>,
     pub online: bool,
     pub exchange_key: [u8; 32],
     pub sign_key: [u8; 32],
+}
+
+impl DeviceProfile {
+    pub fn has(&self, feature: &str) -> bool {
+        self.features.iter().any(|f| f.as_str() == feature)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -598,6 +605,7 @@ fn person(raw: &DirectoryUser, cert: &UserCert, roster: Option<&Roster>) -> Opti
                 reachable: d.reachable,
                 default: d.default,
                 up_to_date: d.features.iter().any(|f| f.as_str() == FEATURE_USERS_V1),
+                features: d.features.clone(),
                 online: d.online,
                 exchange_key: m.exchange_key,
                 sign_key: m.sign_key,

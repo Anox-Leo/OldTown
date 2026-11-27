@@ -174,6 +174,8 @@ pub struct Feature(String);
 
 pub const FEATURE_USERS_V1: &str = "users-v1";
 
+pub const FEATURE_READ_V1: &str = "read-v1";
+
 pub const MAX_FEATURES: usize = 16;
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -183,6 +185,10 @@ pub struct InvalidFeature(pub String);
 impl Feature {
     pub fn users_v1() -> Self {
         Self(FEATURE_USERS_V1.to_owned())
+    }
+
+    pub fn read_v1() -> Self {
+        Self(FEATURE_READ_V1.to_owned())
     }
 
     pub fn as_str(&self) -> &str {
@@ -329,6 +335,7 @@ mod tests {
     #[test]
     fn features() {
         assert!("users-v1".parse::<Feature>().is_ok());
+        assert_eq!(Feature::read_v1().as_str(), "read-v1");
         assert!("".parse::<Feature>().is_err());
         assert!("Users".parse::<Feature>().is_err());
         assert!("a b".parse::<Feature>().is_err());

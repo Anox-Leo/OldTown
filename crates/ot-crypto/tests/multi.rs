@@ -159,6 +159,9 @@ fn only_person_to_person_bodies_are_admitted() {
         Body::Roster { roster: ot_crypto::Roster { epoch: 1, version: 1, members: vec![] } };
     let res = seal(&env, SealKey::Multi { recipients: &table(&to) }, &signer(), &roster);
     assert!(matches!(res, Err(CryptoError::Malformed(_))));
+    let read = Body::Read { user: "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0".parse().unwrap(), until: 1 };
+    let res = seal(&env, SealKey::Multi { recipients: &table(&to) }, &signer(), &read);
+    assert!(matches!(res, Err(CryptoError::Malformed(_))), "read entre mes appareils seulement");
     let link = Body::Link { body: "https://example.org/".into() };
     let mut env = envelope(&to);
     env.payload = seal(&env, SealKey::Multi { recipients: &table(&to) }, &signer(), &link).unwrap();

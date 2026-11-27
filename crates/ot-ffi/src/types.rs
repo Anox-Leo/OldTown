@@ -199,6 +199,7 @@ pub enum Event {
     PersonJoined { user_id: String, name: String, device_name: String, fingerprint: String },
     Joined { user_id: String },
     InviteFailed { reason: String },
+    Read { user_id: String, until_ms: i64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]

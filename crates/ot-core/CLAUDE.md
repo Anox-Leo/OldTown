@@ -67,8 +67,14 @@ chiffrement, roster et appairage (en s'appuyant sur `ot-crypto`).
   des profils. `Client::send_to`/`seal_to` relisent l'annuaire s'il date de
   plus de 60 s (`Command::Fresh`). Un `0x05` d'un expéditeur inconnu va en
   quarantaine, réessayée après chaque lecture. `Origin` dit qui écrit et à
-  qui ; `ReceivedOtp::auto_fill` porte la règle O2. Le client déclare
-  `users-v1` (`device_update`) quand son profil ne l'a pas.
+  qui ; `ReceivedOtp::auto_fill` porte la règle O2. Le client déclare ses
+  capacités (`device_update`) quand celles de son profil diffèrent de
+  `users-v1` plus celles que l'appli dit savoir afficher
+  (`ClientConfig::features`, note 0079 : `read-v1`). Un corps nouveau ne
+  part qu'aux appareils qui annoncent sa capacité : un client ancien le
+  refuserait. « Lu » (`Secure::seal_read`, `Client::send_read`) : entre mes
+  appareils `read-v1` seulement, en `0x01` ; reçu, il donne `Event::Read`
+  sans entrer dans l'historique.
 - Invitation et administration (étape 10) : l'état vit dans le `Keyring`
   (`invites.json` côté admin, `pending_invite.json` côté invité, avec le
   secret `S`) ; une demande d'invitation est vérifiée et rangée avant

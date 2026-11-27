@@ -27,7 +27,7 @@ pub struct OtClient {
 #[uniffi::export]
 impl OtClient {
     #[uniffi::constructor]
-    pub fn start(store: Arc<dyn SecretStore>) -> Result<Arc<Self>, OtError> {
+    pub fn start(store: Arc<dyn SecretStore>, features: Vec<String>) -> Result<Arc<Self>, OtError> {
         let local = Local::new(store);
         let device = local.device()?.ok_or_else(|| OtError::NotInGroup {
             message: "appareil pas encore appairé".into(),
@@ -43,6 +43,10 @@ impl OtClient {
         );
         config.seen = local.seen();
         config.kind = Some(ot_core::DeviceKind::Phone);
+        config.features = features
+            .iter()
+            .map(|f| f.parse().map_err(|e| OtError::Invalid { message: format!("{e}") }))
+            .collect::<Result<_, _>>()?;
         let seen = Dedup::with_seen(Dedup::DEFAULT_CAPACITY, config.seen.clone());
 
         let _guard = RUNTIME.enter();
@@ -164,6 +168,26 @@ impl OtClient {
                 .transpose()?;
             let settings = ot_core::DeviceSettings { kind, reachable, default };
             Ok(client.update_device(&device, settings).await?)
+        })
+        .await
+    }
+
+    pub async fn mark_read(
+        &self,
+        user_id: String,
+        at_ms: i64,
+    ) -> Result<HashMap<String, i64>, OtError> {
+        let (client, local) = (self.client.clone(), self.local.clone());
+        on_runtime(async move {
+            let user = parse_user(&user_id)?;
+            let before = local.opened().get(&user_id).copied().unwrap_or(0);
+            let opened = local.mark_opened(&user_id, at_ms)?;
+            if at_ms > before
+                && let Ok(until) = u64::try_from(at_ms)
+            {
+                client.send_read(&user, until).await?;
+            }
+            Ok(opened)
         })
         .await
     }
@@ -574,6 +598,13 @@ impl Forwarder {
             }
             E::Joined { user } => Event::Joined { user_id: user.to_string() },
             E::InviteFailed { reason } => Event::InviteFailed { reason },
+            E::Read { user, until } => {
+                let until_ms = i64::try_from(until).unwrap_or(i64::MAX);
+                if let Err(e) = self.local.mark_opened(user.as_str(), until_ms) {
+                    out.push(Event::StorageError { message: e.to_string() });
+                }
+                Event::Read { user_id: user.to_string(), until_ms }
+            }
             E::Message(m) => {
                 let received = Received {
                     msg_id: m.msg_id.to_string(),

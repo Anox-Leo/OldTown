@@ -88,7 +88,7 @@ fn connected(e: &Event) -> bool {
 async fn phone_joins_by_code_then_exchanges() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
-    let a = OtClient::start(a_store.clone()).unwrap();
+    let a = OtClient::start(a_store.clone(), Vec::new()).unwrap();
     next(&a, connected).await;
     let invitation = a.pair_new().await.unwrap();
     assert!(invitation.uri.starts_with("oldtown://pair?s=ws://"));
@@ -106,7 +106,7 @@ async fn phone_joins_by_code_then_exchanges() {
         Err(OtError::Invalid { .. })
     ));
 
-    let b = OtClient::start(b_store.clone()).unwrap();
+    let b = OtClient::start(b_store.clone(), Vec::new()).unwrap();
     next(&b, |e| matches!(e, Event::GroupChanged { .. })).await;
     next(&a, |e| matches!(e, Event::PairingCompleted { name, .. } if name == "pixel")).await;
     assert!(!b_store.names().contains(&"pending_join.json".to_owned()), "appairage terminé");
@@ -155,7 +155,7 @@ async fn phone_joins_by_code_then_exchanges() {
 #[tokio::test]
 async fn the_admin_phone_publishes_the_directory_only_on_request() {
     let (url, relay_store) = relay().await;
-    let a = OtClient::start(phone(&url, &relay_store).await).unwrap();
+    let a = OtClient::start(phone(&url, &relay_store).await, Vec::new()).unwrap();
     next(&a, connected).await;
 
     let AdminRoot::Missing { name } = a.admin_root(false).await.unwrap() else {
@@ -189,7 +189,7 @@ async fn the_admin_phone_publishes_the_directory_only_on_request() {
 async fn phone_sponsors_by_reverse_qr() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
-    let a = OtClient::start(a_store.clone()).unwrap();
+    let a = OtClient::start(a_store.clone(), Vec::new()).unwrap();
     next(&a, connected).await;
 
     let pc = ClientConfig::new(
@@ -276,7 +276,7 @@ impl TransferListener for Quiet {
 async fn files_both_ways() {
     let (url, relay_store) = relay().await;
     let a_store = phone(&url, &relay_store).await;
-    let a = OtClient::start(a_store.clone()).unwrap();
+    let a = OtClient::start(a_store.clone(), Vec::new()).unwrap();
     next(&a, connected).await;
     let pc_id = Identity::generate();
     let mut pc = ClientConfig::new(
@@ -380,7 +380,7 @@ async fn bad_join_inputs_are_refused_before_contact() {
         assert!(matches!(res, Err(OtError::Pairing { .. } | OtError::Invalid { .. })), "{res:?}");
     }
     assert!(store.names().is_empty(), "rien d'écrit");
-    assert!(matches!(OtClient::start(store), Err(OtError::NotInGroup { .. })));
+    assert!(matches!(OtClient::start(store, Vec::new()), Err(OtError::NotInGroup { .. })));
 }
 
 #[test]

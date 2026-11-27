@@ -9,7 +9,9 @@ rotation ; fichiers : `upload`, `startUpload`, `sealChunk`, `sealFile`,
 `openChunk`, `checkFile`…, `startUpload` vers une personne avec `toUser` ;
 étape 10 : annuaire, envoi `0x05`, journal, invitation, et pour l'admin
 `adminInitStart`/`adminRoot`/`adoptAdminRoot`, `certifiedBy`/`recertify`,
-`servicesToRepublish`/`nextServiceEntry`/`serviceEntryPublished`), `Hasher`
+`servicesToRepublish`/`nextServiceEntry`/`serviceEntryPublished` ; lu
+partout, note 0079 : `sealRead`, événement `read`, capacités passées à
+`declarationFrame`), `Hasher`
 (SHA-256 en flux), `fileGeometry`, `decodeFrame`, `parseJoin`,
 `parseInvite`, `qrCode`.
 

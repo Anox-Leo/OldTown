@@ -330,9 +330,16 @@ impl Secure {
         self.my_profile().is_some_and(|d| !d.up_to_date)
     }
 
-    pub fn declaration(&self, kind: Option<DeviceKind>) -> Option<Frame> {
+    pub fn declaration(&self, kind: Option<DeviceKind>, extra: &[Feature]) -> Option<Frame> {
         let profile = self.my_profile()?;
-        let features = (!profile.up_to_date).then(|| vec![Feature::users_v1()]);
+        let mut wanted: Vec<Feature> =
+            std::iter::once(Feature::users_v1()).chain(extra.iter().cloned()).collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut have = profile.features.clone();
+        have.sort();
+        have.dedup();
+        let features = (have != wanted).then_some(wanted);
         let kind = kind.filter(|_| profile.kind.is_none());
         if features.is_none() && kind.is_none() {
             return None;
@@ -1047,6 +1054,29 @@ impl Secure {
         self.seal_env(to, SealKey::Group { epoch: keys.current, key }, &body).map_err(crypto)
     }
 
+    pub fn seal_read(&self, user: &UserId, until: u64) -> Result<Option<Envelope>, ClientError> {
+        let (keys, roster) = self.group()?;
+        let Some(me) = self.my_person() else {
+            return Ok(None);
+        };
+        let to: Vec<DeviceId> = me
+            .devices
+            .iter()
+            .filter(|d| d.id != self.me && d.kind != Some(DeviceKind::Cli))
+            .filter(|d| d.has(ot_proto::FEATURE_READ_V1) && roster.contains(&d.id))
+            .map(|d| d.id.clone())
+            .collect();
+        if to.is_empty() || until == 0 {
+            return Ok(None);
+        }
+        let key = keys.current_key().ok_or(ClientError::NoGroup)?;
+        let body = Body::Read { user: user.clone(), until };
+        let env = self
+            .seal_env(to, SealKey::Group { epoch: keys.current, key }, &body)
+            .map_err(crypto)?;
+        Ok(Some(env))
+    }
+
     pub fn seal_file(&self, meta: &FileMeta, to: Vec<DeviceId>) -> Result<Envelope, ClientError> {
         let (keys, roster) = self.group()?;
         if let Some(id) = to.iter().find(|id| !roster.contains(id)) {
@@ -1400,6 +1430,10 @@ impl Secure {
             Body::Link { body } => Content::link(body),
             body @ Body::File { .. } => {
                 return self.on_file(seq, env, body, origin, now, fx).map(Ok);
+            }
+            Body::Read { user, until } => {
+                fx.push(Effect::Emit(Event::Read { user, until }));
+                return Ok(Ok(Handled::Done));
             }
             Body::Otp(otp) => {
                 fx.push(Effect::Emit(Event::Otp(ReceivedOtp {
@@ -2357,19 +2391,82 @@ mod tests {
             Some(Frame::DeviceUpdate { kind, features, .. }) => Some((kind, features.is_some())),
             _ => None,
         };
-        let me = |p: &People| p.a[0].secure.declaration(Some(DeviceKind::Browser));
+        let me = |p: &People| p.a[0].secure.declaration(Some(DeviceKind::Browser), &[]);
 
         p.set_profile(0, 0, device_profile(&p.a[0], false, true, None));
         assert_eq!(kind_of(me(&p)), Some((Some(DeviceKind::Browser), true)));
-        assert_eq!(kind_of(p.a[0].secure.declaration(None)), Some((None, true)));
+        assert_eq!(kind_of(p.a[0].secure.declaration(None, &[])), Some((None, true)));
 
         p.set_profile(0, 0, device_profile(&p.a[0], true, true, None));
         assert_eq!(kind_of(me(&p)), Some((Some(DeviceKind::Browser), false)));
-        assert!(p.a[0].secure.declaration(None).is_none());
+        assert!(p.a[0].secure.declaration(None, &[]).is_none());
 
         let chosen = device_profile(&p.a[0], true, true, Some(DeviceKind::Desktop));
         p.set_profile(0, 0, chosen);
         assert!(me(&p).is_none(), "une catégorie choisie n'est jamais remplacée");
+    }
+
+    fn with_features(d: &Dev, features: &[ot_proto::Feature]) -> ot_proto::DirectoryDevice {
+        ot_proto::DirectoryDevice {
+            features: features.to_vec(),
+            ..device_profile(d, true, false, None)
+        }
+    }
+
+    #[test]
+    fn declaration_follows_the_features_the_app_shows() {
+        let mut p = People::new(1, 1);
+        let read = [ot_proto::Feature::read_v1()];
+        let features = |f: Option<Frame>| match f {
+            Some(Frame::DeviceUpdate { features, .. }) => features,
+            _ => None,
+        };
+        p.set_profile(0, 0, device_profile(&p.a[0], true, true, None));
+        assert_eq!(
+            features(p.a[0].secure.declaration(None, &read)),
+            Some(vec![ot_proto::Feature::read_v1(), ot_proto::Feature::users_v1()])
+        );
+        let both = [ot_proto::Feature::users_v1(), ot_proto::Feature::read_v1()];
+        p.set_profile(0, 0, with_features(&p.a[0], &both));
+        assert!(p.a[0].secure.declaration(None, &read).is_none());
+        assert_eq!(
+            features(p.a[0].secure.declaration(None, &[])),
+            Some(vec![ot_proto::Feature::users_v1()]),
+            "une capacité retirée est redéclarée"
+        );
+    }
+
+    #[test]
+    fn read_goes_to_my_devices_that_apply_it() {
+        let mut p = People::new(4, 1);
+        let bob = p.bob.clone();
+        let read = [ot_proto::Feature::users_v1(), ot_proto::Feature::read_v1()];
+        p.users[0].devices[1] = with_features(&p.a[1], &read);
+        p.users[0].devices[2] = with_features(&p.a[2], &[ot_proto::Feature::users_v1()]);
+        p.users[0].devices[3] = ot_proto::DirectoryDevice {
+            kind: Some(DeviceKind::Cli),
+            ..with_features(&p.a[3], &read)
+        };
+        p.read_all();
+
+        let env = p.a[0].secure.seal_read(&bob, 1_795_819_680_123).unwrap().unwrap();
+        assert_eq!(env.to, [p.a[1].id.clone()], "ni l'appareil sans read-v1, ni la CLI");
+        assert!(matches!(Header::parse(&env.payload).unwrap(), Header::Group { .. }));
+        let fx = p.a[1].receive(env);
+        let got: Vec<_> = fx
+            .iter()
+            .filter_map(|f| match f {
+                Effect::Emit(Event::Read { user, until }) => Some((user.clone(), *until)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, [(bob.clone(), 1_795_819_680_123)]);
+        assert!(messages(&fx).is_empty() && rejected(&fx).is_empty(), "hors de l'historique");
+
+        assert!(p.a[0].secure.seal_read(&bob, 0).unwrap().is_none());
+        p.users[0].devices[1] = with_features(&p.a[1], &[ot_proto::Feature::users_v1()]);
+        p.read_all();
+        assert!(p.a[0].secure.seal_read(&bob, 1).unwrap().is_none(), "personne à prévenir");
     }
 
     #[test]

@@ -230,6 +230,25 @@ fn invitation_and_pairing_keys_are_separate() {
 }
 
 #[test]
+fn read_is_only_sealed_under_the_group_key() {
+    let sk = signer();
+    let env = envelope();
+    let read = Body::Read { user: "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0".parse().unwrap(), until: 1 };
+    let s = PairingSecret::generate();
+    let x = ExchangeKeyPair::generate().public_key();
+    for key in [
+        SealKey::Pairing { token_id: [1; 8], secret: &s },
+        SealKey::Invite { token_id: [1; 8], secret: &s },
+        SealKey::Device { recipient: x },
+        SealKey::PairQr { recipient: x, secret: &s },
+    ] {
+        assert!(matches!(seal(&env, key, &sk, &read), Err(CryptoError::Malformed(_))), "{key:?}");
+    }
+    let key = SealKey::Group { epoch: 1, key: &GroupKey::generate() };
+    assert!(seal(&env, key, &sk, &read).is_ok());
+}
+
+#[test]
 fn low_order_recipient_is_refused() {
     let env = envelope();
     let res = seal(&env, SealKey::Device { recipient: [0; 32] }, &signer(), &body());
