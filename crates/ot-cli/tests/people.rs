@@ -59,6 +59,10 @@ async fn people_are_invited_talk_and_are_administered() {
     assert!(err.contains("appareil introuvable") && err.contains("bob-cli"), "{err}");
     let err = ot_fails(&alice, &["send", "--to", "alice-laptop", "--to-user", "Bob", "x"]).await;
     assert!(err.contains("--to-user"), "{err}");
+    let err = ot_fails(&alice, &["send", "à tous"]).await;
+    assert!(err.contains("aucun destinataire") && err.contains("--to-user"), "{err}");
+    let err = ot_fails(&alice, &["send", "--file", path.to_str().unwrap()]).await;
+    assert!(err.contains("aucun destinataire"), "{err}");
 
     let all = ot_stdout(&alice, &["admin", "users"]).await;
     assert!(all.contains("Bob (membre)") && all.contains("→ Alice"), "{all}");

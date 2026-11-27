@@ -238,9 +238,9 @@ ot otp-bridge --to-user Bob --device bob-laptop   # one of his devices only (OT_
 
 The first device creates the service; more devices can join it the same
 way. From the Android app: settings → *Administration* → *Service*, then
-scan the QR code of `ot pair join --qr --service`. `deploy/ot-diag.sh` also
-accepts `OT_DIAG_TO_USER`, and `OT_DIAG_DEVICE` for one device of a single
-person.
+scan the QR code of `ot pair join --qr --service`. `deploy/ot-diag.sh` needs a
+target: `OT_DIAG_TO` (my devices) or `OT_DIAG_TO_USER` (people), and
+`OT_DIAG_DEVICE` for one device of a single person.
 
 ### Join someone's OldTown
 
@@ -286,8 +286,8 @@ The admin sees who writes to you and when, never what.
 - **Command line**:
 
   ```sh
-  ot send "hello"                        # to all my other devices
-  ot send --to phone https://example.org # to one device
+  ot send --to phone "hello"             # to one of my devices (--to or --to-user is required)
+  ot send --to phone https://example.org # a link
   ot send --file video.mp4 --to phone    # a file; run again to resume
   ot listen --download-dir ~/Downloads   # receive, files included
   ot otp-bridge --to brave               # relay one-time codes (OT_OTP_TO)

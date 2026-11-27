@@ -133,8 +133,11 @@ expect_line "envoi" "$(cat "$T/ot.out")" "Alimentation : secteur, 59 %"
 expect_line "envoi" "$(cat "$T/state/power.last")" "mains"
 
 reset
-OT_DIAG_TO="" sh "$SCRIPT" report 2>/dev/null
-expect_line "tous les membres" "$(cat "$T/ot.args")" "send"
+if OT_DIAG_TO="" sh "$SCRIPT" report 2>/dev/null; then
+    fail "sans cible : le rapport doit être refusé"
+fi
+[ "$(sent_count)" = 0 ] || fail "sans cible : aucun envoi attendu"
+[ ! -f "$T/state/power.last" ] || fail "sans cible : l'état ne doit pas avancer"
 
 reset
 OT_DIAG_TO="" OT_DIAG_TO_USER="Alice Bob" sh "$SCRIPT" report 2>/dev/null

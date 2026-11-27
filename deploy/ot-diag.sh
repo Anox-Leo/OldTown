@@ -98,6 +98,10 @@ build_report() {
 
 send() {
     message=$1
+    if [ -z "$TO" ] && [ -z "$TO_USER" ]; then
+        echo "aucune cible : OT_DIAG_TO (appareils de mon groupe) ou OT_DIAG_TO_USER (personnes) est obligatoire" >&2
+        return 2
+    fi
     if [ -n "$DEVICE" ] && [ -z "$TO_USER" ]; then
         echo "OT_DIAG_DEVICE demande OT_DIAG_TO_USER" >&2
         return 2

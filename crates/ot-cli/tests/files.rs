@@ -58,7 +58,7 @@ async fn file_between_two_cli_devices() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    ot(&home_a, &["send", "--file", src.to_str().unwrap()]).await;
+    ot(&home_a, &["send", "--file", src.to_str().unwrap(), "--to", "windows"]).await;
     let second = out_dir.join("rapport final (2).pdf");
     tokio::time::timeout(Duration::from_secs(20), async {
         while !second.exists() {

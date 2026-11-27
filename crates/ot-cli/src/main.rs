@@ -60,7 +60,7 @@ enum Command {
     Send {
         text: Vec<String>,
         #[arg(
-            help = "Destinataire (nom d'un membre du groupe), répétable ; par défaut tous les autres"
+            help = "Destinataire (nom d'un membre du groupe), répétable ; --to ou --to-user est obligatoire"
         )]
         #[arg(long = "to")]
         to: Vec<String>,
@@ -477,7 +477,17 @@ async fn connected(events: &mut Events) -> Result<()> {
     tokio::time::timeout(COMMAND_TIMEOUT, wait).await.context("relais injoignable")?
 }
 
+fn require_target(to: &[String]) -> Result<()> {
+    if to.is_empty() {
+        bail!(
+            "aucun destinataire : donner --to <appareil> (un de mes appareils) ou --to-user <personne>"
+        );
+    }
+    Ok(())
+}
+
 async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
+    require_target(&to)?;
     let body = if text.is_empty() {
         if std::io::stdin().is_terminal() {
             bail!("rien à envoyer : donner un texte ou passer par l'entrée standard");
@@ -504,6 +514,7 @@ async fn send(home: &Home, text: Vec<String>, to: Vec<String>) -> Result<()> {
 }
 
 async fn send_file(home: &Home, path: &std::path::Path, to: Vec<String>) -> Result<()> {
+    require_target(&to)?;
     let group = group(home)?;
     let recipients = to.iter().map(|name| resolve(&group, name)).collect::<Result<_>>()?;
     let source = Arc::new(FileSource::open(path)?);
