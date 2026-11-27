@@ -441,8 +441,18 @@ impl Core {
     }
 
     #[wasm_bindgen(js_name = declarationFrame)]
-    pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<String>, JsError> {
-        Ok(self.state.declaration_frame(kind).map_err(js)?.map(|f| f.to_json()))
+    pub fn declaration_frame(
+        &self,
+        kind: Option<String>,
+        features: Vec<String>,
+    ) -> Result<Option<String>, JsError> {
+        Ok(self.state.declaration_frame(kind, &features).map_err(js)?.map(|f| f.to_json()))
+    }
+
+    #[wasm_bindgen(js_name = sealRead)]
+    pub fn seal_read(&self, user: &str, until: f64) -> Result<Option<String>, JsError> {
+        let until = exact_u64(until)?;
+        self.state.seal_read(user, until).map_err(js)?.map(|env| to_json(&env)).transpose()
     }
 
     pub fn recipients(&self, user: &str) -> Result<String, JsError> {

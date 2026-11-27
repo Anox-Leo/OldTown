@@ -1,0 +1,27 @@
+{
+  "signing_seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+  "nonce": "RkdISUpLTE1OT1BRUlNUVVZXWFlaW1xd",
+  "key": {
+    "scheme": "group",
+    "epoch": 1,
+    "key": "CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk="
+  },
+  "body": {
+    "kind": "read",
+    "user": "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0",
+    "until": 1795819680123
+  },
+  "envelope": {
+    "msg_id": "01J9Z3Q5RT8YB6ZK4C2D7E9F1G",
+    "from": "dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5",
+    "to": [
+      "dev_01J9Z3M2N4P6Q8R0S2T4V6W8X0",
+      "dev_01J9Z3P0A2B4C6D8E0F2G4H6J8"
+    ],
+    "created_at": "2026-10-10T08:00:00Z",
+    "payload": {
+      "enc": "xchacha20poly1305",
+      "data": "AQAAAAFGR0hJSktMTU5PUFFSU1RVVldYWVpbXF3lzgRimUUnIyeeXVZICRgKpH2Lj9WpkTT245m6lVbllLj63y2hjfMXQFiDbea4ILBszzKU09cUUPfPBw0dEN0ANO16v5c20dd19sA1Is09Fiyi10g17QScR0GGFSVQ5NQETuHNG1l7X3sCM8lNtt5zUPFAa4DvRKI7p4WqPaD9jrykuI9j7dJ3UmAP0jt5YY0gDHAIpblV0NHOQ17e"
+    }
+  }
+}

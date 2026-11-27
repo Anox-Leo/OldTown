@@ -111,7 +111,7 @@ class RelayService : LifecycleService() {
     private suspend fun run() {
         val store = RelayHub.store(this)
         val started = try {
-            if (deviceState(store) == null) null else OtClient.start(store)
+            if (deviceState(store) == null) null else OtClient.start(store, emptyList())
         } catch (e: OtException) {
             Log.w(TAG, "client non démarré : ${e.message}")
             RelayHub.notify(Notice.Problem(e.message ?: "client non démarré"))
@@ -190,6 +190,7 @@ class RelayService : LifecycleService() {
                     refreshPeople(started)
                 }
                 is Event.InviteFailed -> RelayHub.notify(Notice.Problem(event.reason))
+                is Event.Read -> Unit
             }
             render()
         }

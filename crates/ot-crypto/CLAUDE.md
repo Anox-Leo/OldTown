@@ -12,8 +12,8 @@ sont dans `ot-core`) et, à l'étape 5, chiffrement des fichiers par morceaux
 
 - Chaque clé n'admet que ses corps (`KeyKind::admits`), au scellement comme
   à l'ouverture : corps d'invitation sous la clé d'invitation seulement,
-  `service_welcome` en `0x04` seulement, `0x05` seulement `text`, `link`,
-  `file`, `otp`.
+  `service_welcome` en `0x04` seulement, `read` en `0x01` seulement (note
+  0079), `0x05` seulement `text`, `link`, `file`, `otp`.
 - `0x05` (note 0056) : `msg_id` dans l'`info` HKDF de chaque `k_i` (le nonce
   nul de `wrap_i` reste sûr même si l'éphémère se répète), et engagement
   `SHA-256("ot-multi-commit-v1" ‖ K)` après la table, vérifié après l'AEAD :

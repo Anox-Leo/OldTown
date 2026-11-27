@@ -173,6 +173,12 @@ fn vectors() -> Vec<Vector> {
             }),
         },
         Vector {
+            name: "group_read",
+            key: json!({"scheme": "group", "epoch": 1, "key": b64::encode(&bytes::<32>(10))}),
+            to: &[B, C],
+            body: Body::Read { user: BOB.parse().unwrap(), until: 1_795_819_680_123 },
+        },
+        Vector {
             name: "invite_request",
             key: json!({"scheme": "invite", "token": b64::encode(&bytes::<10>(20)),
                         "secret": b64::encode(&bytes::<16>(30))}),

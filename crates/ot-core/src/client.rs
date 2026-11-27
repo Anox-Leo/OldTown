@@ -46,6 +46,7 @@ pub struct ClientConfig {
     pub idle_timeout: Duration,
     pub transfer: TransferConfig,
     pub kind: Option<DeviceKind>,
+    pub features: Vec<ot_proto::Feature>,
 }
 
 impl ClientConfig {
@@ -66,6 +67,7 @@ impl ClientConfig {
             idle_timeout: IDLE_TIMEOUT,
             transfer: TransferConfig::default(),
             kind: None,
+            features: Vec::new(),
         }
     }
 
@@ -256,6 +258,18 @@ impl Client {
         let otp = otp.clone();
         let env = self.with_secure(move |s| s.seal_otp(&otp, to)).await?;
         self.send_envelope(env).await
+    }
+
+    pub async fn send_read(
+        &self,
+        user: &UserId,
+        until: u64,
+    ) -> Result<Option<Accepted>, ClientError> {
+        let user = user.clone();
+        match self.with_secure(move |s| s.seal_read(&user, until)).await? {
+            Some(env) => self.send_envelope(env).await.map(Some),
+            None => Ok(None),
+        }
     }
 
     pub async fn send_envelope(&self, env: Envelope) -> Result<Accepted, ClientError> {
@@ -1490,7 +1504,7 @@ impl Worker {
                     let declaration = if self.declared {
                         None
                     } else {
-                        self.secure.declaration(self.config.kind)
+                        self.secure.declaration(self.config.kind, &self.config.features)
                     };
                     if let Some(frame) = declaration {
                         self.declared = true;

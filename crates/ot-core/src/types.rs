@@ -82,6 +82,7 @@ pub enum Event {
     PersonJoined { user: UserId, name: String, device_name: String, fingerprint: String },
     Joined { user: UserId },
     InviteFailed { reason: String },
+    Read { user: UserId, until: u64 },
 }
 
 #[derive(Debug, Clone)]

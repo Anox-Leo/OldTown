@@ -679,6 +679,7 @@ fn print_event(event: &Event, names: &Names, json: bool, offset: UtcOffset) -> R
         }
         Event::Joined { user } => eprintln!("invitation acceptée : personne {user} certifiée"),
         Event::InviteFailed { reason } => eprintln!("⚠ invitation : {reason}"),
+        Event::Read { .. } => {}
         Event::Message(m) => {
             print_message(m, names, json, offset)?;
             return Ok(true);

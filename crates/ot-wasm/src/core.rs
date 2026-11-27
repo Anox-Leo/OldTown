@@ -89,6 +89,10 @@ pub enum EventOut {
     InviteFailed {
         reason: String,
     },
+    Read {
+        user: String,
+        until: u64,
+    },
     Otp {
         seq: i64,
         msg_id: String,
@@ -245,6 +249,7 @@ impl EventOut {
             }
             Event::Joined { user } => Self::Joined { user: user.to_string() },
             Event::InviteFailed { reason } => Self::InviteFailed { reason },
+            Event::Read { user, until } => Self::Read { user: user.to_string(), until },
         })
     }
 }
@@ -706,12 +711,23 @@ impl CoreState {
         self.secure.people().into_iter().map(PersonOut::from).collect()
     }
 
-    pub fn declaration_frame(&self, kind: Option<String>) -> Result<Option<Frame>, String> {
+    pub fn declaration_frame(
+        &self,
+        kind: Option<String>,
+        features: &[String],
+    ) -> Result<Option<Frame>, String> {
         let kind = kind
             .map(|k| serde_json::from_value::<ot_proto::DeviceKind>(serde_json::Value::String(k)))
             .transpose()
             .map_err(err)?;
-        Ok(self.secure.declaration(kind))
+        let features: Vec<ot_proto::Feature> =
+            features.iter().map(|f| f.parse().map_err(err)).collect::<Result<_, _>>()?;
+        Ok(self.secure.declaration(kind, &features))
+    }
+
+    pub fn seal_read(&self, user: &str, until: u64) -> Result<Option<Envelope>, String> {
+        let user: UserId = user.parse().map_err(err)?;
+        self.secure.seal_read(&user, until).map_err(err)
     }
 
     pub fn recipients(&self, user: &str) -> Result<Vec<String>, String> {
@@ -950,6 +966,16 @@ mod tests {
     }
 
     #[test]
+    fn a_read_event_reaches_the_service_worker() {
+        let user: UserId = "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0".parse().unwrap();
+        let out = EventOut::from_event(Event::Read { user, until: 1_795_819_680_123 }).unwrap();
+        assert_eq!(
+            serde_json::to_string(&out).unwrap(),
+            r#"{"type":"read","user":"usr_01J9Z4B1C2D3E4F5G6H7J8K9M0","until":1795819680123}"#
+        );
+    }
+
+    #[test]
     fn offer_survives_a_restart_and_is_cleared_after_joining() {
         let mut phone = sponsor();
         let (vault, id) = extension();
@@ -1125,7 +1151,7 @@ mod tests {
         assert!(core.directory_start().is_none());
         assert!(core.people().is_empty());
         assert!(core.invite_request().is_none());
-        assert!(core.declaration_frame(Some("browser".into())).unwrap().is_none());
+        assert!(core.declaration_frame(Some("browser".into()), &[]).unwrap().is_none());
         assert!(core.entry_published().is_err());
     }
 

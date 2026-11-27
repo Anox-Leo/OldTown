@@ -75,7 +75,8 @@ export type CoreEvent =
   | { type: 'keys_changed'; user: string }
   | { type: 'person_joined'; user: string; name: string; device_name: string; fingerprint: string }
   | { type: 'joined'; user: string }
-  | { type: 'invite_failed'; reason: string };
+  | { type: 'invite_failed'; reason: string }
+  | { type: 'read'; user: string; until: number };
 
 export type ClientEvent =
   | CoreEvent

@@ -70,6 +70,10 @@ pub enum Body {
         anchor: [u8; 16],
         admin_head: LogHead,
     },
+    Read {
+        user: UserId,
+        until: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +166,7 @@ impl Body {
             Self::InviteRequest { .. } => "invite_request",
             Self::InviteWelcome { .. } => "invite_welcome",
             Self::ServiceWelcome { .. } => "service_welcome",
+            Self::Read { .. } => "read",
         }
     }
 
@@ -178,6 +183,9 @@ impl Body {
             Self::Otp(otp) => otp.check()?,
             Self::InviteRequest { name, .. } if !ot_proto::valid_device_name(name) => {
                 return Err(CryptoError::Body("invite_request : nom invalide".into()));
+            }
+            Self::Read { until: 0, .. } => {
+                return Err(CryptoError::Body("read : instant nul".into()));
             }
             _ => {}
         }
@@ -278,6 +286,25 @@ mod tests {
             Body::from_json(br#"{"kind":"otp","code":"482913","display":"","sender_name":"","sender_domain":"a.fr","sender_verified":false,"expires_at":0,"extra":1}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn read_format() {
+        let body = Body::Read {
+            user: "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0".parse().unwrap(),
+            until: 1_795_819_680_123,
+        };
+        assert_eq!(
+            &**body.to_json(),
+            br#"{"kind":"read","user":"usr_01J9Z4B1C2D3E4F5G6H7J8K9M0","until":1795819680123}"#
+        );
+        assert_eq!(Body::from_json(&body.to_json()).unwrap(), body);
+        assert_eq!(body.kind(), "read");
+        let bad = |json: &[u8]| Body::from_json(json).is_err();
+        assert!(bad(br#"{"kind":"read","user":"usr_01J9Z4B1C2D3E4F5G6H7J8K9M0","until":0}"#));
+        assert!(bad(br#"{"kind":"read","user":"usr_01J9Z4B1C2D3E4F5G6H7J8K9M0","until":-1}"#));
+        assert!(bad(br#"{"kind":"read","user":"dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H5","until":1}"#));
+        assert!(bad(br#"{"kind":"read","user":"usr_01J9Z4B1C2D3E4F5G6H7J8K9M0","until":1,"x":1}"#));
     }
 
     #[test]

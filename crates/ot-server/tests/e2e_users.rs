@@ -283,6 +283,32 @@ async fn a_client_declares_its_configured_kind() {
 }
 
 #[tokio::test]
+async fn read_somewhere_is_read_on_my_other_devices() {
+    let net = net().await;
+    let url = net.server.url();
+    let (a0, a1) = (net.a[0].id.clone(), net.a[1].id.clone());
+    let reads = |dev: &TestDevice| {
+        let mut c = config(dev, &url);
+        c.features = vec![ot_proto::Feature::read_v1()];
+        c
+    };
+    let (c0, mut e0) = Client::start(reads(&net.a[0]));
+    wait_connected(&mut e0).await;
+    let (_c1, mut e1) = Client::start(reads(&net.a[1]));
+    wait_connected(&mut e1).await;
+    let applies = |p: &[Person], id: &ot_proto::DeviceId| {
+        p.iter().flat_map(|p| &p.devices).any(|d| &d.id == id && d.has("read-v1"))
+    };
+    people_until(&c0, &mut e0, |p| applies(p, &a0) && applies(p, &a1)).await;
+
+    let sent = within(c0.send_read(&net.bob, 1_795_819_680_123)).await.unwrap();
+    assert!(sent.is_some(), "a1 applique read-v1");
+    let got = wait_for(&mut e1, |e| matches!(e, Event::Read { .. })).await;
+    let Event::Read { user, until } = got else { unreachable!() };
+    assert_eq!((user, until), (net.bob.clone(), 1_795_819_680_123));
+}
+
+#[tokio::test]
 async fn the_admin_root_is_adopted_and_created_only_on_request() {
     let dir = TempDir::new().unwrap();
     let store = Store::in_memory().await.unwrap();

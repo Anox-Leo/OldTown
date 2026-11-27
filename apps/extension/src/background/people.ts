@@ -189,7 +189,7 @@ export class People {
     }
     this.readAt = Date.now();
     const device = this.host.device();
-    const features = device ? core.declarationFrame('browser') : undefined;
+    const features = device ? core.declarationFrame('browser', []) : undefined;
     if (features) {
       try {
         await client.call(features);
