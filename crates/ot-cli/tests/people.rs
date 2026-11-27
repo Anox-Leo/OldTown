@@ -37,7 +37,7 @@ async fn people_are_invited_talk_and_are_administered() {
     assert_eq!(got["body"], "bonjour Bob", "{got}");
     assert_eq!(got["from_user_name"], "Alice");
     assert_eq!(got["from_name"], "Alice/alice-laptop");
-    ot(&bob, &["send", "--to-user", "Alice", "--device", "alice-laptop", "merci"]).await;
+    ot(&bob, &["send", "--to-user", "Alice", "merci"]).await;
     let got = received(&alice).await;
     assert_eq!((&got["body"], &got["from_user_name"]), (&"merci".into(), &"Bob".into()), "{got}");
 
@@ -55,8 +55,8 @@ async fn people_are_invited_talk_and_are_administered() {
 
     let err = ot_fails(&alice, &["send", "--to-user", "Carol", "x"]).await;
     assert!(err.contains("personne introuvable") && err.contains("Bob"), "{err}");
-    let err = ot_fails(&alice, &["send", "--to-user", "Bob", "--device", "nope", "x"]).await;
-    assert!(err.contains("appareil introuvable") && err.contains("bob-cli"), "{err}");
+    let err = ot_fails(&alice, &["send", "--to-user", "Bob", "--device", "bob-cli", "x"]).await;
+    assert!(err.contains("--device"), "plus de choix d'appareil : {err}");
     let err = ot_fails(&alice, &["send", "--to", "alice-laptop", "--to-user", "Bob", "x"]).await;
     assert!(err.contains("--to-user"), "{err}");
     let err = ot_fails(&alice, &["send", "à tous"]).await;
@@ -66,9 +66,10 @@ async fn people_are_invited_talk_and_are_administered() {
 
     let all = ot_stdout(&alice, &["admin", "users"]).await;
     assert!(all.contains("Bob (membre)") && all.contains("→ Alice"), "{all}");
-    let err = ot_fails(&alice, &["device", "default", "bob-cli", "off"]).await;
-    assert!(err.contains("au moins un appareil par défaut"), "{err}");
+    ot(&alice, &["device", "default", "bob-cli"]).await;
     ot(&alice, &["device", "reachable", "bob-cli", "off"]).await;
+    let err = ot_fails(&alice, &["device", "default", "bob-cli"]).await;
+    assert!(err.contains("doit être joignable"), "{err}");
     let seen = ot_stdout(&bob, &["users"]).await;
     assert!(seen.lines().any(|l| l.contains("bob-cli") && l.contains("injoignable")), "{seen}");
     let seen = ot_stdout(&alice, &["users"]).await;

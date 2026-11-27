@@ -714,26 +714,19 @@ impl CoreState {
         Ok(self.secure.declaration(kind))
     }
 
-    pub fn recipients(&self, user: &str, device: Option<&str>) -> Result<Vec<String>, String> {
+    pub fn recipients(&self, user: &str) -> Result<Vec<String>, String> {
         let user: UserId = user.parse().map_err(err)?;
-        let device = device.map(str::parse::<DeviceId>).transpose().map_err(err)?;
-        let to = self.secure.recipients(&user, device.as_ref()).map_err(err)?;
+        let to = self.secure.recipients(&user).map_err(err)?;
         Ok(to.iter().map(ToString::to_string).collect())
     }
 
-    pub fn seal_text_to(
-        &self,
-        text: &str,
-        user: &str,
-        device: Option<&str>,
-    ) -> Result<Envelope, String> {
+    pub fn seal_text_to(&self, text: &str, user: &str) -> Result<Envelope, String> {
         if text.trim().is_empty() {
             return Err("texte vide".into());
         }
         let user: UserId = user.parse().map_err(err)?;
-        let device = device.map(str::parse::<DeviceId>).transpose().map_err(err)?;
         let content: Content = ot_core::classify(text);
-        self.secure.seal_content_to(&content, &user, device.as_ref()).map_err(err)
+        self.secure.seal_content_to(&content, &user).map_err(err)
     }
 
     pub fn next_entry(&mut self, what: PublishIn) -> Result<PublishOut, String> {

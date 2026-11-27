@@ -617,6 +617,8 @@ async fn device_profiles_follow_their_rules() {
     s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &mine(None, None, Some(true)))
         .await
         .unwrap();
+    assert!(!s.device(&n.bob_phone.id).await.unwrap().unwrap().is_default, "un seul principal");
+    assert!(s.device(&n.bob_laptop.id).await.unwrap().unwrap().is_default);
     s.update_device(&n.bob_phone.id, &n.bob_phone.id, &mine(None, None, Some(false)))
         .await
         .unwrap();
@@ -1305,6 +1307,95 @@ async fn the_cli_revokes_by_exact_id_before_names() {
     assert_eq!(revoked.id, n.alice_phone.id);
     assert_eq!(n.store.revoke_device(target, 11).await.unwrap().id, decoy.id);
     assert_eq!(n.store.find_user(n.bob.as_str()).await.unwrap().id, n.bob);
+}
+
+#[tokio::test]
+async fn one_principal_device_per_person() {
+    let n = net().await;
+    let s = &n.store;
+    let principal = |u: Vec<ot_server::store::Device>| {
+        u.into_iter().filter(|d| d.is_default).map(|d| d.id).collect::<Vec<_>>()
+    };
+    let set = |default| DeviceChanges { default: Some(default), ..DeviceChanges::default() };
+    let offline = DeviceChanges { reachable: Some(false), ..DeviceChanges::default() };
+
+    assert_eq!(principal(s.user_devices(&n.bob).await.unwrap()), vec![n.bob_phone.id.clone()]);
+    s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &set(true)).await.unwrap();
+    assert_eq!(principal(s.user_devices(&n.bob).await.unwrap()), vec![n.bob_laptop.id.clone()]);
+    s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &set(true)).await.unwrap();
+    assert_eq!(principal(s.user_devices(&n.bob).await.unwrap()), vec![n.bob_laptop.id.clone()]);
+
+    let r = s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &set(false)).await;
+    assert!(matches!(r, Err(StoreError::Invalid(_))), "{r:?}");
+
+    s.update_device(&n.bob_phone.id, &n.bob_phone.id, &offline).await.unwrap();
+    let r = s.update_device(&n.bob_phone.id, &n.bob_phone.id, &set(true)).await;
+    assert!(matches!(r, Err(StoreError::Invalid(_))), "principal non joignable : {r:?}");
+
+    s.update_device(&n.bob_phone.id, &n.bob_laptop.id, &offline).await.unwrap();
+    assert!(principal(s.user_devices(&n.bob).await.unwrap()).is_empty(), "aucun joignable");
+    let tablet = extra_device(s, &n.bob, "bob-tablet").await;
+    assert_eq!(principal(s.user_devices(&n.bob).await.unwrap()), vec![tablet.id.clone()]);
+}
+
+#[tokio::test]
+async fn migration_keeps_only_the_oldest_default() {
+    use sqlx::ConnectOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ot.db");
+    let old = tempfile::tempdir().unwrap();
+    for name in ["0001_init.sql", "0002_pairings.sql", "0003_blobs.sql", "0004_users.sql"] {
+        let src = format!("{}/migrations/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::copy(src, old.path().join(name)).unwrap();
+    }
+    let migrator = sqlx::migrate::Migrator::new(old.path()).await.unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
+    let mut conn = options.clone().create_if_missing(true).connect().await.unwrap();
+    migrator.run(&mut conn).await.unwrap();
+    let user = "usr_01J9Z4B1C2D3E4F5G6H7J8K9M0";
+    sqlx::query(
+        "INSERT INTO users (id, name, role, state, created_at)
+         VALUES (?, 'Bob', 'member', 'active', 0)",
+    )
+    .bind(user)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    for (i, (created, revoked)) in
+        [(3, None), (1, None), (2, None), (0, Some(9))].iter().enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO devices (id, name, public_key, created_at, revoked_at, user_id, is_default)
+             VALUES (?, ?, ?, ?, ?, ?, 1)",
+        )
+        .bind(format!("dev_01J9Z3K8V7Q2W4E6R8T0Y1V3H{i}"))
+        .bind(format!("bob-{i}"))
+        .bind(vec![i as u8 + 1; 32])
+        .bind(created)
+        .bind(revoked)
+        .bind(user)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    drop(conn);
+
+    let s = Store::open(&path).await.unwrap();
+    let devices = s.user_devices(&user.parse().unwrap()).await.unwrap();
+    let defaults: Vec<_> =
+        devices.iter().filter(|d| d.is_default).map(|d| d.name.as_str()).collect();
+    assert_eq!(defaults, ["bob-1"], "le plus ancien des actifs");
+
+    let mut conn = options.connect().await.unwrap();
+    let second = sqlx::query("UPDATE devices SET is_default = 1 WHERE name = 'bob-2'")
+        .execute(&mut conn)
+        .await;
+    assert!(second.is_err(), "l'index refuse un second principal");
+    let revoked: bool = sqlx::query_scalar("SELECT is_default FROM devices WHERE name = 'bob-3'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert!(!revoked, "un appareil révoqué perd le sien");
 }
 
 #[tokio::test]

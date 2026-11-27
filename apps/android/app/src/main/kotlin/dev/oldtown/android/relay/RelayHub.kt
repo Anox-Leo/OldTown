@@ -141,7 +141,7 @@ object RelayHub {
         val c = client(context)
         return when (val t = parseChannel(channel)) {
             is ChannelTarget.Mine -> c.sendText(text, recipientsOf(t.device))
-            is ChannelTarget.Person -> c.sendTextToUser(text, t.user, t.device)
+            is ChannelTarget.Person -> c.sendTextToUser(text, t.user)
         }
     }
 

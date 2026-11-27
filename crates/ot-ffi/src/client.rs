@@ -72,18 +72,11 @@ impl OtClient {
         self.send_text_target(text, target).await
     }
 
-    pub async fn send_text_to_user(
-        &self,
-        text: String,
-        user: String,
-        device: Option<String>,
-    ) -> Result<String, OtError> {
-        let target = parse_person(&user, device.as_deref())
-            .map(|(user, device)| Target::Person { user, device });
+    pub async fn send_text_to_user(&self, text: String, user: String) -> Result<String, OtError> {
+        let target = parse_user(&user).map(|user| Target::Person { user });
         self.send_text_target(text, target).await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn send_file_to_user(
         &self,
         source: Arc<dyn FileSource>,
@@ -91,17 +84,10 @@ impl OtClient {
         name: String,
         mime: String,
         user: String,
-        device: Option<String>,
         listener: Arc<dyn TransferListener>,
     ) -> Result<String, OtError> {
-        let (user, device) = parse_person(&user, device.as_deref())?;
-        let file = OutgoingFile {
-            source_id,
-            name,
-            mime,
-            to: device.into_iter().collect(),
-            to_user: Some(user),
-        };
+        let user = parse_user(&user)?;
+        let file = OutgoingFile { source_id, name, mime, to: Vec::new(), to_user: Some(user) };
         self.send_outgoing_file(file, source, listener).await
     }
 
@@ -348,11 +334,9 @@ impl OtClient {
             if text.trim().is_empty() {
                 return Err(OtError::Invalid { message: "texte vide".into() });
             }
-            let (to_user, to_device) = match &target {
-                Target::Person { user, device } => {
-                    (Some(user.to_string()), device.as_ref().map(ToString::to_string))
-                }
-                Target::MyDevices(_) => (None, None),
+            let to_user = match &target {
+                Target::Person { user } => Some(user.to_string()),
+                Target::MyDevices(_) => None,
             };
             let content = ot_core::classify(&text);
             let env = client.seal_to(target, &content).await?;
@@ -364,7 +348,7 @@ impl OtClient {
                 content.body,
                 &env.to,
             );
-            outbox.add(Received { pending: true, to_user, to_device, ..item }).await;
+            outbox.add(Received { pending: true, to_user, ..item }).await;
             match client.send_envelope(env).await {
                 Ok(_) => {
                     outbox.accepted(&msg_id).await;
@@ -401,9 +385,7 @@ impl OtClient {
             );
             let item = Received { file: Some(FileItem::from_info(&info)), ..item }
                 .with_origin(&info.origin);
-            let to_device =
-                if item.to_user.is_some() { to.first().map(ToString::to_string) } else { None };
-            outbox.add(Received { to_device, ..item }).await;
+            outbox.add(item).await;
             Ok(msg_id)
         })
         .await
@@ -508,15 +490,6 @@ fn parse_user(user: &str) -> Result<UserId, OtError> {
 
 fn parse_users(users: &[String]) -> Result<Vec<UserId>, OtError> {
     users.iter().map(|u| parse_user(u)).collect()
-}
-
-fn parse_person(user: &str, device: Option<&str>) -> Result<(UserId, Option<DeviceId>), OtError> {
-    let user = user.parse::<UserId>().map_err(|e| OtError::Invalid { message: e.to_string() })?;
-    let device = device
-        .map(str::parse::<DeviceId>)
-        .transpose()
-        .map_err(|e| OtError::Invalid { message: e.to_string() })?;
-    Ok((user, device))
 }
 
 fn names(keyring: &StoreKeyring) -> HashMap<DeviceId, String> {

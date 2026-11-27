@@ -269,9 +269,9 @@ impl Client {
     ) -> Result<Envelope, ClientError> {
         match target {
             Target::MyDevices(to) => self.seal(content, to).await,
-            Target::Person { user, device } => {
+            Target::Person { user } => {
                 let content = content.clone();
-                self.with_fresh(move |s| s.seal_content_to(&content, &user, device.as_ref())).await
+                self.with_fresh(move |s| s.seal_content_to(&content, &user)).await
             }
         }
     }
@@ -288,17 +288,6 @@ impl Client {
     pub async fn send_otp_to(&self, users: &[UserId], otp: &Otp) -> Result<Accepted, ClientError> {
         let (users, otp) = (users.to_vec(), otp.clone());
         let env = self.with_fresh(move |s| s.seal_otp_to(&otp, &users)).await?;
-        self.send_envelope(env).await
-    }
-
-    pub async fn send_otp_to_device(
-        &self,
-        user: &UserId,
-        device: &DeviceId,
-        otp: &Otp,
-    ) -> Result<Accepted, ClientError> {
-        let (user, device, otp) = (user.clone(), device.clone(), otp.clone());
-        let env = self.with_fresh(move |s| s.seal_otp_to_device(&otp, &user, &device)).await?;
         self.send_envelope(env).await
     }
 
@@ -368,10 +357,7 @@ impl Client {
         let size = source.size();
         let now = OffsetDateTime::now_utc();
         let to = match file.to_user.clone() {
-            Some(user) => {
-                let device = file.to.first().cloned();
-                self.with_fresh(move |s| s.recipients(&user, device.as_ref())).await?
-            }
+            Some(user) => self.with_fresh(move |s| s.recipients(&user)).await?,
             None => {
                 self.with_secure(|s| s.info().map(|_| ()).ok_or(ClientError::NoGroup)).await?;
                 file.to.clone()

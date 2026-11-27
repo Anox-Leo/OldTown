@@ -114,11 +114,11 @@ async fn invited_person_is_certified_and_talks_both_ways() {
     people_until(&ca1, &mut ea1, |p| ready(p, &bob, 1)).await;
     people_until(&cb1, &mut eb1, |p| ready(p, &alice, 2) && ready(p, &bob, 1)).await;
 
-    let to_bob = Target::Person { user: bob.clone(), device: None };
+    let to_bob = Target::Person { user: bob.clone() };
     within(ca1.send_to(to_bob, &Content::text("bienvenue"))).await.unwrap();
     let m = next_message(&mut eb1).await;
     assert_eq!((m.content.body.as_str(), m.origin.from_user.as_ref()), ("bienvenue", Some(&alice)));
-    let to_alice = Target::Person { user: alice.clone(), device: Some(net.a[1].id.clone()) };
+    let to_alice = Target::Person { user: alice.clone() };
     within(cb1.send_to(to_alice, &Content::text("merci"))).await.unwrap();
     let copy = next_message(&mut ea2).await;
     assert_eq!(
@@ -223,9 +223,9 @@ async fn a_new_device_of_a_person_is_published_and_seen_by_others() {
 
     let people = people_until(&ca1, &mut ea1, |p| ready(p, &bob, 2)).await;
     assert_eq!(person(&people, &bob).unwrap().roster.members.len(), 2);
-    let target = Target::Person { user: bob.clone(), device: Some(b2.id.clone()) };
-    within(ca1.send_to(target, &Content::text("au laptop"))).await.unwrap();
-    assert_eq!(next_message(&mut eb2).await.content.body, "au laptop");
+    let target = Target::Person { user: bob.clone() };
+    within(ca1.send_to(target, &Content::text("à tous ses appareils"))).await.unwrap();
+    assert_eq!(next_message(&mut eb2).await.content.body, "à tous ses appareils");
     net.server.stop().await;
 }
 

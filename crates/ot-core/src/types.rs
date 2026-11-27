@@ -25,7 +25,7 @@ impl Origin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     MyDevices(Vec<DeviceId>),
-    Person { user: UserId, device: Option<DeviceId> },
+    Person { user: UserId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

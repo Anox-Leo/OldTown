@@ -65,13 +65,10 @@ enum Command {
         #[arg(long = "to")]
         to: Vec<String>,
         #[arg(
-            help = "Une autre personne (nom ou identifiant), à ses appareils par défaut ; une copie part vers mes appareils"
+            help = "Une autre personne (nom ou identifiant), à tous ses appareils joignables ; une copie part vers mes appareils"
         )]
         #[arg(long = "to-user", conflicts_with = "to")]
         to_user: Option<String>,
-        #[arg(help = "Avec --to-user : un seul de ses appareils (nom ou identifiant)")]
-        #[arg(long, requires = "to_user")]
-        device: Option<String>,
         #[arg(help = "Fichier à envoyer. Relancer la même commande reprend un envoi interrompu")]
         #[arg(long, conflicts_with = "text")]
         file: Option<PathBuf>,
@@ -138,15 +135,10 @@ enum Command {
         #[arg(long = "to", env = "OT_OTP_TO", value_delimiter = ',')]
         to: Vec<String>,
         #[arg(
-            help = "Personne destinataire (nom ou identifiant), à ses appareils par défaut, répétable ; ou, dans `OT_OTP_TO_USER`, séparées par des virgules. Ne se combine pas avec --to"
+            help = "Personne destinataire (nom ou identifiant), à tous ses appareils joignables, répétable ; ou, dans `OT_OTP_TO_USER`, séparées par des virgules. Ne se combine pas avec --to"
         )]
         #[arg(long = "to-user", env = "OT_OTP_TO_USER", value_delimiter = ',')]
         to_user: Vec<String>,
-        #[arg(
-            help = "Avec une seule personne dans --to-user : cet appareil (nom ou identifiant) au lieu de ses appareils par défaut"
-        )]
-        #[arg(long, env = "OT_OTP_DEVICE", requires = "to_user")]
-        device: Option<String>,
         #[arg(
             help = "Socket d'otp-relay (par défaut `$XDG_RUNTIME_DIR/otp-relay/otp-relay.sock`)"
         )]
@@ -230,8 +222,13 @@ enum DeviceCommand {
         device: String,
         kind: String,
     },
-    #[command(about = "Appareil par défaut de ma personne (reçoit ce qu'on m'envoie)")]
-    Default { device: String, state: OnOff },
+    #[command(
+        about = "Appareil principal de ma personne : le seul qui notifie et télécharge d'office"
+    )]
+    Default {
+        #[arg(help = "Appareil (nom ou identifiant)")]
+        device: String,
+    },
     #[command(about = "Appareil joignable par les autres personnes")]
     Reachable { device: String, state: OnOff },
     #[command(
@@ -340,11 +337,11 @@ fn main() -> Result<()> {
             Command::Init { server, name, device_id, force } => {
                 init(&home, server, name, device_id, force)
             }
-            Command::Send { file: Some(path), to_user: Some(user), device, .. } => {
-                people::send_file_to_user(&home, &path, &user, device.as_deref()).await
+            Command::Send { file: Some(path), to_user: Some(user), .. } => {
+                people::send_file_to_user(&home, &path, &user).await
             }
-            Command::Send { text, to_user: Some(user), device, file: None, .. } => {
-                people::send_to_user(&home, text, &user, device.as_deref()).await
+            Command::Send { text, to_user: Some(user), file: None, .. } => {
+                people::send_to_user(&home, text, &user).await
             }
             Command::Send { file: Some(path), to, .. } => send_file(&home, &path, to).await,
             Command::Send { text, to, file: None, .. } => send(&home, text, to).await,
@@ -357,11 +354,11 @@ fn main() -> Result<()> {
             Command::Device(DeviceCommand::Kind { device, kind }) => {
                 people::device_kind(&home, &device, &kind).await
             }
-            Command::Device(DeviceCommand::Default { device, state }) => {
-                people::device_flag(&home, &device, people::Flag::Default, state).await
+            Command::Device(DeviceCommand::Default { device }) => {
+                people::device_principal(&home, &device).await
             }
             Command::Device(DeviceCommand::Reachable { device, state }) => {
-                people::device_flag(&home, &device, people::Flag::Reachable, state).await
+                people::device_reachable(&home, &device, state).await
             }
             Command::Device(DeviceCommand::Revoke { device }) => {
                 people::device_revoke(&home, &device).await
@@ -383,8 +380,8 @@ fn main() -> Result<()> {
                 server, name, code: None, force, service, ..
             }) => pair_join_qr(&home, server, name, force, service).await,
             Command::Pair(PairCommand::Sponsor { qr }) => pair_sponsor(&home, &qr).await,
-            Command::OtpBridge { to, to_user, device, socket, min_confidence } => {
-                otp_bridge(&home, to, to_user, device, socket, min_confidence).await
+            Command::OtpBridge { to, to_user, socket, min_confidence } => {
+                otp_bridge(&home, to, to_user, socket, min_confidence).await
             }
         }
     })
@@ -857,14 +854,12 @@ const OTP_SOCKET_MAX_BACKOFF: Duration = Duration::from_secs(60);
 enum OtpTarget {
     Devices(Vec<String>),
     People(Vec<String>),
-    Device { user: String, device: String },
 }
 
 async fn otp_bridge(
     home: &Home,
     to: Vec<String>,
     to_user: Vec<String>,
-    device: Option<String>,
     socket: Option<PathBuf>,
     min_confidence: f64,
 ) -> Result<()> {
@@ -882,11 +877,7 @@ async fn otp_bridge(
             bail!("--to (appareils de mon groupe) et --to-user (personnes) ne se combinent pas")
         }
         (to, _) if !to.is_empty() => OtpTarget::Devices(to),
-        (_, mut users) if !users.is_empty() => match device {
-            Some(device) if users.len() == 1 => OtpTarget::Device { user: users.remove(0), device },
-            Some(_) => bail!("--device demande une seule personne dans --to-user"),
-            None => OtpTarget::People(users),
-        },
+        (_, users) if !users.is_empty() => OtpTarget::People(users),
         _ => bail!("aucun destinataire : --to ou --to-user (ou OT_OTP_TO, OT_OTP_TO_USER)"),
     };
     let socket = match socket {
@@ -904,7 +895,6 @@ async fn otp_bridge(
     let names = match &target {
         OtpTarget::Devices(_) => Vec::new(),
         OtpTarget::People(names) => names.clone(),
-        OtpTarget::Device { user, .. } => vec![user.clone()],
     };
     if !names.is_empty() {
         match tokio::time::timeout(COMMAND_TIMEOUT, client.fresh_directory()).await {
@@ -921,12 +911,6 @@ async fn otp_bridge(
                         client.shutdown().await;
                         return Err(e);
                     }
-                }
-                if let OtpTarget::Device { user, device } = &target
-                    && let Err(e) = people::otp_device(&people, user, device)
-                {
-                    client.shutdown().await;
-                    return Err(e);
                 }
             }
             Ok(Err(e)) => eprintln!("⚠ annuaire illisible : {e}"),
@@ -1058,11 +1042,6 @@ async fn send_otp(client: Client, target: OtpTarget, code: ot_core::Otp) {
                     bail!("aucune des personnes de --to-user n'est joignable");
                 }
                 client.send_otp_to(&users, &code).await?;
-            }
-            OtpTarget::Device { user, device } => {
-                let people = client.fresh_directory().await?;
-                let (user, device) = people::otp_device(&people, user, device)?;
-                client.send_otp_to_device(&user, &device, &code).await?;
             }
         }
         anyhow::Ok(())

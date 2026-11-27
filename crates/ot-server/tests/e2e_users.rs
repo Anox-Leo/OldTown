@@ -186,13 +186,16 @@ async fn text_and_file_between_two_people_both_ways() {
     people_until(&ca1, &mut ea1, |p| up_to_date(p, &bob, 2) && up_to_date(p, &alice, 2)).await;
     people_until(&cb2, &mut eb2, |p| up_to_date(p, &alice, 2) && up_to_date(p, &bob, 2)).await;
 
-    let target = Target::Person { user: bob.clone(), device: None };
+    let target = Target::Person { user: bob.clone() };
     let env = within(ca1.seal_to(target.clone(), &Content::text("bonjour Bob"))).await.unwrap();
     let mut to = env.to.clone();
     to.sort();
     let mut expected = vec![net.b[0].id.clone(), net.b[1].id.clone(), net.a[1].id.clone()];
     expected.sort();
-    assert_eq!(to, expected, "b3, par défaut mais pas à jour, est sauté");
+    assert_eq!(
+        to, expected,
+        "tous ses appareils à jour ; b3, principal mais pas à jour, est sauté"
+    );
     within(ca1.send_envelope(env)).await.unwrap();
     for events in [&mut eb1, &mut eb2] {
         let m = next_message(events).await;
@@ -205,19 +208,17 @@ async fn text_and_file_between_two_people_both_ways() {
         ("bonjour Bob", &Origin { to_user: Some(bob.clone()), ..Origin::default() })
     );
 
-    let target = Target::Person { user: alice.clone(), device: Some(net.a[1].id.clone()) };
+    let target = Target::Person { user: alice.clone() };
     within(cb2.send_to(target, &Content::text("merci"))).await.unwrap();
-    let m = next_message(&mut ea2).await;
-    assert_eq!((m.content.body.as_str(), m.origin.from_user.as_ref()), ("merci", Some(&bob)));
+    for events in [&mut ea1, &mut ea2] {
+        let m = next_message(events).await;
+        assert_eq!((m.content.body.as_str(), m.origin.from_user.as_ref()), ("merci", Some(&bob)));
+    }
     assert_eq!(next_message(&mut eb1).await.origin.to_user, Some(alice.clone()), "copie");
-
-    let target = Target::Person { user: bob.clone(), device: Some(net.b[2].id.clone()) };
-    let err = within(ca1.send_to(target, &Content::text("x"))).await.unwrap_err();
-    assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
 
     let (cc1, mut ec1) = online(&net.c[0], &url).await;
     people_until(&ca1, &mut ea1, |p| up_to_date(p, &net.carol, 1)).await;
-    let target = Target::Person { user: net.carol.clone(), device: None };
+    let target = Target::Person { user: net.carol.clone() };
     within(ca1.send_to(target, &Content::text("bonjour Carol"))).await.unwrap();
     let m = next_message(&mut ec1).await;
     assert_eq!(
@@ -228,7 +229,7 @@ async fn text_and_file_between_two_people_both_ways() {
     assert_eq!(copy.origin.to_user.as_ref(), Some(&net.carol));
     let seen_by_bob = within(cb1.directory()).await.unwrap();
     assert!(seen_by_bob.iter().all(|p| p.id != net.carol), "Carol hors du réseau de Bob");
-    let target = Target::Person { user: net.carol.clone(), device: None };
+    let target = Target::Person { user: net.carol.clone() };
     let err = within(cb1.send_to(target, &Content::text("x"))).await.unwrap_err();
     assert!(matches!(err, ClientError::NoRecipient(_)), "{err}");
     within(cc1.shutdown()).await;
